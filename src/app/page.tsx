@@ -205,10 +205,10 @@ export default function AstroStackerPage() {
     }
     setIsProcessing(true);
     setStackedImage(null);
+    console.log("Starting image stacking process...");
 
-    let imageElements: HTMLImageElement[] = [];
     try {
-      // Load images sequentially to catch errors early for individual files.
+      let imageElements: HTMLImageElement[] = [];
       for (const f of uploadedFiles) {
         try {
           const imgEl = await loadImage(f.file);
@@ -220,27 +220,23 @@ export default function AstroStackerPage() {
             description: errorMessage,
             variant: "destructive",
            });
-           // Optionally, decide if you want to skip this image or stop the whole process
-           // For now, we'll skip and continue if other images are available
         }
       }
 
-
       if (imageElements.length === 0) {
         toast({ title: "No images loaded", description: "Could not load any images for stacking.", variant: "destructive" });
-        setIsProcessing(false);
+        setIsProcessing(false); // Ensure processing is set to false here too
         return;
       }
 
       const firstImage = imageElements[0];
-      // This check is already in loadImage, but good to have a sanity check here if it still passed.
       if (!firstImage || firstImage.naturalWidth === 0 || firstImage.naturalHeight === 0) {
         toast({
           title: "Invalid Reference Image",
           description: `The first image (${uploadedFiles[0].file.name}) is invalid (0x0 dimensions). Cannot proceed.`,
           variant: "destructive",
         });
-        setIsProcessing(false);
+        setIsProcessing(false); // Ensure processing is set to false here too
         return;
       }
       
@@ -253,9 +249,7 @@ export default function AstroStackerPage() {
       const ctx = offscreenCanvas.getContext('2d', { willReadFrequently: true });
 
       const tempAnalysisCanvas = document.createElement('canvas');
-      // Context will be fetched later inside the loop with correct dimensions
       const tempAnalysisCtx = tempAnalysisCanvas.getContext('2d', { willReadFrequently: true });
-
 
       if (!ctx || !tempAnalysisCtx) {
         throw new Error('Could not get canvas contexts for stacking');
@@ -269,15 +263,23 @@ export default function AstroStackerPage() {
         let finalScaledCentroid: { x: number; y: number } | null = null;
         let method = "unknown";
 
+        if (!imgEl || imgEl.naturalWidth === 0 || imgEl.naturalHeight === 0) {
+            console.warn(`Skipping analysis for invalid image element at index ${i}: ${uploadedFiles[i]?.file.name}`);
+            finalScaledCentroid = { x: targetWidth / 2, y: targetHeight / 2 }; 
+            method = "invalid_element_fallback";
+            centroids.push(finalScaledCentroid);
+            console.log(`Image ${i} (${uploadedFiles[i]?.file.name || `image ${i}`}) centroid method: ${method}, Scaled to Target Coords:`, finalScaledCentroid);
+            continue; 
+        }
+        
         try {
-          // Analyze image at its native resolution
           tempAnalysisCanvas.width = imgEl.naturalWidth;
           tempAnalysisCanvas.height = imgEl.naturalHeight;
           tempAnalysisCtx.clearRect(0, 0, imgEl.naturalWidth, imgEl.naturalHeight);
           tempAnalysisCtx.drawImage(imgEl, 0, 0, imgEl.naturalWidth, imgEl.naturalHeight);
           const nativeImageData = tempAnalysisCtx.getImageData(0, 0, imgEl.naturalWidth, imgEl.naturalHeight);
 
-          const stars = detectStars(nativeImageData); // Stars are in native coordinates
+          const stars = detectStars(nativeImageData);
           const nativeStarCentroid = calculateStarArrayCentroid(stars);
           
           if (nativeStarCentroid) {
@@ -312,7 +314,7 @@ export default function AstroStackerPage() {
                 description: `Could not determine centroid for ${fileNameForError}. It may not align optimally.`,
                 variant: "destructive"
             });
-            finalScaledCentroid = { x: targetWidth / 2, y: targetHeight / 2 }; // Fallback to geometric center of the target frame
+            finalScaledCentroid = { x: targetWidth / 2, y: targetHeight / 2 };
             method = method === "analysis_error" ? "analysis_error_fallback" : "geometric_center_fallback";
         }
         const fileNameForLog = uploadedFiles[i]?.file?.name || `image ${i}`;
@@ -323,27 +325,30 @@ export default function AstroStackerPage() {
       const referenceCentroid = centroids[0];
       if (!referenceCentroid) {
         toast({ title: "Alignment Failed", description: "Could not determine alignment reference for the first image. Stacking cannot proceed.", variant: "destructive" });
-        setIsProcessing(false);
+        setIsProcessing(false); // Ensure processing is set to false here too
         return;
       }
       
       const summedPixelData = new Float32Array(targetWidth * targetHeight * 4);
 
       for (let i = 0; i < imageElements.length; i++) {
-        const img = imageElements[i]; // Use the original HTMLImageElement for drawing
+        const img = imageElements[i]; 
+         if (!img || img.naturalWidth === 0 || img.naturalHeight === 0) {
+            console.warn(`Skipping stacking for invalid image element at index ${i}: ${uploadedFiles[i]?.file.name}`);
+            continue;
+        }
         const currentCentroid = centroids[i]; 
         
         let dx = 0;
         let dy = 0;
         
-        if (currentCentroid) { // Should always exist due to fallbacks
+        if (currentCentroid) { 
           dx = referenceCentroid.x - currentCentroid.x;
           dy = referenceCentroid.y - currentCentroid.y;
         } else {
-          // This case should ideally not be reached due to fallbacks, but as a safeguard:
-          dx = referenceCentroid.x - (targetWidth/2); // align to center of ref
-          dy = referenceCentroid.y - (targetHeight/2); // align to center of ref
-          console.warn(`Centroid missing for image ${i} despite fallbacks. Aligning its center to reference centroid.`);
+          dx = referenceCentroid.x - (img.naturalWidth / 2 * (targetWidth / img.naturalWidth)); 
+          dy = referenceCentroid.y - (img.naturalHeight / 2 * (targetHeight / img.naturalHeight));
+          console.warn(`Centroid missing for image ${i} despite fallbacks. Aligning its geometric center to reference centroid.`);
         }
         
         ctx.clearRect(0, 0, targetWidth, targetHeight); 
@@ -361,17 +366,17 @@ export default function AstroStackerPage() {
             description: `Could not process pixel data for ${uploadedFiles[i]?.file.name || `image ${i}`}. It might be excluded or corrupt the final stack.`,
             variant: "destructive"
           });
-          // Decide how to handle: skip frame or stop? For now, it might lead to a darker pixel if summedPixelData isn't incremented
         }
       }
 
       const averagedImageData = ctx.createImageData(targetWidth, targetHeight);
-      const numValidImagesForAverage = imageElements.length > 0 ? imageElements.length : 1; // Avoid division by zero
+      const numImagesToAverage = imageElements.filter(img => img && img.naturalWidth > 0 && img.naturalHeight > 0).length;
+      const numValidImagesForAverage = numImagesToAverage > 0 ? numImagesToAverage : 1; 
 
       for (let i = 0; i < summedPixelData.length; i++) {
         averagedImageData.data[i] = summedPixelData[i] / numValidImagesForAverage;
-        if (i % 4 === 3) { // Alpha channel
-             averagedImageData.data[i] = 255; // Ensure alpha is opaque
+        if (i % 4 === 3) { 
+             averagedImageData.data[i] = 255; 
         }
       }
       
@@ -380,35 +385,29 @@ export default function AstroStackerPage() {
       
       setStackedImage(resultDataUrl);
       const alignmentMessage = successfulStarAlignments > 0 
-        ? `${successfulStarAlignments}/${imageElements.length} images primarily aligned using star-based centroids (native resolution analysis).`
-        : `Images aligned using brightness-based centroids (native resolution analysis). ${imageElements.length - successfulStarAlignments} used fallback.`;
+        ? `${successfulStarAlignments}/${imageElements.length} images primarily aligned using star-based centroids (native resolution analysis). Others used fallbacks.`
+        : `Images aligned using brightness-based centroids or geometric centers (native resolution analysis). ${imageElements.length - successfulStarAlignments} used fallback methods.`;
       toast({ 
         title: "Alignment & Stacking Complete", 
         description: `${alignmentMessage} Pixel averaging applied.`
       });
 
     } catch (error) {
-      console.error("Alignment/Stacking error:", error);
+      console.error("Unhandled error in handleStackImages:", error);
       toast({
-        title: "Alignment/Stacking Failed",
-        description: `An error occurred: ${error instanceof Error ? error.message : String(error)}`,
+        title: "Stacking Process Failed",
+        description: `An unexpected error occurred: ${error instanceof Error ? error.message : String(error)}`,
         variant: "destructive",
       });
     } finally {
       setIsProcessing(false);
+      console.log("Image stacking process finished.");
     }
   };
   
   useEffect(() => {
-    // Data URLs from fileToDataURL don't need explicit cleanup.
-    // If URL.createObjectURL were used for previews (e.g., for TIFFs before),
-    // cleanup would be necessary here.
     return () => {
-      // uploadedFiles.forEach(uploadedFile => {
-      //   if (uploadedFile.previewUrl.startsWith('blob:')) {
-      //     URL.revokeObjectURL(uploadedFile.previewUrl);
-      //   }
-      // });
+      // Cleanup if any URL.createObjectURL were used (not currently the case for previews)
     };
   }, [uploadedFiles]);
 
@@ -472,3 +471,4 @@ export default function AstroStackerPage() {
     </div>
   );
 }
+
