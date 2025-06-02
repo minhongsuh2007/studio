@@ -36,9 +36,10 @@ export default function AstroStackerPage() {
         const previewUrl = await fileToDataURL(file);
         newUploadedFiles.push({ file, previewUrl });
       } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
         toast({
           title: "Error reading file",
-          description: `Could not read ${file.name}.`,
+          description: `Could not read ${file.name}: ${errorMessage}`,
           variant: "destructive",
         });
       }
@@ -55,16 +56,27 @@ export default function AstroStackerPage() {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = (event) => {
-        const img = new Image();
-        img.onload = () => resolve(img);
-        img.onerror = reject;
-        if (event.target?.result) {
-          img.src = event.target.result as string;
-        } else {
-          reject(new Error('Failed to read file for image loading.'));
+        if (!event.target?.result) {
+          reject(new Error(`FileReader failed to produce a result for ${file.name}.`));
+          return;
         }
+        const img = new Image();
+        img.onload = () => {
+          if (img.naturalWidth === 0 || img.naturalHeight === 0) {
+            reject(new Error(`Image ${file.name} loaded with zero dimensions (0x0).`));
+          } else {
+            resolve(img);
+          }
+        };
+        img.onerror = (e) => {
+          const errorMsg = typeof e === 'string' ? e : (e as Event)?.type || 'unknown image load error';
+          reject(new Error(`Failed to load image ${file.name}: ${errorMsg}`));
+        };
+        img.src = event.target.result as string;
       };
-      reader.onerror = reject;
+      reader.onerror = () => {
+        reject(new Error(`FileReader failed to read ${file.name}. Error: ${reader.error?.name || 'unknown error'}`));
+      };
       reader.readAsDataURL(file);
     });
   };
@@ -73,48 +85,52 @@ export default function AstroStackerPage() {
     const canvas = document.createElement('canvas');
     canvas.width = drawWidth;
     canvas.height = drawHeight;
-    const ctx = canvas.getContext('2d');
+    // Add willReadFrequently hint for potential performance improvement with getImageData
+    const ctx = canvas.getContext('2d', { willReadFrequently: true }); 
+    
     if (!ctx) {
-      console.error("Failed to get 2D context for centroid calculation");
-      return { x: drawWidth / 2, y: drawHeight / 2 }; // Fallback to geometric center
+      console.warn(`Failed to get 2D context for centroid calculation (image: ${image.src.substring(0,50)}...). Falling back to geometric center.`);
+      return { x: drawWidth / 2, y: drawHeight / 2 }; // Fallback
     }
-    ctx.drawImage(image, 0, 0, drawWidth, drawHeight); // Draw (and resize)
-    const imageData = ctx.getImageData(0, 0, drawWidth, drawHeight);
-    const data = imageData.data;
-    
-    let totalBrightness = 0;
-    let weightedX = 0;
-    let weightedY = 0;
-    
-    // Iterate over pixels to calculate brightness-weighted centroid
-    for (let y = 0; y < drawHeight; y++) {
-      for (let x = 0; x < drawWidth; x++) {
-        const i = (y * drawWidth + x) * 4;
-        const r = data[i];
-        const g = data[i+1];
-        const b = data[i+2];
-        // Luminance calculation (standard coefficients)
-        const brightness = 0.299 * r + 0.587 * g + 0.114 * b; 
-        
-        // Threshold to focus on brighter pixels (potentially stars) for centroid calculation.
-        // A higher value (e.g., 60-100) makes it more selective for very bright points.
-        if (brightness > 60) { 
-          weightedX += x * brightness;
-          weightedY += y * brightness;
-          totalBrightness += brightness;
+
+    try {
+      ctx.drawImage(image, 0, 0, drawWidth, drawHeight); 
+      const imageData = ctx.getImageData(0, 0, drawWidth, drawHeight);
+      const data = imageData.data;
+      
+      let totalBrightness = 0;
+      let weightedX = 0;
+      let weightedY = 0;
+      
+      for (let y = 0; y < drawHeight; y++) {
+        for (let x = 0; x < drawWidth; x++) {
+          const i = (y * drawWidth + x) * 4;
+          const r = data[i];
+          const g = data[i+1];
+          const b = data[i+2];
+          const brightness = 0.299 * r + 0.587 * g + 0.114 * b; 
+          
+          if (brightness > 60) { 
+            weightedX += x * brightness;
+            weightedY += y * brightness;
+            totalBrightness += brightness;
+          }
         }
       }
+      
+      if (totalBrightness === 0) {
+        // If image is all black or all pixels below threshold, return geometric center
+        return { x: drawWidth / 2, y: drawHeight / 2 };
+      }
+      
+      return {
+        x: weightedX / totalBrightness,
+        y: weightedY / totalBrightness,
+      };
+    } catch (error) {
+        console.warn(`Error during canvas operations in calculateImageCentroid for image (${image.src.substring(0,50)}...). Falling back.`, error);
+        return { x: drawWidth / 2, y: drawHeight / 2 }; // Fallback if any canvas operation fails
     }
-    
-    if (totalBrightness === 0) {
-      // If image is all black or all pixels below threshold, return geometric center
-      return { x: drawWidth / 2, y: drawHeight / 2 };
-    }
-    
-    return {
-      x: weightedX / totalBrightness,
-      y: weightedY / totalBrightness,
-    };
   };
 
   const handleStackImages = async () => {
@@ -134,13 +150,23 @@ export default function AstroStackerPage() {
         return;
       }
 
+      // Ensure the first image, used for reference dimensions, is valid and has dimensions.
+      // loadImage now also checks for naturalWidth/Height > 0.
+      if (!images[0] || images[0].width === 0 || images[0].height === 0) {
+        toast({
+          title: "Invalid Reference Image",
+          description: `The first image (${uploadedFiles[0].file.name}) is invalid or has zero dimensions. Cannot proceed with stacking.`,
+          variant: "destructive",
+        });
+        setIsProcessing(false);
+        return;
+      }
+      
       const targetWidth = images[0].width;
       const targetHeight = images[0].height;
 
-      // Calculate centroids for all images based on how they'll be drawn (resized to target dimensions)
       const centroids = images.map(img => calculateImageCentroid(img, targetWidth, targetHeight));
-      
-      const referenceCentroid = centroids[0]; // Use first image's centroid as reference
+      const referenceCentroid = centroids[0]; 
       
       const offscreenCanvas = document.createElement('canvas');
       offscreenCanvas.width = targetWidth;
@@ -148,7 +174,7 @@ export default function AstroStackerPage() {
       const ctx = offscreenCanvas.getContext('2d');
 
       if (!ctx) {
-        throw new Error('Could not get canvas context');
+        throw new Error('Could not get canvas context for stacking');
       }
 
       const summedPixelData = new Float32Array(targetWidth * targetHeight * 4);
@@ -157,12 +183,10 @@ export default function AstroStackerPage() {
         const img = images[i];
         const currentCentroid = centroids[i];
         
-        // Calculate translation offset to align currentCentroid with referenceCentroid
         const dx = referenceCentroid.x - currentCentroid.x;
         const dy = referenceCentroid.y - currentCentroid.y;
         
         ctx.clearRect(0, 0, targetWidth, targetHeight); 
-        // Draw the image translated. It will also be resized to targetWidth/Height here.
         ctx.drawImage(img, dx, dy, targetWidth, targetHeight); 
         
         const imageData = ctx.getImageData(0, 0, targetWidth, targetHeight);
