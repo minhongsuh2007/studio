@@ -1,3 +1,4 @@
+
 "use client";
 
 import type React from 'react';
@@ -28,7 +29,6 @@ interface Star {
 }
 
 const MAX_IMAGE_LOAD_DIMENSION = 16384; // Max dimension for an image to be loaded at all
-const MAX_PROCESSING_DIMENSION = 4096; // Max dimension for the stacking process (reference image)
 const ANALYSIS_MAX_DIMENSION = 1024; // Max dimension for images during analysis (star detection/centroid)
 
 
@@ -250,17 +250,6 @@ export default function AstroStackerPage() {
       
       const targetWidth = firstImage.naturalWidth;
       const targetHeight = firstImage.naturalHeight;
-
-      if (targetWidth > MAX_PROCESSING_DIMENSION || targetHeight > MAX_PROCESSING_DIMENSION) {
-        toast({
-          title: "Image Too Large for Processing",
-          description: `The reference image '${uploadedFiles[0].file.name}' (${targetWidth}x${targetHeight}) exceeds the maximum processing dimension of ${MAX_PROCESSING_DIMENSION}px. Please use a smaller reference image or resize it.`,
-          variant: "destructive",
-          duration: 10000, 
-        });
-        setIsProcessing(false);
-        return;
-      }
 
       const offscreenCanvas = document.createElement('canvas');
       offscreenCanvas.width = targetWidth;
@@ -488,7 +477,7 @@ export default function AstroStackerPage() {
                 <CardDescription>
                   Add JPG/PNG. Images are aligned using detected stars. 
                   For performance, analysis (star detection) on images larger than {ANALYSIS_MAX_DIMENSION}px (width/height) is done on a scaled-down version.
-                  Max load dimension: {MAX_IMAGE_LOAD_DIMENSION}px. Max processing dimension (of first image): {MAX_PROCESSING_DIMENSION}px.
+                  Max load dimension: {MAX_IMAGE_LOAD_DIMENSION}px.
                   Processing many or very large images may be slow or cause browser issues on some devices.
                 </CardDescription>
               </CardHeader>
@@ -516,7 +505,7 @@ export default function AstroStackerPage() {
                       className="w-full bg-accent hover:bg-accent/90 text-accent-foreground"
                     >
                       <Wand2 className="mr-2 h-5 w-5" />
-                      {isProcessing ? 'Processing...' : `Align & Stack (max ${MAX_PROCESSING_DIMENSION}px)`}
+                      {isProcessing ? 'Processing...' : `Align & Stack`}
                     </Button>
                   </>
                 )}
@@ -537,3 +526,5 @@ export default function AstroStackerPage() {
     </div>
   );
 }
+
+    
