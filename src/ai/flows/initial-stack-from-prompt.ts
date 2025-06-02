@@ -59,7 +59,6 @@ const initialStackFromPromptFlow = ai.defineFlow(
           text: `Stack these images based on the following prompt: ${input.prompt}`,
         },
       ],
-      model: 'googleai/gemini-2.0-flash-exp',
       config: {
         responseModalities: ['TEXT', 'IMAGE'],
       },

@@ -67,7 +67,6 @@ const adjustStackingParametersFlow = ai.defineFlow(
   },
   async input => {
     const {media} = await ai.generate({
-      model: 'googleai/gemini-2.0-flash-exp',
       prompt: [
         {media: {url: input.baseImageDataUri}},
         {
