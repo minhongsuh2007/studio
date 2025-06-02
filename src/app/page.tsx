@@ -69,6 +69,54 @@ export default function AstroStackerPage() {
     });
   };
 
+  const calculateImageCentroid = (image: HTMLImageElement, drawWidth: number, drawHeight: number): { x: number; y: number } => {
+    const canvas = document.createElement('canvas');
+    canvas.width = drawWidth;
+    canvas.height = drawHeight;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      console.error("Failed to get 2D context for centroid calculation");
+      return { x: drawWidth / 2, y: drawHeight / 2 }; // Fallback to geometric center
+    }
+    ctx.drawImage(image, 0, 0, drawWidth, drawHeight); // Draw (and resize)
+    const imageData = ctx.getImageData(0, 0, drawWidth, drawHeight);
+    const data = imageData.data;
+    
+    let totalBrightness = 0;
+    let weightedX = 0;
+    let weightedY = 0;
+    
+    // Iterate over pixels to calculate brightness-weighted centroid
+    for (let y = 0; y < drawHeight; y++) {
+      for (let x = 0; x < drawWidth; x++) {
+        const i = (y * drawWidth + x) * 4;
+        const r = data[i];
+        const g = data[i+1];
+        const b = data[i+2];
+        // Luminance calculation (standard coefficients)
+        const brightness = 0.299 * r + 0.587 * g + 0.114 * b; 
+        
+        // Threshold to consider only pixels that are somewhat bright
+        // This helps avoid noise in dark areas skewing the centroid
+        if (brightness > 20) { 
+          weightedX += x * brightness;
+          weightedY += y * brightness;
+          totalBrightness += brightness;
+        }
+      }
+    }
+    
+    if (totalBrightness === 0) {
+      // If image is all black or all pixels below threshold, return geometric center
+      return { x: drawWidth / 2, y: drawHeight / 2 };
+    }
+    
+    return {
+      x: weightedX / totalBrightness,
+      y: weightedY / totalBrightness,
+    };
+  };
+
   const handleStackImages = async () => {
     if (uploadedFiles.length === 0) {
       toast({ title: "No images", description: "Please upload images to stack." });
@@ -86,10 +134,14 @@ export default function AstroStackerPage() {
         return;
       }
 
-      // Determine dimensions from the first image
       const targetWidth = images[0].width;
       const targetHeight = images[0].height;
 
+      // Calculate centroids for all images based on how they'll be drawn (resized to target dimensions)
+      const centroids = images.map(img => calculateImageCentroid(img, targetWidth, targetHeight));
+      
+      const referenceCentroid = centroids[0]; // Use first image's centroid as reference
+      
       const offscreenCanvas = document.createElement('canvas');
       offscreenCanvas.width = targetWidth;
       offscreenCanvas.height = targetHeight;
@@ -99,37 +151,45 @@ export default function AstroStackerPage() {
         throw new Error('Could not get canvas context');
       }
 
-      // Initialize summed pixel data array (R, G, B, A)
       const summedPixelData = new Float32Array(targetWidth * targetHeight * 4);
 
-      for (const img of images) {
-        // Draw (and resize if necessary) image to offscreen canvas
-        ctx.clearRect(0, 0, targetWidth, targetHeight); // Clear for each image
-        ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
+      for (let i = 0; i < images.length; i++) {
+        const img = images[i];
+        const currentCentroid = centroids[i];
+        
+        // Calculate translation offset to align currentCentroid with referenceCentroid
+        const dx = referenceCentroid.x - currentCentroid.x;
+        const dy = referenceCentroid.y - currentCentroid.y;
+        
+        ctx.clearRect(0, 0, targetWidth, targetHeight); 
+        // Draw the image translated. It will also be resized to targetWidth/Height here.
+        ctx.drawImage(img, dx, dy, targetWidth, targetHeight); 
+        
         const imageData = ctx.getImageData(0, 0, targetWidth, targetHeight);
-        for (let i = 0; i < imageData.data.length; i++) {
-          summedPixelData[i] += imageData.data[i];
+        for (let j = 0; j < imageData.data.length; j++) {
+          summedPixelData[j] += imageData.data[j];
         }
       }
 
-      // Average the pixel data
       const averagedImageData = ctx.createImageData(targetWidth, targetHeight);
       for (let i = 0; i < summedPixelData.length; i++) {
         averagedImageData.data[i] = summedPixelData[i] / images.length;
       }
 
-      // Put averaged data onto the canvas and get data URL
       ctx.putImageData(averagedImageData, 0, 0);
       const resultDataUrl = offscreenCanvas.toDataURL('image/png');
       
       setStackedImage(resultDataUrl);
-      toast({ title: "Stacking Complete", description: "Images stacked successfully using pixel averaging." });
+      toast({ 
+        title: "Alignment & Stacking Complete", 
+        description: "Images aligned by centroid and stacked successfully using pixel averaging." 
+      });
 
     } catch (error) {
-      console.error("Stacking error:", error);
+      console.error("Alignment/Stacking error:", error);
       toast({
-        title: "Stacking Failed",
-        description: `An error occurred during client-side stacking: ${error instanceof Error ? error.message : String(error)}`,
+        title: "Alignment/Stacking Failed",
+        description: `An error occurred: ${error instanceof Error ? error.message : String(error)}`,
         variant: "destructive",
       });
     } finally {
@@ -137,12 +197,9 @@ export default function AstroStackerPage() {
     }
   };
   
-  // Clean up preview URLs when component unmounts or files change
   useEffect(() => {
     return () => {
-      uploadedFiles.forEach(uploadedFile => {
-        // Preview URLS are Data URIs from fileToDataURL, not object URLs, so no need to revoke.
-      });
+      // No explicit cleanup needed for data URIs from fileToDataURL
     };
   }, [uploadedFiles]);
 
@@ -159,7 +216,7 @@ export default function AstroStackerPage() {
                   <Layers className="mr-2 h-5 w-5 text-accent" />
                   Upload & Manage Images
                 </CardTitle>
-                <CardDescription>Add your astrophotography captures to begin stacking.</CardDescription>
+                <CardDescription>Add your astrophotography captures. Images will be aligned by centroid then stacked.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <ImageUploadArea onFilesAdded={handleFilesAdded} isProcessing={isProcessing} />
@@ -185,7 +242,7 @@ export default function AstroStackerPage() {
                       className="w-full bg-accent hover:bg-accent/90 text-accent-foreground"
                     >
                       <Wand2 className="mr-2 h-5 w-5" />
-                      {isProcessing ? 'Stacking...' : 'Stack Images (Pixel Average)'}
+                      {isProcessing ? 'Processing...' : 'Align & Stack Images'}
                     </Button>
                   </>
                 )}
@@ -206,3 +263,4 @@ export default function AstroStackerPage() {
     </div>
   );
 }
+

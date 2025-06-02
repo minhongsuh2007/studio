@@ -5,7 +5,7 @@ from "@/components/ui/toaster";
 
 export const metadata: Metadata = {
   title: 'AstroStacker',
-  description: 'Stack astrophotography images to reduce noise and enhance details.',
+  description: 'Stack astrophotography images to reduce noise and enhance details. Features basic star alignment.',
 };
 
 export default function RootLayout({
