@@ -96,9 +96,9 @@ export default function AstroStackerPage() {
         // Luminance calculation (standard coefficients)
         const brightness = 0.299 * r + 0.587 * g + 0.114 * b; 
         
-        // Threshold to consider only pixels that are somewhat bright
-        // This helps avoid noise in dark areas skewing the centroid
-        if (brightness > 20) { 
+        // Threshold to focus on brighter pixels (potentially stars) for centroid calculation.
+        // A higher value (e.g., 60-100) makes it more selective for very bright points.
+        if (brightness > 60) { 
           weightedX += x * brightness;
           weightedY += y * brightness;
           totalBrightness += brightness;
@@ -263,4 +263,3 @@ export default function AstroStackerPage() {
     </div>
   );
 }
-
