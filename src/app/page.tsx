@@ -1,3 +1,4 @@
+
 "use client";
 
 import type React from 'react';
@@ -5,17 +6,13 @@ import { useState, useEffect, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
 import { fileToDataURL } from '@/lib/utils';
-import { initialStackFromPrompt } from '@/ai/flows/initial-stack-from-prompt';
-import { adjustStackingParameters } from '@/ai/flows/adjust-stacking-parameters';
 
 import { AppHeader } from '@/components/astrostacker/AppHeader';
 import { ImageUploadArea } from '@/components/astrostacker/ImageUploadArea';
 import { ImageQueueItem } from '@/components/astrostacker/ImageQueueItem';
-import { ParameterControls } from '@/components/astrostacker/ParameterControls';
 import { ImagePreview } from '@/components/astrostacker/ImagePreview';
 import { DownloadButton } from '@/components/astrostacker/DownloadButton';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Separator } from '@/components/ui/separator';
 import { Layers, Wand2 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 
@@ -29,8 +26,6 @@ export default function AstroStackerPage() {
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [stackedImage, setStackedImage] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [alignmentMethod, setAlignmentMethod] = useState<'auto' | 'star_alignment' | 'manual'>('auto');
-  const [stackingMode, setStackingMode] = useState<'average' | 'lighten' | 'darken'>('average');
   const { toast } = useToast();
 
   const handleFilesAdded = async (files: File[]) => {
@@ -56,53 +51,85 @@ export default function AstroStackerPage() {
     setUploadedFiles(prev => prev.filter((_, index) => index !== indexToRemove));
   };
 
+  const loadImage = (file: File): Promise<HTMLImageElement> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = reject;
+        if (event.target?.result) {
+          img.src = event.target.result as string;
+        } else {
+          reject(new Error('Failed to read file for image loading.'));
+        }
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  };
+
   const handleStackImages = async () => {
     if (uploadedFiles.length === 0) {
       toast({ title: "No images", description: "Please upload images to stack." });
       return;
     }
     setIsProcessing(true);
-    setStackedImage(null); // Clear previous stacked image
+    setStackedImage(null);
 
     try {
-      const imageUrls = await Promise.all(uploadedFiles.map(f => fileToDataURL(f.file)));
-      const result = await initialStackFromPrompt({
-        imageUrls,
-        prompt: "Stack these astrophotography images to reduce noise and significantly enhance celestial details, colors, and clarity. Aim for a visually stunning and scientifically accurate representation of the deep sky object(s).",
-      });
-      setStackedImage(result.stackedImageUrl);
-      toast({ title: "Stacking Complete", description: "Images stacked successfully." });
+      const images = await Promise.all(uploadedFiles.map(f => loadImage(f.file)));
+
+      if (images.length === 0) {
+        toast({ title: "No images loaded", description: "Could not load any images for stacking.", variant: "destructive" });
+        setIsProcessing(false);
+        return;
+      }
+
+      // Determine dimensions from the first image
+      const targetWidth = images[0].width;
+      const targetHeight = images[0].height;
+
+      const offscreenCanvas = document.createElement('canvas');
+      offscreenCanvas.width = targetWidth;
+      offscreenCanvas.height = targetHeight;
+      const ctx = offscreenCanvas.getContext('2d');
+
+      if (!ctx) {
+        throw new Error('Could not get canvas context');
+      }
+
+      // Initialize summed pixel data array (R, G, B, A)
+      const summedPixelData = new Float32Array(targetWidth * targetHeight * 4);
+
+      for (const img of images) {
+        // Draw (and resize if necessary) image to offscreen canvas
+        ctx.clearRect(0, 0, targetWidth, targetHeight); // Clear for each image
+        ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
+        const imageData = ctx.getImageData(0, 0, targetWidth, targetHeight);
+        for (let i = 0; i < imageData.data.length; i++) {
+          summedPixelData[i] += imageData.data[i];
+        }
+      }
+
+      // Average the pixel data
+      const averagedImageData = ctx.createImageData(targetWidth, targetHeight);
+      for (let i = 0; i < summedPixelData.length; i++) {
+        averagedImageData.data[i] = summedPixelData[i] / images.length;
+      }
+
+      // Put averaged data onto the canvas and get data URL
+      ctx.putImageData(averagedImageData, 0, 0);
+      const resultDataUrl = offscreenCanvas.toDataURL('image/png');
+      
+      setStackedImage(resultDataUrl);
+      toast({ title: "Stacking Complete", description: "Images stacked successfully using pixel averaging." });
+
     } catch (error) {
       console.error("Stacking error:", error);
       toast({
         title: "Stacking Failed",
-        description: "An error occurred while stacking images. Please try again.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  const handleAdjustParameters = async () => {
-    if (!stackedImage) {
-      toast({ title: "No Base Image", description: "Please stack images first before adjusting parameters." });
-      return;
-    }
-    setIsProcessing(true);
-    try {
-      const result = await adjustStackingParameters({
-        baseImageDataUri: stackedImage,
-        alignmentMethod,
-        stackingMode,
-      });
-      setStackedImage(result.adjustedImageDataUri);
-      toast({ title: "Adjustment Complete", description: "Parameters adjusted successfully." });
-    } catch (error) {
-      console.error("Adjustment error:", error);
-      toast({
-        title: "Adjustment Failed",
-        description: "An error occurred while adjusting parameters. Please try again.",
+        description: `An error occurred during client-side stacking: ${error instanceof Error ? error.message : String(error)}`,
         variant: "destructive",
       });
     } finally {
@@ -113,7 +140,9 @@ export default function AstroStackerPage() {
   // Clean up preview URLs when component unmounts or files change
   useEffect(() => {
     return () => {
-      uploadedFiles.forEach(uploadedFile => URL.revokeObjectURL(uploadedFile.previewUrl));
+      uploadedFiles.forEach(uploadedFile => {
+        // Preview URLS are Data URIs from fileToDataURL, not object URLs, so no need to revoke.
+      });
     };
   }, [uploadedFiles]);
 
@@ -156,33 +185,23 @@ export default function AstroStackerPage() {
                       className="w-full bg-accent hover:bg-accent/90 text-accent-foreground"
                     >
                       <Wand2 className="mr-2 h-5 w-5" />
-                      {isProcessing ? 'Stacking...' : 'Stack Images'}
+                      {isProcessing ? 'Stacking...' : 'Stack Images (Pixel Average)'}
                     </Button>
                   </>
                 )}
               </CardContent>
             </Card>
-            
-            <ParameterControls
-              alignmentMethod={alignmentMethod}
-              setAlignmentMethod={setAlignmentMethod}
-              stackingMode={stackingMode}
-              setStackingMode={setStackingMode}
-              onAdjust={handleAdjustParameters}
-              isProcessing={isProcessing}
-              hasBaseImage={!!stackedImage}
-            />
           </div>
 
           {/* Right Panel */}
           <div className="w-full lg:w-3/5 xl:w-2/3 flex flex-col space-y-6">
-            <ImagePreview imageUrl={stackedImage} isLoading={isProcessing && !stackedImage} /> {/* Show loading only if no image yet */}
+            <ImagePreview imageUrl={stackedImage} isLoading={isProcessing && !stackedImage} />
             <DownloadButton imageUrl={stackedImage} isProcessing={isProcessing} />
           </div>
         </div>
       </main>
       <footer className="py-4 text-center text-sm text-muted-foreground border-t border-border">
-        AstroStacker &copy; {new Date().getFullYear()} - Powered by Generative AI
+        AstroStacker &copy; {new Date().getFullYear()}
       </footer>
     </div>
   );
