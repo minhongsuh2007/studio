@@ -22,11 +22,13 @@ const nextConfig: NextConfig = {
   webpack: (config, { isServer }) => {
     // Fix for 'fs' and 'path' modules not found errors with tiff.js on the client side
     if (!isServer) {
-      config.resolve.fallback = {
-        ...config.resolve.fallback, // Spread existing fallbacks if any
-        fs: false,
-        path: false,
-      };
+      // Ensure resolve and fallback objects exist before modifying
+      config.resolve = config.resolve || {};
+      config.resolve.fallback = config.resolve.fallback || {};
+      
+      // Add fallbacks for fs and path
+      config.resolve.fallback.fs = false;
+      config.resolve.fallback.path = false;
     }
     return config;
   },
