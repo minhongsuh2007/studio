@@ -1,3 +1,4 @@
+
 "use client";
 
 import type React from 'react';
@@ -22,7 +23,7 @@ export function ImageUploadArea({ onFilesAdded, isProcessing }: ImageUploadAreaP
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
-    accept: { 'image/*': ['.jpeg', '.jpg', '.png', '.gif', '.webp', '.tiff', '.tif'] },
+    accept: { 'image/*': ['.jpeg', '.jpg', '.png', '.gif', '.webp'] },
     multiple: true,
     disabled: isProcessing,
     onDragEnter: () => setIsDragging(true),
@@ -43,7 +44,7 @@ export function ImageUploadArea({ onFilesAdded, isProcessing }: ImageUploadAreaP
           Drag & drop images here
         </p>
         <p className="text-sm text-muted-foreground">
-          or click to select files (PNG, JPG, TIFF, etc.)
+          or click to select files (PNG, JPG, etc.)
         </p>
         <Button
             type="button"

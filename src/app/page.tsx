@@ -6,7 +6,6 @@ import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
 import { fileToDataURL } from '@/lib/utils';
-import Tiff from 'tiff.js';
 
 import { AppHeader } from '@/components/astrostacker/AppHeader';
 import { ImageUploadArea } from '@/components/astrostacker/ImageUploadArea';
@@ -151,16 +150,7 @@ export default function AstroStackerPage() {
     const newUploadedFiles: UploadedFile[] = [];
     for (const file of files) {
       try {
-        // For TIFFs, we generate a preview differently in loadImage, so use a placeholder here.
-        // For other types, generate preview as before.
-        const isTiff = file.type === 'image/tiff' || file.name.toLowerCase().endsWith('.tif') || file.name.toLowerCase().endsWith('.tiff');
-        let previewUrl;
-        if (isTiff) {
-          // Placeholder, actual image element is created in loadImage
-           previewUrl = URL.createObjectURL(file); 
-        } else {
-            previewUrl = await fileToDataURL(file);
-        }
+        const previewUrl = await fileToDataURL(file);
         newUploadedFiles.push({ file, previewUrl });
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
@@ -176,89 +166,35 @@ export default function AstroStackerPage() {
   };
 
   const handleRemoveImage = (indexToRemove: number) => {
-    setUploadedFiles(prev => {
-      const newFiles = prev.filter((_, index) => index !== indexToRemove);
-      // Clean up object URL if it was a TIFF preview
-      const removedFile = prev[indexToRemove];
-      if (removedFile && (removedFile.file.type === 'image/tiff' || removedFile.file.name.toLowerCase().endsWith('.tif') || removedFile.file.name.toLowerCase().endsWith('.tiff'))) {
-        if (removedFile.previewUrl.startsWith('blob:')) {
-          URL.revokeObjectURL(removedFile.previewUrl);
-        }
-      }
-      return newFiles;
-    });
+    setUploadedFiles(prev => prev.filter((_, index) => index !== indexToRemove));
   };
 
   const loadImage = (file: File): Promise<HTMLImageElement> => {
     return new Promise((resolve, reject) => {
-      const isTiff = file.type === 'image/tiff' || file.name.toLowerCase().endsWith('.tif') || file.name.toLowerCase().endsWith('.tiff');
-
-      if (isTiff) {
-        const reader = new FileReader();
-        reader.onload = (event) => {
-          if (!event.target?.result) {
-            reject(new Error(`FileReader failed to produce ArrayBuffer for TIFF ${file.name}.`));
-            return;
-          }
-          try {
-            const tiff = new Tiff({ buffer: event.target.result as ArrayBuffer });
-            const tiffCanvas = tiff.toCanvas();
-            if (!tiffCanvas || tiffCanvas.width === 0 || tiffCanvas.height === 0) {
-              reject(new Error(`TIFF.js failed to produce a valid canvas for ${file.name}, or canvas is 0x0.`));
-              return;
-            }
-            const dataUrl = tiffCanvas.toDataURL();
-            
-            const img = new Image();
-            img.onload = () => {
-              if (img.naturalWidth === 0 || img.naturalHeight === 0) {
-                reject(new Error(`TIFF image ${file.name} (from dataURL) loaded with zero dimensions (0x0).`));
-              } else {
-                resolve(img);
-              }
-            };
-            img.onerror = (e) => {
-              const errorMsg = typeof e === 'string' ? e : (e as Event)?.type || 'unknown image load error';
-              reject(new Error(`Failed to load TIFF image ${file.name} from dataURL: ${errorMsg}`));
-            };
-            img.src = dataUrl;
-
-          } catch (tiffError) {
-            const errorMessage = tiffError instanceof Error ? tiffError.message : String(tiffError);
-            reject(new Error(`Error decoding TIFF ${file.name}: ${errorMessage}`));
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        if (!event.target?.result) {
+          reject(new Error(`FileReader failed to produce a result for ${file.name}.`));
+          return;
+        }
+        const img = new Image();
+        img.onload = () => {
+          if (img.naturalWidth === 0 || img.naturalHeight === 0) {
+            reject(new Error(`Image ${file.name} loaded with zero dimensions (0x0). Its data cannot be processed.`));
+          } else {
+            resolve(img);
           }
         };
-        reader.onerror = () => {
-          reject(new Error(`FileReader failed to read TIFF ${file.name} as ArrayBuffer. Error: ${reader.error?.name || 'unknown error'}`));
+        img.onerror = (e) => {
+          const errorMsg = typeof e === 'string' ? e : (e as Event)?.type || 'unknown image load error';
+          reject(new Error(`Failed to load image ${file.name}: ${errorMsg}`));
         };
-        reader.readAsArrayBuffer(file);
-      } else {
-        // Standard image loading (PNG, JPG, etc.)
-        const reader = new FileReader();
-        reader.onload = (event) => {
-          if (!event.target?.result) {
-            reject(new Error(`FileReader failed to produce a result for ${file.name}.`));
-            return;
-          }
-          const img = new Image();
-          img.onload = () => {
-            if (img.naturalWidth === 0 || img.naturalHeight === 0) {
-              reject(new Error(`Image ${file.name} loaded with zero dimensions (0x0). Its data cannot be processed.`));
-            } else {
-              resolve(img);
-            }
-          };
-          img.onerror = (e) => {
-            const errorMsg = typeof e === 'string' ? e : (e as Event)?.type || 'unknown image load error';
-            reject(new Error(`Failed to load image ${file.name}: ${errorMsg}`));
-          };
-          img.src = event.target.result as string;
-        };
-        reader.onerror = () => {
-          reject(new Error(`FileReader failed to read ${file.name}. Error: ${reader.error?.name || 'unknown error'}`));
-        };
-        reader.readAsDataURL(file);
-      }
+        img.src = event.target.result as string;
+      };
+      reader.onerror = () => {
+        reject(new Error(`FileReader failed to read ${file.name}. Error: ${reader.error?.name || 'unknown error'}`));
+      };
+      reader.readAsDataURL(file);
     });
   };
 
@@ -464,13 +400,15 @@ export default function AstroStackerPage() {
   };
   
   useEffect(() => {
-    // Cleanup object URLs when component unmounts or uploadedFiles change
+    // Data URLs from fileToDataURL don't need explicit cleanup.
+    // If URL.createObjectURL were used for previews (e.g., for TIFFs before),
+    // cleanup would be necessary here.
     return () => {
-      uploadedFiles.forEach(uploadedFile => {
-        if (uploadedFile.previewUrl.startsWith('blob:')) {
-          URL.revokeObjectURL(uploadedFile.previewUrl);
-        }
-      });
+      // uploadedFiles.forEach(uploadedFile => {
+      //   if (uploadedFile.previewUrl.startsWith('blob:')) {
+      //     URL.revokeObjectURL(uploadedFile.previewUrl);
+      //   }
+      // });
     };
   }, [uploadedFiles]);
 
@@ -487,7 +425,7 @@ export default function AstroStackerPage() {
                   <StarIcon className="mr-2 h-5 w-5 text-accent" />
                   Upload & Align Images
                 </CardTitle>
-                <CardDescription>Add captures (JPG, PNG, TIFF). Images are aligned using detected stars (native resolution analysis, fallback to brightness) then stacked.</CardDescription>
+                <CardDescription>Add captures (JPG, PNG). Images are aligned using detected stars (native resolution analysis, fallback to brightness) then stacked.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <ImageUploadArea onFilesAdded={handleFilesAdded} isProcessing={isProcessing} />
