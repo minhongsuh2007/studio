@@ -225,7 +225,7 @@ export default function AstroStackerPage() {
 
       if (imageElements.length === 0) {
         toast({ title: "No images loaded", description: "Could not load any images for stacking.", variant: "destructive" });
-        setIsProcessing(false); // Ensure processing is set to false here too
+        setIsProcessing(false);
         return;
       }
 
@@ -236,7 +236,7 @@ export default function AstroStackerPage() {
           description: `The first image (${uploadedFiles[0].file.name}) is invalid (0x0 dimensions). Cannot proceed.`,
           variant: "destructive",
         });
-        setIsProcessing(false); // Ensure processing is set to false here too
+        setIsProcessing(false);
         return;
       }
       
@@ -325,7 +325,7 @@ export default function AstroStackerPage() {
       const referenceCentroid = centroids[0];
       if (!referenceCentroid) {
         toast({ title: "Alignment Failed", description: "Could not determine alignment reference for the first image. Stacking cannot proceed.", variant: "destructive" });
-        setIsProcessing(false); // Ensure processing is set to false here too
+        setIsProcessing(false);
         return;
       }
       
@@ -346,6 +346,7 @@ export default function AstroStackerPage() {
           dx = referenceCentroid.x - currentCentroid.x;
           dy = referenceCentroid.y - currentCentroid.y;
         } else {
+          // This case should ideally be rare due to fallbacks in centroid calculation
           dx = referenceCentroid.x - (img.naturalWidth / 2 * (targetWidth / img.naturalWidth)); 
           dy = referenceCentroid.y - (img.naturalHeight / 2 * (targetHeight / img.naturalHeight));
           console.warn(`Centroid missing for image ${i} despite fallbacks. Aligning its geometric center to reference centroid.`);
@@ -369,12 +370,12 @@ export default function AstroStackerPage() {
         }
       }
 
-      const averagedImageData = ctx.createImageData(targetWidth, targetHeight);
-      const numImagesToAverage = imageElements.filter(img => img && img.naturalWidth > 0 && img.naturalHeight > 0).length;
-      const numValidImagesForAverage = numImagesToAverage > 0 ? numImagesToAverage : 1; 
+      const validImagesForAverage = imageElements.filter(img => img && img.naturalWidth > 0 && img.naturalHeight > 0);
+      const numValidImagesToAverage = validImagesForAverage.length > 0 ? validImagesForAverage.length : 1;
 
+      const averagedImageData = ctx.createImageData(targetWidth, targetHeight);
       for (let i = 0; i < summedPixelData.length; i++) {
-        averagedImageData.data[i] = summedPixelData[i] / numValidImagesForAverage;
+        averagedImageData.data[i] = summedPixelData[i] / numValidImagesToAverage;
         if (i % 4 === 3) { 
              averagedImageData.data[i] = 255; 
         }
@@ -424,7 +425,10 @@ export default function AstroStackerPage() {
                   <StarIcon className="mr-2 h-5 w-5 text-accent" />
                   Upload & Align Images
                 </CardTitle>
-                <CardDescription>Add captures (JPG, PNG). Images are aligned using detected stars (native resolution analysis, fallback to brightness) then stacked.</CardDescription>
+                <CardDescription>
+                  Add captures (JPG, PNG). Images are aligned using detected stars (native resolution analysis, fallback to brightness) then stacked. 
+                  Processing many or very large images may be slow or cause browser issues on some devices.
+                </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <ImageUploadArea onFilesAdded={handleFilesAdded} isProcessing={isProcessing} />
