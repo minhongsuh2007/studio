@@ -2,10 +2,11 @@
 "use client";
 
 import type React from 'react';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
 import { fileToDataURL } from '@/lib/utils';
+import Tiff from 'tiff.js';
 
 import { AppHeader } from '@/components/astrostacker/AppHeader';
 import { ImageUploadArea } from '@/components/astrostacker/ImageUploadArea';
@@ -13,7 +14,7 @@ import { ImageQueueItem } from '@/components/astrostacker/ImageQueueItem';
 import { ImagePreview } from '@/components/astrostacker/ImagePreview';
 import { DownloadButton } from '@/components/astrostacker/DownloadButton';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Layers, Wand2, Star as StarIcon } from 'lucide-react';
+import { Star as StarIcon, Wand2 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 
 
@@ -150,7 +151,16 @@ export default function AstroStackerPage() {
     const newUploadedFiles: UploadedFile[] = [];
     for (const file of files) {
       try {
-        const previewUrl = await fileToDataURL(file);
+        // For TIFFs, we generate a preview differently in loadImage, so use a placeholder here.
+        // For other types, generate preview as before.
+        const isTiff = file.type === 'image/tiff' || file.name.toLowerCase().endsWith('.tif') || file.name.toLowerCase().endsWith('.tiff');
+        let previewUrl;
+        if (isTiff) {
+          // Placeholder, actual image element is created in loadImage
+           previewUrl = URL.createObjectURL(file); 
+        } else {
+            previewUrl = await fileToDataURL(file);
+        }
         newUploadedFiles.push({ file, previewUrl });
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
@@ -166,35 +176,89 @@ export default function AstroStackerPage() {
   };
 
   const handleRemoveImage = (indexToRemove: number) => {
-    setUploadedFiles(prev => prev.filter((_, index) => index !== indexToRemove));
+    setUploadedFiles(prev => {
+      const newFiles = prev.filter((_, index) => index !== indexToRemove);
+      // Clean up object URL if it was a TIFF preview
+      const removedFile = prev[indexToRemove];
+      if (removedFile && (removedFile.file.type === 'image/tiff' || removedFile.file.name.toLowerCase().endsWith('.tif') || removedFile.file.name.toLowerCase().endsWith('.tiff'))) {
+        if (removedFile.previewUrl.startsWith('blob:')) {
+          URL.revokeObjectURL(removedFile.previewUrl);
+        }
+      }
+      return newFiles;
+    });
   };
 
   const loadImage = (file: File): Promise<HTMLImageElement> => {
     return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        if (!event.target?.result) {
-          reject(new Error(`FileReader failed to produce a result for ${file.name}.`));
-          return;
-        }
-        const img = new Image();
-        img.onload = () => {
-          if (img.naturalWidth === 0 || img.naturalHeight === 0) {
-            reject(new Error(`Image ${file.name} loaded with zero dimensions (0x0). Its data cannot be processed.`));
-          } else {
-            resolve(img);
+      const isTiff = file.type === 'image/tiff' || file.name.toLowerCase().endsWith('.tif') || file.name.toLowerCase().endsWith('.tiff');
+
+      if (isTiff) {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          if (!event.target?.result) {
+            reject(new Error(`FileReader failed to produce ArrayBuffer for TIFF ${file.name}.`));
+            return;
+          }
+          try {
+            const tiff = new Tiff({ buffer: event.target.result as ArrayBuffer });
+            const tiffCanvas = tiff.toCanvas();
+            if (!tiffCanvas || tiffCanvas.width === 0 || tiffCanvas.height === 0) {
+              reject(new Error(`TIFF.js failed to produce a valid canvas for ${file.name}, or canvas is 0x0.`));
+              return;
+            }
+            const dataUrl = tiffCanvas.toDataURL();
+            
+            const img = new Image();
+            img.onload = () => {
+              if (img.naturalWidth === 0 || img.naturalHeight === 0) {
+                reject(new Error(`TIFF image ${file.name} (from dataURL) loaded with zero dimensions (0x0).`));
+              } else {
+                resolve(img);
+              }
+            };
+            img.onerror = (e) => {
+              const errorMsg = typeof e === 'string' ? e : (e as Event)?.type || 'unknown image load error';
+              reject(new Error(`Failed to load TIFF image ${file.name} from dataURL: ${errorMsg}`));
+            };
+            img.src = dataUrl;
+
+          } catch (tiffError) {
+            const errorMessage = tiffError instanceof Error ? tiffError.message : String(tiffError);
+            reject(new Error(`Error decoding TIFF ${file.name}: ${errorMessage}`));
           }
         };
-        img.onerror = (e) => {
-          const errorMsg = typeof e === 'string' ? e : (e as Event)?.type || 'unknown image load error';
-          reject(new Error(`Failed to load image ${file.name}: ${errorMsg}`));
+        reader.onerror = () => {
+          reject(new Error(`FileReader failed to read TIFF ${file.name} as ArrayBuffer. Error: ${reader.error?.name || 'unknown error'}`));
         };
-        img.src = event.target.result as string;
-      };
-      reader.onerror = () => {
-        reject(new Error(`FileReader failed to read ${file.name}. Error: ${reader.error?.name || 'unknown error'}`));
-      };
-      reader.readAsDataURL(file);
+        reader.readAsArrayBuffer(file);
+      } else {
+        // Standard image loading (PNG, JPG, etc.)
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          if (!event.target?.result) {
+            reject(new Error(`FileReader failed to produce a result for ${file.name}.`));
+            return;
+          }
+          const img = new Image();
+          img.onload = () => {
+            if (img.naturalWidth === 0 || img.naturalHeight === 0) {
+              reject(new Error(`Image ${file.name} loaded with zero dimensions (0x0). Its data cannot be processed.`));
+            } else {
+              resolve(img);
+            }
+          };
+          img.onerror = (e) => {
+            const errorMsg = typeof e === 'string' ? e : (e as Event)?.type || 'unknown image load error';
+            reject(new Error(`Failed to load image ${file.name}: ${errorMsg}`));
+          };
+          img.src = event.target.result as string;
+        };
+        reader.onerror = () => {
+          reject(new Error(`FileReader failed to read ${file.name}. Error: ${reader.error?.name || 'unknown error'}`));
+        };
+        reader.readAsDataURL(file);
+      }
     });
   };
 
@@ -206,8 +270,25 @@ export default function AstroStackerPage() {
     setIsProcessing(true);
     setStackedImage(null);
 
+    let imageElements: HTMLImageElement[] = [];
     try {
-      const imageElements = await Promise.all(uploadedFiles.map(f => loadImage(f.file)));
+      // Load images sequentially to catch errors early for individual files.
+      for (const f of uploadedFiles) {
+        try {
+          const imgEl = await loadImage(f.file);
+          imageElements.push(imgEl);
+        } catch (loadError) {
+           const errorMessage = loadError instanceof Error ? loadError.message : String(loadError);
+           toast({
+            title: `Error Loading ${f.file.name}`,
+            description: errorMessage,
+            variant: "destructive",
+           });
+           // Optionally, decide if you want to skip this image or stop the whole process
+           // For now, we'll skip and continue if other images are available
+        }
+      }
+
 
       if (imageElements.length === 0) {
         toast({ title: "No images loaded", description: "Could not load any images for stacking.", variant: "destructive" });
@@ -216,6 +297,7 @@ export default function AstroStackerPage() {
       }
 
       const firstImage = imageElements[0];
+      // This check is already in loadImage, but good to have a sanity check here if it still passed.
       if (!firstImage || firstImage.naturalWidth === 0 || firstImage.naturalHeight === 0) {
         toast({
           title: "Invalid Reference Image",
@@ -235,6 +317,7 @@ export default function AstroStackerPage() {
       const ctx = offscreenCanvas.getContext('2d', { willReadFrequently: true });
 
       const tempAnalysisCanvas = document.createElement('canvas');
+      // Context will be fetched later inside the loop with correct dimensions
       const tempAnalysisCtx = tempAnalysisCanvas.getContext('2d', { willReadFrequently: true });
 
 
@@ -269,7 +352,7 @@ export default function AstroStackerPage() {
                 y: nativeStarCentroid.y * (targetHeight / imgEl.naturalHeight),
               };
           } else {
-            console.warn(`Star-based centroid detection failed for ${uploadedFiles[i].file.name}. Falling back to global brightness centroid on NATIVE image.`);
+            console.warn(`Star-based centroid detection failed for ${uploadedFiles[i]?.file.name || `image ${i}`}. Falling back to global brightness centroid on NATIVE image.`);
             method = "brightness-based (native)";
             const nativeBrightnessCentroid = calculateBrightnessCentroid(nativeImageData);
             if (nativeBrightnessCentroid) {
@@ -280,27 +363,29 @@ export default function AstroStackerPage() {
             }
           }
         } catch (imgAnalysisError) {
-            console.error(`Error analyzing image ${uploadedFiles[i].file.name}: ${imgAnalysisError instanceof Error ? imgAnalysisError.message : String(imgAnalysisError)}`);
+            const fileNameForError = uploadedFiles[i]?.file?.name || `image ${i}`;
+            console.error(`Error analyzing image ${fileNameForError}: ${imgAnalysisError instanceof Error ? imgAnalysisError.message : String(imgAnalysisError)}`);
             method = "analysis_error";
         }
         
         if (!finalScaledCentroid) {
-            console.error(`Could not determine any centroid for ${uploadedFiles[i].file.name}. It will be aligned to target geometric center.`);
+            const fileNameForError = uploadedFiles[i]?.file?.name || `image ${i}`;
+            console.error(`Could not determine any centroid for ${fileNameForError}. It will be aligned to target geometric center.`);
             toast({
                 title: "Centroid Failed",
-                description: `Could not determine centroid for ${uploadedFiles[i].file.name}. It may not align optimally.`,
+                description: `Could not determine centroid for ${fileNameForError}. It may not align optimally.`,
                 variant: "destructive"
             });
             finalScaledCentroid = { x: targetWidth / 2, y: targetHeight / 2 }; // Fallback to geometric center of the target frame
             method = method === "analysis_error" ? "analysis_error_fallback" : "geometric_center_fallback";
         }
-        console.log(`Image ${i} (${uploadedFiles[i].file.name}) centroid method: ${method}, Scaled to Target Coords:`, finalScaledCentroid);
+        const fileNameForLog = uploadedFiles[i]?.file?.name || `image ${i}`;
+        console.log(`Image ${i} (${fileNameForLog}) centroid method: ${method}, Scaled to Target Coords:`, finalScaledCentroid);
         centroids.push(finalScaledCentroid);
       }
 
       const referenceCentroid = centroids[0];
       if (!referenceCentroid) {
-        // This case should be rare due to fallbacks, but good to guard.
         toast({ title: "Alignment Failed", description: "Could not determine alignment reference for the first image. Stacking cannot proceed.", variant: "destructive" });
         setIsProcessing(false);
         return;
@@ -310,30 +395,46 @@ export default function AstroStackerPage() {
 
       for (let i = 0; i < imageElements.length; i++) {
         const img = imageElements[i]; // Use the original HTMLImageElement for drawing
-        const currentCentroid = centroids[i]; // This is already the scaledCentroid
+        const currentCentroid = centroids[i]; 
         
         let dx = 0;
         let dy = 0;
         
-        // currentCentroid should always exist due to fallbacks
-        dx = referenceCentroid.x - (currentCentroid?.x || (targetWidth/2));
-        dy = referenceCentroid.y - (currentCentroid?.y || (targetHeight/2));
+        if (currentCentroid) { // Should always exist due to fallbacks
+          dx = referenceCentroid.x - currentCentroid.x;
+          dy = referenceCentroid.y - currentCentroid.y;
+        } else {
+          // This case should ideally not be reached due to fallbacks, but as a safeguard:
+          dx = referenceCentroid.x - (targetWidth/2); // align to center of ref
+          dy = referenceCentroid.y - (targetHeight/2); // align to center of ref
+          console.warn(`Centroid missing for image ${i} despite fallbacks. Aligning its center to reference centroid.`);
+        }
         
         ctx.clearRect(0, 0, targetWidth, targetHeight); 
-        // Draw the original image, scaled to target dimensions, with the calculated offset.
-        // The offsets (dx, dy) are based on centroids that were also scaled to this target coordinate space.
         ctx.drawImage(img, dx, dy, targetWidth, targetHeight); 
         
-        const frameImageData = ctx.getImageData(0, 0, targetWidth, targetHeight);
-        for (let j = 0; j < frameImageData.data.length; j++) {
-          summedPixelData[j] += frameImageData.data[j];
+        try {
+          const frameImageData = ctx.getImageData(0, 0, targetWidth, targetHeight);
+          for (let j = 0; j < frameImageData.data.length; j++) {
+            summedPixelData[j] += frameImageData.data[j];
+          }
+        } catch (e) {
+          console.error(`Error getting image data for frame ${i} after drawing with offset:`, e);
+          toast({
+            title: `Stacking Error on Frame ${i}`,
+            description: `Could not process pixel data for ${uploadedFiles[i]?.file.name || `image ${i}`}. It might be excluded or corrupt the final stack.`,
+            variant: "destructive"
+          });
+          // Decide how to handle: skip frame or stop? For now, it might lead to a darker pixel if summedPixelData isn't incremented
         }
       }
 
       const averagedImageData = ctx.createImageData(targetWidth, targetHeight);
+      const numValidImagesForAverage = imageElements.length > 0 ? imageElements.length : 1; // Avoid division by zero
+
       for (let i = 0; i < summedPixelData.length; i++) {
-        averagedImageData.data[i] = summedPixelData[i] / imageElements.length;
-        if (i % 4 === 3 && imageElements.length > 0) { 
+        averagedImageData.data[i] = summedPixelData[i] / numValidImagesForAverage;
+        if (i % 4 === 3) { // Alpha channel
              averagedImageData.data[i] = 255; // Ensure alpha is opaque
         }
       }
@@ -363,8 +464,13 @@ export default function AstroStackerPage() {
   };
   
   useEffect(() => {
+    // Cleanup object URLs when component unmounts or uploadedFiles change
     return () => {
-      // No explicit cleanup needed for data URIs
+      uploadedFiles.forEach(uploadedFile => {
+        if (uploadedFile.previewUrl.startsWith('blob:')) {
+          URL.revokeObjectURL(uploadedFile.previewUrl);
+        }
+      });
     };
   }, [uploadedFiles]);
 
@@ -381,7 +487,7 @@ export default function AstroStackerPage() {
                   <StarIcon className="mr-2 h-5 w-5 text-accent" />
                   Upload & Align Images
                 </CardTitle>
-                <CardDescription>Add captures. Images are aligned using detected stars (native resolution analysis, fallback to brightness) then stacked.</CardDescription>
+                <CardDescription>Add captures (JPG, PNG, TIFF). Images are aligned using detected stars (native resolution analysis, fallback to brightness) then stacked.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <ImageUploadArea onFilesAdded={handleFilesAdded} isProcessing={isProcessing} />
@@ -407,7 +513,7 @@ export default function AstroStackerPage() {
                       className="w-full bg-accent hover:bg-accent/90 text-accent-foreground"
                     >
                       <Wand2 className="mr-2 h-5 w-5" />
-                      {isProcessing ? 'Processing...' : 'Align by Stars (Native) & Stack'}
+                      {isProcessing ? 'Processing...' : 'Align by Stars & Stack'}
                     </Button>
                   </>
                 )}
