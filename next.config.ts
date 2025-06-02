@@ -23,9 +23,9 @@ const nextConfig: NextConfig = {
     // Fix for 'fs' and 'path' modules not found errors with tiff.js on the client side
     if (!isServer) {
       config.resolve.fallback = {
-        ...config.resolve.fallback,
+        ...config.resolve.fallback, // Spread existing fallbacks if any
         fs: false,
-        path: false, // Add fallback for 'path' module
+        path: false,
       };
     }
     return config;
