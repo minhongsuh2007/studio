@@ -15,9 +15,16 @@ export function ImagePreview({ imageUrl, isLoading }: ImagePreviewProps) {
   const [imageError, setImageError] = useState(false);
 
   useEffect(() => {
-    // Reset error state when imageUrl changes
+    // Reset error state when imageUrl changes (to null or a new URL)
     setImageError(false);
   }, [imageUrl]);
+
+  useEffect(() => {
+    // If loading starts, reset any previous error state
+    if (isLoading) {
+      setImageError(false);
+    }
+  }, [isLoading]);
 
   return (
     <Card className="flex-grow flex items-center justify-center shadow-lg min-h-[300px] md:min-h-[400px] bg-background/50">
@@ -31,6 +38,7 @@ export function ImagePreview({ imageUrl, isLoading }: ImagePreviewProps) {
         {!isLoading && imageUrl && !imageError && (
           <div className="relative w-full h-full max-w-full max-h-[calc(100vh-200px)]">
              <NextImage
+                key={imageUrl} // Force re-mount if imageUrl string changes
                 src={imageUrl}
                 alt="Stacked astrophotography image"
                 layout="fill"
@@ -38,7 +46,7 @@ export function ImagePreview({ imageUrl, isLoading }: ImagePreviewProps) {
                 className="rounded-md"
                 data-ai-hint="galaxy nebula"
                 onError={() => {
-                  console.warn("ImagePreview: NextImage onError triggered for:", imageUrl?.substring(0, 60) + "...");
+                  console.warn("ImagePreview: NextImage onError triggered for image preview.");
                   setImageError(true);
                 }}
               />
@@ -50,7 +58,7 @@ export function ImagePreview({ imageUrl, isLoading }: ImagePreviewProps) {
             <p className="text-lg">Your stacked image will appear here</p>
             <p className="text-sm">
               {imageError 
-                ? "Could not load the preview image. It might be invalid or too large." 
+                ? "Could not load the preview. The image might be invalid, too large, or processing resulted in an empty/corrupt image." 
                 : "Upload images and click 'Stack Images' to begin."}
             </p>
           </div>
@@ -59,3 +67,5 @@ export function ImagePreview({ imageUrl, isLoading }: ImagePreviewProps) {
     </Card>
   );
 }
+
+    

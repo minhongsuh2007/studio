@@ -28,15 +28,15 @@ interface Star {
   brightness: number;
 }
 
-const MAX_IMAGE_LOAD_DIMENSION = 16384; // Max dimension for an image to be loaded at all
-const ANALYSIS_MAX_DIMENSION = 1024; // Max dimension for images during analysis (star detection/centroid)
+const MAX_IMAGE_LOAD_DIMENSION = 16384; 
+const ANALYSIS_MAX_DIMENSION = 1024; 
+const MIN_VALID_DATA_URL_LENGTH = 100; // Increased minimum length for a data URL to be considered potentially valid
 
-// Helper function to detect star-like features in image data
 function detectStars(imageData: ImageData, brightnessThreshold: number = 180, localContrastFactor: number = 1.3): Star[] {
   const stars: Star[] = [];
   const { data, width, height } = imageData;
 
-  for (let y = 1; y < height - 1; y++) { // Avoid edges for neighbor checks
+  for (let y = 1; y < height - 1; y++) { 
     for (let x = 1; x < width - 1; x++) {
       const i = (y * width + x) * 4;
       const r = data[i];
@@ -216,7 +216,7 @@ export default function AstroStackerPage() {
       return;
     }
     setIsProcessing(true);
-    setStackedImage(null); // Clear previous stacked image
+    setStackedImage(null); 
     console.log("Starting image stacking process (Median)...");
 
     try {
@@ -237,7 +237,7 @@ export default function AstroStackerPage() {
 
       if (imageElements.length < 2) {
         toast({ title: "Not Enough Valid Images", description: "Need at least two valid images for median stacking after filtering.", variant: "destructive" });
-        setIsProcessing(false); // Also called in finally, but good for early exit clarity
+        setIsProcessing(false); 
         return;
       }
 
@@ -424,7 +424,7 @@ export default function AstroStackerPage() {
 
       if (validImagesStackedCount === 0) {
         toast({ title: "Stacking Failed", description: "No images could be successfully processed and stacked.", variant: "destructive" });
-        setIsProcessing(false); // Also in finally
+        setIsProcessing(false); 
         return;
       }
 
@@ -439,11 +439,11 @@ export default function AstroStackerPage() {
       ctx.putImageData(finalImageData, 0, 0);
       const resultDataUrl = offscreenCanvas.toDataURL('image/png');
       
-      if (!resultDataUrl || resultDataUrl === "data:,") {
-        console.error("Failed to generate data URL from canvas. Preview will be empty. Canvas might be too large or an operation failed.");
+      if (!resultDataUrl || resultDataUrl === "data:," || resultDataUrl.length < MIN_VALID_DATA_URL_LENGTH) {
+        console.error("Failed to generate a valid data URL from canvas. Preview will be empty. Canvas might be too large, an operation failed, or the result is empty.");
         toast({
           title: "Preview Generation Failed",
-          description: "Could not generate the image preview. The image might be too large or an internal error occurred during canvas processing.",
+          description: "Could not generate a valid image preview. The image might be too large, processing resulted in an empty image, or an internal error occurred during canvas processing.",
           variant: "destructive",
         });
         setStackedImage(null);
@@ -467,7 +467,7 @@ export default function AstroStackerPage() {
         description: `An unexpected error occurred: ${errorMessage}. Check console for details.`,
         variant: "destructive",
       });
-      setStackedImage(null); // Ensure stackedImage is null on error
+      setStackedImage(null); 
     } finally {
       setIsProcessing(false);
       console.log("Image median stacking process finished.");
@@ -475,9 +475,7 @@ export default function AstroStackerPage() {
   };
   
   useEffect(() => {
-    // Cleanup logic if needed when component unmounts
     return () => {
-      // For example, revoke object URLs if they were created and stored in state, though not the case here.
     };
   }, []);
 
@@ -495,10 +493,10 @@ export default function AstroStackerPage() {
                   Upload & Align Images (Median Stack)
                 </CardTitle>
                 <CardDescription>
-                  Add PNG, JPG, GIF, or WEBP. Images are aligned using detected stars and then stacked using the median pixel value to reduce noise.
+                  Add PNG, JPG, GIF, or WEBP. Images are aligned using detected stars (or brightness centroids as fallback) and then stacked using the median pixel value to reduce noise.
                   Analysis for star detection on images larger than {ANALYSIS_MAX_DIMENSION}px (width/height) is done on a scaled-down version.
                   Max image load dimension: {MAX_IMAGE_LOAD_DIMENSION}px.
-                  Processing many or very large images (especially with median stacking) can be very slow or cause browser issues.
+                  Processing many or very large images may be slow or cause browser issues on some devices.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -547,4 +545,6 @@ export default function AstroStackerPage() {
     </div>
   );
 }
+    
+
     
