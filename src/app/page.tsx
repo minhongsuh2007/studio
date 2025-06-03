@@ -211,12 +211,12 @@ export default function AstroStackerPage() {
   };
 
   const handleStackImages = async () => {
-    if (uploadedFiles.length === 0) {
-      toast({ title: "No images", description: "Please upload images to stack." });
+    if (uploadedFiles.length < 2) {
+      toast({ title: "Not Enough Images", description: "Please upload at least two images for median stacking." });
       return;
     }
     setIsProcessing(true);
-    setStackedImage(null);
+    setStackedImage(null); // Clear previous stacked image
     console.log("Starting image stacking process (Median)...");
 
     try {
@@ -235,9 +235,9 @@ export default function AstroStackerPage() {
         }
       }
 
-      if (imageElements.length < 2) { // Need at least 2 images for median stacking to be meaningful
-        toast({ title: "Not Enough Images", description: "Please upload at least two valid images for median stacking.", variant: "destructive" });
-        setIsProcessing(false);
+      if (imageElements.length < 2) {
+        toast({ title: "Not Enough Valid Images", description: "Need at least two valid images for median stacking after filtering.", variant: "destructive" });
+        setIsProcessing(false); // Also called in finally, but good for early exit clarity
         return;
       }
 
@@ -424,7 +424,7 @@ export default function AstroStackerPage() {
 
       if (validImagesStackedCount === 0) {
         toast({ title: "Stacking Failed", description: "No images could be successfully processed and stacked.", variant: "destructive" });
-        setIsProcessing(false);
+        setIsProcessing(false); // Also in finally
         return;
       }
 
@@ -439,15 +439,25 @@ export default function AstroStackerPage() {
       ctx.putImageData(finalImageData, 0, 0);
       const resultDataUrl = offscreenCanvas.toDataURL('image/png');
       
-      setStackedImage(resultDataUrl);
-      const alignmentMessage = successfulStarAlignments > 0 
-        ? `${successfulStarAlignments}/${imageElements.length} images primarily aligned using star-based centroids. Others used fallbacks.`
-        : `Images aligned using brightness-based centroids or geometric centers. Some analyses may have been scaled for performance.`;
-      toast({ 
-        title: "Median Stacking Complete", 
-        description: `${alignmentMessage} ${validImagesStackedCount} image(s) processed using median stacking. Processing dimension was ${targetWidth}x${targetHeight}. This can be slow for large images.`,
-        duration: 9000,
-      });
+      if (!resultDataUrl || resultDataUrl === "data:,") {
+        console.error("Failed to generate data URL from canvas. Preview will be empty. Canvas might be too large or an operation failed.");
+        toast({
+          title: "Preview Generation Failed",
+          description: "Could not generate the image preview. The image might be too large or an internal error occurred during canvas processing.",
+          variant: "destructive",
+        });
+        setStackedImage(null);
+      } else {
+        setStackedImage(resultDataUrl);
+        const alignmentMessage = successfulStarAlignments > 0 
+          ? `${successfulStarAlignments}/${imageElements.length} images primarily aligned using star-based centroids. Others used fallbacks.`
+          : `Images aligned using brightness-based centroids or geometric centers. Some analyses may have been scaled for performance.`;
+        toast({ 
+          title: "Median Stacking Complete", 
+          description: `${alignmentMessage} ${validImagesStackedCount} image(s) processed using median stacking. Processing dimension was ${targetWidth}x${targetHeight}. This can be slow for large images.`,
+          duration: 9000,
+        });
+      }
 
     } catch (error) {
       console.error("Unhandled error in handleStackImages:", error);
@@ -457,6 +467,7 @@ export default function AstroStackerPage() {
         description: `An unexpected error occurred: ${errorMessage}. Check console for details.`,
         variant: "destructive",
       });
+      setStackedImage(null); // Ensure stackedImage is null on error
     } finally {
       setIsProcessing(false);
       console.log("Image median stacking process finished.");
@@ -464,8 +475,9 @@ export default function AstroStackerPage() {
   };
   
   useEffect(() => {
+    // Cleanup logic if needed when component unmounts
     return () => {
-      // Cleanup
+      // For example, revoke object URLs if they were created and stored in state, though not the case here.
     };
   }, []);
 
