@@ -28,24 +28,29 @@ interface Star {
   brightness: number;
 }
 
-const MAX_IMAGE_LOAD_DIMENSION = 8192; // Reduced
-const ANALYSIS_MAX_DIMENSION = 600; // Further Reduced
-const MAX_IMAGES_TO_STACK = 10; // New limit
-const MIN_VALID_DATA_URL_LENGTH = 100; 
-const MAX_STARS_FOR_CENTROID_CALCULATION = 2000; 
+const MAX_IMAGE_LOAD_DIMENSION = 8192;
+const ANALYSIS_MAX_DIMENSION = 600;
+const MAX_STACKING_SIDE_LENGTH = 3500; // New cap for actual stacking canvas dimension
+const MAX_IMAGES_TO_STACK = 10;
+const MIN_VALID_DATA_URL_LENGTH = 100;
+const MAX_STARS_FOR_CENTROID_CALCULATION = 2000;
 
-// Adjusted default parameters for potentially better star detection & performance
 function detectStars(imageData: ImageData, brightnessThreshold: number = 200, localContrastFactor: number = 1.5): Star[] {
   const stars: Star[] = [];
   const { data, width, height } = imageData;
 
-  for (let y = 1; y < height - 1; y++) { 
+  if (width === 0 || height === 0) {
+    console.warn("detectStars called with zero-dimension imageData.");
+    return stars;
+  }
+
+  for (let y = 1; y < height - 1; y++) {
     for (let x = 1; x < width - 1; x++) {
       const i = (y * width + x) * 4;
       const r = data[i];
       const g = data[i + 1];
       const b = data[i + 2];
-      const currentPixelBrightness = r + g + b; 
+      const currentPixelBrightness = r + g + b;
 
       if (r > brightnessThreshold && g > brightnessThreshold && b > brightnessThreshold) {
         let neighborSumBrightness = 0;
@@ -54,10 +59,13 @@ function detectStars(imageData: ImageData, brightnessThreshold: number = 200, lo
           for (let dx = -1; dx <= 1; dx++) {
             if (dx === 0 && dy === 0) continue;
             const ni = ((y + dy) * width + (x + dx)) * 4;
-            neighborSumBrightness += data[ni] + data[ni + 1] + data[ni + 2];
-            neighborCount++;
+            if (ni >= 0 && ni < data.length -3) { // Boundary check
+                neighborSumBrightness += data[ni] + data[ni + 1] + data[ni + 2];
+                neighborCount++;
+            }
           }
         }
+        if (neighborCount === 0) continue; // Avoid division by zero
         const avgNeighborBrightness = neighborSumBrightness / neighborCount;
 
         if (currentPixelBrightness > avgNeighborBrightness * localContrastFactor) {
@@ -66,7 +74,7 @@ function detectStars(imageData: ImageData, brightnessThreshold: number = 200, lo
       }
     }
   }
-  if (stars.length > 1000) { 
+  if (stars.length > 1000) {
     console.warn(`Detected a large number of stars (${stars.length}) during analysis. This might slow down centroid calculation or indicate a noisy image. Consider adjusting detection parameters if results are suboptimal.`);
   }
   return stars;
@@ -74,7 +82,7 @@ function detectStars(imageData: ImageData, brightnessThreshold: number = 200, lo
 
 function calculateStarArrayCentroid(starsInput: Star[]): { x: number; y: number } | null {
   let stars = starsInput;
-  if (stars.length < 3) { 
+  if (stars.length < 3) {
      console.warn(`Not enough stars (${stars.length}) detected for star-based centroid. Need at least 3.`);
      return null;
   }
@@ -83,13 +91,12 @@ function calculateStarArrayCentroid(starsInput: Star[]): { x: number; y: number 
     console.warn(`More than ${MAX_STARS_FOR_CENTROID_CALCULATION} stars detected (${stars.length}). Using a random sample of ${MAX_STARS_FOR_CENTROID_CALCULATION} stars for centroid calculation to improve performance.`);
     const sampledStars: Star[] = [];
     const indices = new Set<number>();
-    while (indices.size < MAX_STARS_FOR_CENTROID_CALCULATION) {
+    while (indices.size < MAX_STARS_FOR_CENTROID_CALCULATION && indices.size < stars.length) {
       indices.add(Math.floor(Math.random() * stars.length));
     }
     indices.forEach(index => sampledStars.push(stars[index]));
     stars = sampledStars;
   }
-
 
   let totalBrightness = 0;
   let weightedX = 0;
@@ -101,7 +108,7 @@ function calculateStarArrayCentroid(starsInput: Star[]): { x: number; y: number 
     totalBrightness += star.brightness;
   }
 
-  if (totalBrightness === 0) { 
+  if (totalBrightness === 0) {
     return stars.length > 0 ? { x: stars[0].x, y: stars[0].y } : null;
   }
 
@@ -113,6 +120,10 @@ function calculateStarArrayCentroid(starsInput: Star[]): { x: number; y: number 
 
 function calculateBrightnessCentroid(imageData: ImageData, brightnessThreshold: number = 60): { x: number; y: number } | null {
     const { data, width, height } = imageData;
+    if (width === 0 || height === 0) {
+        console.warn("calculateBrightnessCentroid called with zero-dimension imageData.");
+        return { x: 0, y: 0 }; // or null, but provide a fallback
+    }
     let totalBrightness = 0;
     let weightedX = 0;
     let weightedY = 0;
@@ -124,7 +135,7 @@ function calculateBrightnessCentroid(imageData: ImageData, brightnessThreshold: 
         const r = data[i];
         const g = data[i + 1];
         const b = data[i + 2];
-        const brightness = 0.299 * r + 0.587 * g + 0.114 * b; 
+        const brightness = 0.299 * r + 0.587 * g + 0.114 * b;
 
         if (brightness > brightnessThreshold) {
           weightedX += x * brightness;
@@ -137,7 +148,7 @@ function calculateBrightnessCentroid(imageData: ImageData, brightnessThreshold: 
 
     if (totalBrightness === 0 || brightPixels === 0) {
       console.warn("No bright pixels found for brightness centroid calculation. Falling back to geometric center of this image data.");
-      return { x: width / 2, y: height / 2 }; 
+      return { x: width / 2, y: height / 2 };
     }
 
     return {
@@ -147,7 +158,7 @@ function calculateBrightnessCentroid(imageData: ImageData, brightnessThreshold: 
 }
 
 const getMedian = (arr: number[]): number => {
-  if (!arr.length) return 0; 
+  if (!arr.length) return 0;
   const sortedArr = [...arr].sort((a, b) => a - b);
   const mid = Math.floor(sortedArr.length / 2);
   if (sortedArr.length % 2 !== 0) {
@@ -232,7 +243,7 @@ export default function AstroStackerPage() {
       return;
     }
     setIsProcessing(true);
-    setStackedImage(null); 
+    setStackedImage(null);
     console.log("Starting image stacking process (Median)...");
 
     let filesToProcess = uploadedFiles;
@@ -246,10 +257,9 @@ export default function AstroStackerPage() {
       filesToProcess = uploadedFiles.slice(0, MAX_IMAGES_TO_STACK);
     }
 
-
     try {
       let imageElements: HTMLImageElement[] = [];
-      for (const f of filesToProcess) { // Use filesToProcess here
+      for (const f of filesToProcess) {
         try {
           const imgEl = await loadImage(f.file);
           imageElements.push(imgEl);
@@ -264,8 +274,8 @@ export default function AstroStackerPage() {
       }
 
       if (imageElements.length < 2) {
-        toast({ title: "Not Enough Valid Images", description: `Need at least two valid images (out of the processed set of ${filesToProcess.length}) for median stacking after filtering.`, variant: "destructive" });
-        setIsProcessing(false); 
+        toast({ title: "Not Enough Valid Images", description: `Need at least two valid images (out of the processed set of ${filesToProcess.length}) for median stacking after filtering. Found ${imageElements.length}.`, variant: "destructive" });
+        setIsProcessing(false);
         return;
       }
 
@@ -273,24 +283,47 @@ export default function AstroStackerPage() {
       if (!firstImage || firstImage.naturalWidth === 0 || firstImage.naturalHeight === 0) {
         toast({
           title: "Invalid Reference Image",
-          description: `The first image (${filesToProcess[0].file.name}) is invalid or empty. Cannot proceed.`,
+          description: `The first image (${filesToProcess[0]?.file.name || 'unknown'}) is invalid or empty. Cannot proceed.`,
           variant: "destructive",
         });
         setIsProcessing(false);
         return;
       }
       
-      const targetWidth = firstImage.naturalWidth;
-      const targetHeight = firstImage.naturalHeight;
+      let targetWidth = firstImage.naturalWidth;
+      let targetHeight = firstImage.naturalHeight;
 
-      console.log(`Target stacking dimensions: ${targetWidth}x${targetHeight} (from first image of processed set)`);
+      if (targetWidth > MAX_STACKING_SIDE_LENGTH || targetHeight > MAX_STACKING_SIDE_LENGTH) {
+        const aspectRatio = targetWidth / targetHeight;
+        if (targetWidth > targetHeight) {
+          targetWidth = MAX_STACKING_SIDE_LENGTH;
+          targetHeight = Math.round(targetWidth / aspectRatio);
+        } else {
+          targetHeight = MAX_STACKING_SIDE_LENGTH;
+          targetWidth = Math.round(targetHeight * aspectRatio);
+        }
+        targetWidth = Math.max(1, targetWidth); // Ensure not zero
+        targetHeight = Math.max(1, targetHeight); // Ensure not zero
+        toast({
+          title: "Stacking Resolution Capped",
+          description: `For stability, stacking resolution has been capped to ${targetWidth}x${targetHeight} because the first image was larger than ${MAX_STACKING_SIDE_LENGTH}px on one side.`,
+          duration: 9000,
+        });
+      }
+      console.log(`Target stacking dimensions: ${targetWidth}x${targetHeight}`);
+      if (targetWidth === 0 || targetHeight === 0) {
+        toast({ title: "Error", description: "Calculated target stacking dimensions are zero. Cannot proceed.", variant: "destructive" });
+        setIsProcessing(false);
+        return;
+      }
+
 
       const offscreenCanvas = document.createElement('canvas');
       offscreenCanvas.width = targetWidth;
       offscreenCanvas.height = targetHeight;
-      const ctx = offscreenCanvas.getContext('2d', { willReadFrequently: true }); 
+      const ctx = offscreenCanvas.getContext('2d', { willReadFrequently: true });
 
-      const tempAnalysisCanvas = document.createElement('canvas'); 
+      const tempAnalysisCanvas = document.createElement('canvas');
       const tempAnalysisCtx = tempAnalysisCanvas.getContext('2d', { willReadFrequently: true });
 
       if (!ctx || !tempAnalysisCtx) {
@@ -301,25 +334,25 @@ export default function AstroStackerPage() {
       let successfulStarAlignments = 0;
 
       for (let i = 0; i < imageElements.length; i++) {
-        const imgEl = imageElements[i]; 
-        const fileNameForLog = filesToProcess[i]?.file?.name || `image ${i}`; // Use filesToProcess for name
+        const imgEl = imageElements[i];
+        const fileNameForLog = filesToProcess[i]?.file?.name || `image ${i}`;
         let finalScaledCentroid: { x: number; y: number } | null = null;
         let method = "unknown";
         
         if (!imgEl || imgEl.naturalWidth === 0 || imgEl.naturalHeight === 0) {
             console.warn(`Skipping analysis for invalid image element at index ${i}: ${fileNameForLog}`);
-            finalScaledCentroid = { x: targetWidth / 2, y: targetHeight / 2 }; 
+            finalScaledCentroid = { x: targetWidth / 2, y: targetHeight / 2 };
             method = "invalid_element_fallback";
             centroids.push(finalScaledCentroid);
             console.log(`Image ${i} (${fileNameForLog}) centroid method: ${method}, Scaled to Target Coords:`, finalScaledCentroid);
-            continue; 
+            continue;
         }
         
         try {
           console.log(`Analyzing image ${i} (${fileNameForLog}): ${imgEl.naturalWidth}x${imgEl.naturalHeight}`);
           let analysisWidth = imgEl.naturalWidth;
           let analysisHeight = imgEl.naturalHeight;
-          let analysisScaleFactor = 1.0; 
+          let analysisScaleFactor = 1.0;
 
           if (imgEl.naturalWidth > ANALYSIS_MAX_DIMENSION || imgEl.naturalHeight > ANALYSIS_MAX_DIMENSION) {
             if (imgEl.naturalWidth > imgEl.naturalHeight) {
@@ -333,37 +366,51 @@ export default function AstroStackerPage() {
             }
             console.log(`Image ${fileNameForLog} scaled for analysis from ${imgEl.naturalWidth}x${imgEl.naturalHeight} to ${analysisWidth.toFixed(0)}x${analysisHeight.toFixed(0)} (factor: ${analysisScaleFactor.toFixed(3)})`);
           }
-          analysisWidth = Math.max(1, Math.round(analysisWidth)); 
+          analysisWidth = Math.max(1, Math.round(analysisWidth));
           analysisHeight = Math.max(1, Math.round(analysisHeight));
 
           tempAnalysisCanvas.width = analysisWidth;
           tempAnalysisCanvas.height = analysisHeight;
           tempAnalysisCtx.clearRect(0, 0, analysisWidth, analysisHeight);
           tempAnalysisCtx.drawImage(imgEl, 0, 0, analysisWidth, analysisHeight);
-          const analysisImageData = tempAnalysisCtx.getImageData(0, 0, analysisWidth, analysisHeight);
-
-          const stars = detectStars(analysisImageData);
-          let analysisImageCentroid = calculateStarArrayCentroid(stars);
           
-          if (analysisImageCentroid) {
-              method = `star-based (${stars.length} stars detected, analysis on ${analysisWidth}x${analysisHeight}${analysisScaleFactor < 1.0 ? ' [scaled]' : ''})`;
-              successfulStarAlignments++;
-          } else {
-            const reason = stars.length < 3 ? `only ${stars.length} stars detected (min 3 needed)` : "star detection/centroid calculation failed";
-            method = `brightness-based fallback (${reason}, analysis on ${analysisWidth}x${analysisHeight}${analysisScaleFactor < 1.0 ? ' [scaled]' : ''})`;
-            console.warn(`Star-based centroid failed for ${fileNameForLog} (${reason}). Falling back to brightness-based centroid.`);
-            analysisImageCentroid = calculateBrightnessCentroid(analysisImageData);
+          let analysisImageData: ImageData | null = null;
+          try {
+            analysisImageData = tempAnalysisCtx.getImageData(0, 0, analysisWidth, analysisHeight);
+          } catch (getImageDataError) {
+             console.error(`Error getting image data for analysis canvas (${fileNameForLog}):`, getImageDataError);
+             toast({
+                title: `Analysis Error (getImageData) for ${fileNameForLog}`,
+                description: `Could not get pixel data for analysis. It may not align optimally.`,
+                variant: "destructive"
+            });
+            method = "getImageData_error";
           }
-          
-          if (analysisImageCentroid) {
-            const nativeEquivalentCentroid = {
-                x: analysisImageCentroid.x / analysisScaleFactor,
-                y: analysisImageCentroid.y / analysisScaleFactor,
-            };
-            finalScaledCentroid = {
-                x: nativeEquivalentCentroid.x * (targetWidth / imgEl.naturalWidth),
-                y: nativeEquivalentCentroid.y * (targetHeight / imgEl.naturalHeight),
-            };
+
+          if (analysisImageData) {
+            const stars = detectStars(analysisImageData);
+            let analysisImageCentroid = calculateStarArrayCentroid(stars);
+            
+            if (analysisImageCentroid) {
+                method = `star-based (${stars.length} stars detected, analysis on ${analysisWidth}x${analysisHeight}${analysisScaleFactor < 1.0 ? ' [scaled]' : ''})`;
+                successfulStarAlignments++;
+            } else {
+              const reason = stars.length < 3 ? `only ${stars.length} stars detected (min 3 needed)` : "star detection/centroid calculation failed";
+              method = `brightness-based fallback (${reason}, analysis on ${analysisWidth}x${analysisHeight}${analysisScaleFactor < 1.0 ? ' [scaled]' : ''})`;
+              console.warn(`Star-based centroid failed for ${fileNameForLog} (${reason}). Falling back to brightness-based centroid.`);
+              analysisImageCentroid = calculateBrightnessCentroid(analysisImageData);
+            }
+            
+            if (analysisImageCentroid) {
+              const nativeEquivalentCentroid = {
+                  x: analysisImageCentroid.x / analysisScaleFactor,
+                  y: analysisImageCentroid.y / analysisScaleFactor,
+              };
+              finalScaledCentroid = {
+                  x: nativeEquivalentCentroid.x * (targetWidth / imgEl.naturalWidth),
+                  y: nativeEquivalentCentroid.y * (targetHeight / imgEl.naturalHeight),
+              };
+            }
           }
 
         } catch (imgAnalysisError) {
@@ -384,8 +431,8 @@ export default function AstroStackerPage() {
                 description: `Could not determine centroid for ${fileNameForLog}. It may not align optimally.`,
                 variant: "destructive"
             });
-            finalScaledCentroid = { x: targetWidth / 2, y: targetHeight / 2 }; 
-            method = method === "analysis_error" ? "analysis_error_fallback" : "geometric_center_fallback";
+            finalScaledCentroid = { x: targetWidth / 2, y: targetHeight / 2 };
+            method = method.includes("_error") ? `${method}_fallback` : "geometric_center_fallback";
         }
         console.log(`Image ${i} (${fileNameForLog}) centroid method: ${method}, Scaled to Target Coords:`, finalScaledCentroid);
         centroids.push(finalScaledCentroid);
@@ -399,23 +446,30 @@ export default function AstroStackerPage() {
       }
       
       const pixelDataCollector: Array<{ r: number[], g: number[], b: number[] }> = [];
-      for (let i = 0; i < targetWidth * targetHeight; i++) {
-        pixelDataCollector.push({ r: [], g: [], b: [] });
+      if (targetWidth > 0 && targetHeight > 0) {
+        for (let i = 0; i < targetWidth * targetHeight; i++) {
+          pixelDataCollector.push({ r: [], g: [], b: [] });
+        }
+      } else {
+        toast({ title: "Stacking Error", description: "Target dimensions for stacking are zero. Cannot collect pixel data.", variant: "destructive" });
+        setIsProcessing(false);
+        return;
       }
+
       let validImagesStackedCount = 0;
 
       for (let i = 0; i < imageElements.length; i++) {
-        const img = imageElements[i]; 
+        const img = imageElements[i];
         if (!img || img.naturalWidth === 0 || img.naturalHeight === 0) {
             console.warn(`Skipping stacking for invalid image element at index ${i}: ${filesToProcess[i]?.file.name}`);
             continue;
         }
-        const currentCentroid = centroids[i]; 
+        const currentCentroid = centroids[i];
         
         let dx = 0;
         let dy = 0;
         
-        if (currentCentroid) { 
+        if (currentCentroid) {
           dx = referenceCentroid.x - currentCentroid.x;
           dy = referenceCentroid.y - currentCentroid.y;
         } else {
@@ -429,17 +483,19 @@ export default function AstroStackerPage() {
         }
         
         console.log(`Stacking image ${i} (${filesToProcess[i]?.file.name}) with offset dx=${dx.toFixed(2)}, dy=${dy.toFixed(2)}`);
-        ctx.clearRect(0, 0, targetWidth, targetHeight); 
-        ctx.drawImage(img, dx, dy, targetWidth, targetHeight); 
+        ctx.clearRect(0, 0, targetWidth, targetHeight);
+        ctx.drawImage(img, dx, dy, targetWidth, targetHeight);
         
         try {
           const frameImageData = ctx.getImageData(0, 0, targetWidth, targetHeight);
           const data = frameImageData.data;
           for (let j = 0; j < data.length; j += 4) {
             const pixelIndex = j / 4;
-            pixelDataCollector[pixelIndex].r.push(data[j]);
-            pixelDataCollector[pixelIndex].g.push(data[j + 1]);
-            pixelDataCollector[pixelIndex].b.push(data[j + 2]);
+            if (pixelDataCollector[pixelIndex]) { // Ensure pixelIndex is valid
+                pixelDataCollector[pixelIndex].r.push(data[j]);
+                pixelDataCollector[pixelIndex].g.push(data[j + 1]);
+                pixelDataCollector[pixelIndex].b.push(data[j + 2]);
+            }
           }
           validImagesStackedCount++;
         } catch (e) {
@@ -455,20 +511,25 @@ export default function AstroStackerPage() {
 
       if (validImagesStackedCount === 0) {
         toast({ title: "Stacking Failed", description: "No images could be successfully processed and stacked.", variant: "destructive" });
-        setIsProcessing(false); 
+        setIsProcessing(false);
         return;
       }
 
       const finalImageData = ctx.createImageData(targetWidth, targetHeight);
+      if (pixelDataCollector.length !== targetWidth * targetHeight) {
+         console.error(`pixelDataCollector length (${pixelDataCollector.length}) does not match target dimensions product (${targetWidth * targetHeight}). Final image may be incorrect.`);
+         toast({title: "Internal Error", description: "Mismatch in pixel data collection size. Result may be incomplete.", variant: "destructive"});
+      }
+
       for (let i = 0; i < pixelDataCollector.length; i++) {
         finalImageData.data[i * 4] = getMedian(pixelDataCollector[i].r);
         finalImageData.data[i * 4 + 1] = getMedian(pixelDataCollector[i].g);
         finalImageData.data[i * 4 + 2] = getMedian(pixelDataCollector[i].b);
-        finalImageData.data[i * 4 + 3] = 255; 
+        finalImageData.data[i * 4 + 3] = 255;
       }
       
       ctx.putImageData(finalImageData, 0, 0);
-      const resultDataUrl = offscreenCanvas.toDataURL('image/png'); 
+      const resultDataUrl = offscreenCanvas.toDataURL('image/png');
       
       if (!resultDataUrl || resultDataUrl === "data:," || resultDataUrl.length < MIN_VALID_DATA_URL_LENGTH) {
         console.error("Failed to generate a valid data URL from canvas. Preview will be empty. Canvas might be too large, an operation failed, or the result is empty.");
@@ -480,13 +541,13 @@ export default function AstroStackerPage() {
         setStackedImage(null);
       } else {
         setStackedImage(resultDataUrl);
-        const alignmentMessage = successfulStarAlignments > 0 
+        const alignmentMessage = successfulStarAlignments > 0
           ? `${successfulStarAlignments}/${imageElements.length} images primarily aligned using star-based centroids. Others used fallbacks.`
           : `All images aligned using brightness-based centroids or geometric centers due to insufficient stars detected. Analysis for alignment may have been scaled for performance.`;
-        toast({ 
-          title: "Median Stacking Complete", 
+        toast({
+          title: "Median Stacking Complete",
           description: `${alignmentMessage} ${validImagesStackedCount} image(s) (out of ${imageElements.length} processed) stacked using median. Processing dimension was ${targetWidth}x${targetHeight}. This can be slow for large images.`,
-          duration: 9000, 
+          duration: 9000,
         });
       }
 
@@ -498,15 +559,17 @@ export default function AstroStackerPage() {
         description: `An unexpected error occurred: ${errorMessage}. Check console for details.`,
         variant: "destructive",
       });
-      setStackedImage(null); 
+      setStackedImage(null);
     } finally {
-      setIsProcessing(false); 
+      setIsProcessing(false);
       console.log("Image median stacking process finished.");
     }
   };
   
   useEffect(() => {
+    // Cleanup function if needed
     return () => {
+      // e.g., revoke ObjectURLs if they were used
     };
   }, []);
 
@@ -526,6 +589,7 @@ export default function AstroStackerPage() {
                   Add PNG, JPG, GIF, or WEBP. Images are aligned using detected stars (or brightness centroids as fallback) and then stacked using the median pixel value to reduce noise.
                   Analysis for star detection on images larger than {ANALYSIS_MAX_DIMENSION}px (width/height) is done on a scaled-down version for performance.
                   Max image load dimension: {MAX_IMAGE_LOAD_DIMENSION}px.
+                  Final stacking resolution capped near {MAX_STACKING_SIDE_LENGTH}px on the longest side for stability.
                   Max images processed for stacking: {MAX_IMAGES_TO_STACK}.
                   Processing many or very large images may be slow or cause browser issues on some devices. This is computationally intensive.
                 </CardDescription>
@@ -578,4 +642,5 @@ export default function AstroStackerPage() {
     
 
     
+
 
