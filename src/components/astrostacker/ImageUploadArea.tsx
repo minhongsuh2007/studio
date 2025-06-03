@@ -23,7 +23,12 @@ export function ImageUploadArea({ onFilesAdded, isProcessing }: ImageUploadAreaP
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
-    accept: { 'image/*': ['.jpeg', '.jpg', '.png', '.gif', '.webp'] },
+    accept: { 
+      'image/jpeg': ['.jpeg', '.jpg'],
+      'image/png': ['.png'],
+      'image/gif': ['.gif'],
+      'image/webp': ['.webp'],
+    },
     multiple: true,
     disabled: isProcessing,
     onDragEnter: () => setIsDragging(true),
@@ -44,7 +49,7 @@ export function ImageUploadArea({ onFilesAdded, isProcessing }: ImageUploadAreaP
           Drag & drop images here
         </p>
         <p className="text-sm text-muted-foreground">
-          or click to select files (PNG, JPG, etc.)
+          or click to select files (PNG, JPG, GIF, WEBP)
         </p>
         <Button
             type="button"
@@ -52,7 +57,14 @@ export function ImageUploadArea({ onFilesAdded, isProcessing }: ImageUploadAreaP
             size="sm"
             className="mt-2"
             disabled={isProcessing}
-            onClick={(e) => e.stopPropagation()} // Prevent dropzone activation
+            onClick={(e) => {
+              // Manually trigger file input click
+              const inputElement = document.querySelector('input[type="file"][style*="display: none"]');
+              if (inputElement) {
+                (inputElement as HTMLInputElement).click();
+              }
+              e.stopPropagation(); // Prevent dropzone activation if button is inside
+            }}
           >
           <ImageIcon className="mr-2 h-4 w-4" />
           Browse Files
