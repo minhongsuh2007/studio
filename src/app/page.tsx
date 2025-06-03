@@ -30,9 +30,10 @@ interface Star {
 
 const MAX_IMAGE_LOAD_DIMENSION = 16384; 
 const ANALYSIS_MAX_DIMENSION = 1024; 
-const MIN_VALID_DATA_URL_LENGTH = 100; // Increased minimum length for a data URL to be considered potentially valid
+const MIN_VALID_DATA_URL_LENGTH = 100; 
 
-function detectStars(imageData: ImageData, brightnessThreshold: number = 180, localContrastFactor: number = 1.3): Star[] {
+// Adjusted default parameters for potentially better star detection
+function detectStars(imageData: ImageData, brightnessThreshold: number = 160, localContrastFactor: number = 1.25): Star[] {
   const stars: Star[] = [];
   const { data, width, height } = imageData;
 
@@ -313,12 +314,12 @@ export default function AstroStackerPage() {
           let analysisImageCentroid = calculateStarArrayCentroid(stars);
           
           if (analysisImageCentroid) {
-              method = analysisScaleFactor < 1.0 ? `star-based (scaled analysis ${analysisWidth}x${analysisHeight})` : "star-based (native analysis)";
+              method = `star-based (${stars.length} stars detected, analysis on ${analysisWidth}x${analysisHeight}${analysisScaleFactor < 1.0 ? ' [scaled]' : ''})`;
               successfulStarAlignments++;
           } else {
-            const fallbackMethodName = analysisScaleFactor < 1.0 ? `brightness-based (scaled analysis ${analysisWidth}x${analysisHeight})` : "brightness-based (native analysis)";
-            console.warn(`Star-based centroid failed for ${uploadedFiles[i]?.file.name || `image ${i}`}. Fallback to ${fallbackMethodName}.`);
-            method = fallbackMethodName;
+            const reason = stars.length < 3 ? `only ${stars.length} stars detected (min 3 needed)` : "star detection failed";
+            method = `brightness-based fallback (${reason}, analysis on ${analysisWidth}x${analysisHeight}${analysisScaleFactor < 1.0 ? ' [scaled]' : ''})`;
+            console.warn(`Star-based centroid failed for ${uploadedFiles[i]?.file.name || `image ${i}`} (${reason}). Falling back to brightness-based centroid.`);
             analysisImageCentroid = calculateBrightnessCentroid(analysisImageData);
           }
           
@@ -451,7 +452,7 @@ export default function AstroStackerPage() {
         setStackedImage(resultDataUrl);
         const alignmentMessage = successfulStarAlignments > 0 
           ? `${successfulStarAlignments}/${imageElements.length} images primarily aligned using star-based centroids. Others used fallbacks.`
-          : `Images aligned using brightness-based centroids or geometric centers. Some analyses may have been scaled for performance.`;
+          : `All images aligned using brightness-based centroids or geometric centers due to insufficient stars detected. Analysis for alignment may have been scaled for performance.`;
         toast({ 
           title: "Median Stacking Complete", 
           description: `${alignmentMessage} ${validImagesStackedCount} image(s) processed using median stacking. Processing dimension was ${targetWidth}x${targetHeight}. This can be slow for large images.`,
@@ -476,6 +477,8 @@ export default function AstroStackerPage() {
   
   useEffect(() => {
     return () => {
+      // Potentially revoke object URLs if they were used, though fileToDataURL doesn't create them.
+      // uploadedFiles.forEach(f => URL.revokeObjectURL(f.previewUrl)); // Only if previewUrl was from URL.createObjectURL
     };
   }, []);
 
