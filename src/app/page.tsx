@@ -177,12 +177,28 @@ export default function AstroStackerPage() {
   const handleFilesAdded = async (files: File[]) => {
     setIsProcessing(true);
     const newUploadedFiles: UploadedFile[] = [];
+    const acceptedWebTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+
     for (const file of files) {
       try {
-        if (!file.type.startsWith('image/')) {
+        const fileType = file.type.toLowerCase();
+        const fileName = file.name.toLowerCase();
+
+        if (fileType === 'image/tiff' || fileName.endsWith('.tiff') || fileName.endsWith('.tif') ||
+            fileType === 'image/x-adobe-dng' || fileType === 'image/x-raw' || fileName.endsWith('.dng')) {
+          toast({
+            title: "Manual Conversion Required",
+            description: `${file.name} is a TIFF/DNG file. Please convert it to JPG, PNG, or WEBP manually for stacking.`,
+            variant: "default", // Use default variant for informational message
+            duration: 8000,
+          });
+          continue; // Skip this file from being added to the queue
+        }
+
+        if (!acceptedWebTypes.includes(fileType)) {
             toast({
                 title: "Unsupported File Type",
-                description: `${file.name} is not a recognized image type. Please upload JPG, PNG, GIF, or WEBP.`,
+                description: `${file.name} is not a supported image type for stacking. Please use JPG, PNG, GIF, or WEBP.`,
                 variant: "destructive",
             });
             continue;
@@ -586,7 +602,7 @@ export default function AstroStackerPage() {
                   Upload & Align Images (Median Stack)
                 </CardTitle>
                 <CardDescription>
-                  Add PNG, JPG, GIF, or WEBP. Images are aligned using detected stars (or brightness centroids as fallback) and then stacked using the median pixel value to reduce noise.
+                  Add images (JPG, PNG, WEBP preferred). TIFF/DNG files require manual pre-conversion before they can be stacked. Images are aligned using detected stars (or brightness centroids as fallback) then stacked using the median pixel value to reduce noise.
                   Analysis for star detection on images larger than {ANALYSIS_MAX_DIMENSION}px (width/height) is done on a scaled-down version for performance.
                   Max image load dimension: {MAX_IMAGE_LOAD_DIMENSION}px.
                   Final stacking resolution capped near {MAX_STACKING_SIDE_LENGTH}px on the longest side for stability.
@@ -639,8 +655,3 @@ export default function AstroStackerPage() {
     </div>
   );
 }
-    
-    
-    
-
-    

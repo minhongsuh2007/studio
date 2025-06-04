@@ -28,6 +28,9 @@ export function ImageUploadArea({ onFilesAdded, isProcessing }: ImageUploadAreaP
       'image/png': ['.png'],
       'image/gif': ['.gif'],
       'image/webp': ['.webp'],
+      'image/tiff': ['.tiff', '.tif'],
+      'image/x-adobe-dng': ['.dng'], // Common MIME type for DNG
+      'image/x-raw': ['.dng'], // Another possible for DNG
     },
     multiple: true,
     disabled: isProcessing,
@@ -49,7 +52,10 @@ export function ImageUploadArea({ onFilesAdded, isProcessing }: ImageUploadAreaP
           Drag & drop images here
         </p>
         <p className="text-sm text-muted-foreground">
-          or click to select files (PNG, JPG, GIF, WEBP)
+          or click to select files (JPG, PNG, WEBP preferred).
+        </p>
+        <p className="text-xs text-muted-foreground mt-1">
+          TIFF/DNG files require manual pre-conversion to JPG/PNG for stacking.
         </p>
         <Button
             type="button"
