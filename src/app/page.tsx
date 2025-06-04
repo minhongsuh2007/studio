@@ -37,8 +37,8 @@ const MAX_STARS_FOR_CENTROID_CALCULATION = 2000;
 const STACKING_BAND_HEIGHT = 50; // Process image in bands of 50 rows
 
 // Helper function to yield to the event loop
-const yieldToEventLoop = async () => {
-  await new Promise(resolve => setTimeout(resolve, 50)); // Increased delay to 50ms
+const yieldToEventLoop = async (delayMs: number) => {
+  await new Promise(resolve => setTimeout(resolve, delayMs));
 };
 
 function detectStars(imageData: ImageData, brightnessThreshold: number = 200, localContrastFactor: number = 1.5): Star[] {
@@ -338,6 +338,17 @@ export default function AstroStackerPage() {
         setIsProcessing(false);
         return;
       }
+      
+      // Calculate dynamic delay for yielding
+      const numImages = imageElements.length;
+      const totalPixels = targetWidth * targetHeight;
+      const normalizedImageFactor = Math.min(1, numImages / MAX_IMAGES_TO_STACK);
+      const maxPossiblePixels = (MAX_STACKING_SIDE_LENGTH || 1) * (MAX_STACKING_SIDE_LENGTH || 1);
+      const normalizedPixelFactor = Math.min(1, totalPixels / maxPossiblePixels);
+      const loadScore = (0.3 * normalizedImageFactor) + (0.7 * normalizedPixelFactor); // score from 0 to 1
+      const dynamicDelayMs = Math.max(1, Math.min(50, 1 + Math.floor(loadScore * 49))); // Ensures delay is between 1ms and 50ms.
+      console.log(`Calculated dynamic yield delay: ${dynamicDelayMs}ms based on load score: ${loadScore.toFixed(2)} (Images: ${numImages}, Pixels: ${totalPixels})`);
+
 
       const offscreenCanvas = document.createElement('canvas');
       offscreenCanvas.width = targetWidth;
@@ -366,7 +377,7 @@ export default function AstroStackerPage() {
             method = "invalid_element_fallback";
             centroids.push(finalScaledCentroid);
             console.log(`Image ${i} (${fileNameForLog}) centroid method: ${method}, Scaled to Target Coords:`, finalScaledCentroid);
-            await yieldToEventLoop(); 
+            await yieldToEventLoop(dynamicDelayMs); 
             continue;
         }
         
@@ -458,7 +469,7 @@ export default function AstroStackerPage() {
         }
         console.log(`Image ${i} (${fileNameForLog}) centroid method: ${method}, Scaled to Target Coords:`, finalScaledCentroid);
         centroids.push(finalScaledCentroid);
-        await yieldToEventLoop(); 
+        await yieldToEventLoop(dynamicDelayMs); 
       }
 
       const referenceCentroid = centroids[0];
@@ -471,11 +482,11 @@ export default function AstroStackerPage() {
       const finalImageData = ctx.createImageData(targetWidth, targetHeight);
       let validImagesStackedCount = 0;
 
-      console.log(`Starting band processing. Band height: ${STACKING_BAND_HEIGHT}px`);
+      console.log(`Starting band processing. Band height: ${STACKING_BAND_HEIGHT}px. Dynamic yield delay: ${dynamicDelayMs}ms`);
 
       for (let yBandStart = 0; yBandStart < targetHeight; yBandStart += STACKING_BAND_HEIGHT) {
         const currentBandHeight = Math.min(STACKING_BAND_HEIGHT, targetHeight - yBandStart);
-        console.log(`Processing band: rows ${yBandStart} to ${yBandStart + currentBandHeight - 1}`);
+        // console.log(`Processing band: rows ${yBandStart} to ${yBandStart + currentBandHeight - 1}`);
 
         const bandPixelDataCollector: Array<{ r: number[], g: number[], b: number[] }> = [];
         for (let i = 0; i < targetWidth * currentBandHeight; i++) {
@@ -486,7 +497,7 @@ export default function AstroStackerPage() {
         for (let i = 0; i < imageElements.length; i++) {
           const img = imageElements[i];
           if (!img || img.naturalWidth === 0 || img.naturalHeight === 0) {
-            console.warn(`Skipping image ${i} for band ${yBandStart} due to invalid element.`);
+            // console.warn(`Skipping image ${i} for band ${yBandStart} due to invalid element.`);
             continue;
           }
           const currentCentroid = centroids[i];
@@ -506,11 +517,10 @@ export default function AstroStackerPage() {
             dy = referenceCentroid.y - targetEquivalentGeoCenterY;
           }
           
-          ctx.clearRect(0, 0, targetWidth, targetHeight); // Clear full canvas for drawing aligned image
-          ctx.drawImage(img, dx, dy, targetWidth, targetHeight); // Draw full aligned image
+          ctx.clearRect(0, 0, targetWidth, targetHeight); 
+          ctx.drawImage(img, dx, dy, targetWidth, targetHeight); 
           
           try {
-            // Get ImageData for only the current band
             const bandFrameImageData = ctx.getImageData(0, yBandStart, targetWidth, currentBandHeight);
             const bandData = bandFrameImageData.data;
             
@@ -522,7 +532,7 @@ export default function AstroStackerPage() {
                   bandPixelDataCollector[bandPixelIndex].b.push(bandData[j + 2]);
               }
             }
-            if (yBandStart === 0) { // Count valid images only once based on first band processing
+            if (yBandStart === 0) { 
               imagesContributingToBand++;
             }
           } catch (e) {
@@ -534,11 +544,12 @@ export default function AstroStackerPage() {
               variant: "destructive"
             });
           }
+          // Yield after processing each image for the current band's pixel data collection
+           await yieldToEventLoop(dynamicDelayMs);
         }
         if (yBandStart === 0) validImagesStackedCount = imagesContributingToBand;
 
 
-        // Calculate medians for this band and put into finalImageData
         for (let yInBand = 0; yInBand < currentBandHeight; yInBand++) {
           for (let x = 0; x < targetWidth; x++) {
               const bandPixelIndex = yInBand * targetWidth + x;
@@ -557,15 +568,14 @@ export default function AstroStackerPage() {
               }
           }
         }
-        console.log(`Finished processing band: rows ${yBandStart} to ${yBandStart + currentBandHeight - 1}. Yielding.`);
-        await yieldToEventLoop(); 
+        if (yBandStart % (STACKING_BAND_HEIGHT * 5) === 0 || yBandStart + currentBandHeight >= targetHeight ) { // Log progress periodically
+             console.log(`Processed band: rows ${yBandStart} to ${yBandStart + currentBandHeight - 1}. Yielding.`);
+        }
+        await yieldToEventLoop(dynamicDelayMs); 
       }
 
 
       if (validImagesStackedCount === 0 && imageElements.length > 0) {
-         // If this is reached, it means all images failed during band processing or no images were valid from the start.
-         // The initial check for imageElements.length < 2 should catch the "no valid images from start" case.
-         // This handles if all images somehow fail during band data extraction.
         toast({ title: "Stacking Failed", description: "No images could be successfully processed during band stacking.", variant: "destructive" });
         setIsProcessing(false);
         return;
@@ -590,7 +600,7 @@ export default function AstroStackerPage() {
         toast({
           title: "Median Stacking Complete",
           description: `${alignmentMessage} ${validImagesStackedCount} image(s) (out of ${imageElements.length} processed) stacked using median (banded processing). Dimension: ${targetWidth}x${targetHeight}.`,
-          duration: 10000, // Increased duration for longer message
+          duration: 10000, 
         });
       }
 
@@ -679,6 +689,5 @@ export default function AstroStackerPage() {
     </div>
   );
 }
-    
 
     
