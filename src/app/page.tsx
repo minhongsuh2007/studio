@@ -18,6 +18,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
+import { Slider } from "@/components/ui/slider";
 
 
 interface UploadedFile {
@@ -33,6 +34,7 @@ interface Star {
 
 type StackingMode = 'median' | 'sigmaClip';
 type PreviewFitMode = 'contain' | 'cover';
+type OutputFormat = 'png' | 'jpeg';
 
 const MAX_IMAGE_LOAD_DIMENSION = 8192;
 const ANALYSIS_MAX_DIMENSION = 600;
@@ -244,6 +246,8 @@ export default function AstroStackerPage() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [stackingMode, setStackingMode] = useState<StackingMode>('median');
   const [previewFitMode, setPreviewFitMode] = useState<PreviewFitMode>('contain');
+  const [outputFormat, setOutputFormat] = useState<OutputFormat>('png');
+  const [jpegQuality, setJpegQuality] = useState<number>(92);
   const [progressPercent, setProgressPercent] = useState(0);
   const { toast } = useToast();
 
@@ -676,13 +680,21 @@ export default function AstroStackerPage() {
       }
       
       ctx.putImageData(finalImageData, 0, 0);
-      const resultDataUrl = offscreenCanvas.toDataURL('image/png');
+      
+      let resultDataUrl: string;
+      let outputMimeType = 'image/png';
+      if (outputFormat === 'jpeg') {
+        outputMimeType = 'image/jpeg';
+        resultDataUrl = offscreenCanvas.toDataURL(outputMimeType, jpegQuality / 100);
+      } else {
+        resultDataUrl = offscreenCanvas.toDataURL(outputMimeType);
+      }
       
       if (!resultDataUrl || resultDataUrl === "data:," || resultDataUrl.length < MIN_VALID_DATA_URL_LENGTH) {
         console.error("Failed to generate a valid data URL from canvas. Preview will be empty.");
         toast({
           title: "Preview Generation Failed",
-          description: "Could not generate a valid image preview. The image might be too large or an internal error occurred.",
+          description: `Could not generate a valid image preview in ${outputFormat.toUpperCase()} format. The image might be too large or an internal error occurred.`,
           variant: "destructive",
         });
         setStackedImage(null);
@@ -694,7 +706,7 @@ export default function AstroStackerPage() {
         
         const stackingMethodUsed = stackingMode === 'median' ? 'Median' : 'Sigma Clip';
         toast({
-          title: `${stackingMethodUsed} Stacking Complete`,
+          title: `${stackingMethodUsed} Stacking Complete (${outputFormat.toUpperCase()})`,
           description: `${alignmentMessage} ${validImagesStackedCount} image(s) (out of ${imageElements.length} processed) stacked using ${stackingMode === 'median' ? 'median' : 'sigma clipping'} (banded processing). Dimension: ${targetWidth}x${targetHeight}.`,
           duration: 10000, 
         });
@@ -734,7 +746,7 @@ export default function AstroStackerPage() {
                   Upload & Align Images
                 </CardTitle>
                 <CardDescription>
-                  Add PNG, JPG, GIF, or WEBP. TIFF/DNG files require manual pre-conversion (e.g., using <a href="https://convertio.co/kr/tiff-png/" target="_blank" rel="noopener noreferrer" className="underline hover:text-accent">Convertio</a>). Images are aligned using the brightest {MIN_STARS_FOR_ALIGNMENT} stars (if detected, min {MIN_STARS_FOR_ALIGNMENT} required) or brightness centroids, then stacked.
+                 Add PNG, JPG, GIF, or WEBP. TIFF/DNG files require manual pre-conversion (e.g., using <a href="https://convertio.co/kr/tiff-png/" target="_blank" rel="noopener noreferrer" className="underline hover:text-accent">Convertio</a>). Images are aligned using the brightest {MIN_STARS_FOR_ALIGNMENT} stars (if detected, min {MIN_STARS_FOR_ALIGNMENT} required) or brightness centroids, then stacked.
                   Median stacking uses median pixel values. Sigma Clip stacking iteratively removes outliers and averages the rest. Both processed in bands for stability.
                   Analysis for star detection on images larger than {ANALYSIS_MAX_DIMENSION}px is scaled.
                   Max image load: {MAX_IMAGE_LOAD_DIMENSION}px.
@@ -813,14 +825,58 @@ export default function AstroStackerPage() {
                        </p>
                     </div>
 
+                    <div className="space-y-2 pt-2">
+                      <Label className="text-base font-semibold text-foreground">Output Format</Label>
+                      <RadioGroup
+                        value={outputFormat}
+                        onValueChange={(value: string) => setOutputFormat(value as OutputFormat)}
+                        className="flex space-x-4"
+                        disabled={isProcessing}
+                      >
+                        <div className="flex items-center space-x-2">
+                          <RadioGroupItem value="png" id="format-png" />
+                          <Label htmlFor="format-png" className="cursor-pointer">PNG</Label>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <RadioGroupItem value="jpeg" id="format-jpeg" />
+                          <Label htmlFor="format-jpeg" className="cursor-pointer">JPG</Label>
+                        </div>
+                      </RadioGroup>
+                       <p className="text-xs text-muted-foreground">
+                        PNG offers lossless quality. JPG is smaller but lossy.
+                       </p>
+                    </div>
+                    
+                    {outputFormat === 'jpeg' && (
+                      <div className="space-y-2 pt-2">
+                        <Label htmlFor="jpegQualitySlider" className="text-base font-semibold text-foreground">
+                          JPG Quality: {jpegQuality}%
+                        </Label>
+                        <Slider
+                          id="jpegQualitySlider"
+                          min={10}
+                          max={100}
+                          step={1}
+                          value={[jpegQuality]}
+                          onValueChange={(value) => setJpegQuality(value[0])}
+                          disabled={isProcessing}
+                          className="w-[60%]"
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          Higher quality means larger file size. Recommended: 85-95.
+                        </p>
+                      </div>
+                    )}
+
+
                     <Button
                       onClick={handleStackImages}
                       disabled={isProcessing || uploadedFiles.length < 2}
                       className="w-full bg-accent hover:bg-accent/90 text-accent-foreground mt-4"
-                      title={uploadedFiles.length < 2 ? "Upload at least two images for stacking" : `Align & Stack using ${stackingMode === 'median' ? 'Median' : 'Sigma Clip'}`}
+                      title={uploadedFiles.length < 2 ? "Upload at least two images for stacking" : `Align & Stack using ${stackingMode === 'median' ? 'Median' : 'Sigma Clip'} (Output: ${outputFormat.toUpperCase()})`}
                     >
                       <Wand2 className="mr-2 h-5 w-5" />
-                      {isProcessing ? 'Processing...' : `Align & ${stackingMode === 'median' ? 'Median' : 'Sigma Clip'} Stack (${Math.min(uploadedFiles.length, MAX_IMAGES_TO_STACK)})`}
+                      {isProcessing ? 'Processing...' : `Align & ${stackingMode === 'median' ? 'Median' : 'Sigma Clip'} Stack (${outputFormat.toUpperCase()}) (${Math.min(uploadedFiles.length, MAX_IMAGES_TO_STACK)})`}
                     </Button>
                   </>
                 )}
