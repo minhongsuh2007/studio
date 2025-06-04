@@ -30,10 +30,11 @@ interface Star {
 
 const MAX_IMAGE_LOAD_DIMENSION = 8192;
 const ANALYSIS_MAX_DIMENSION = 600;
-const MAX_STACKING_SIDE_LENGTH = 3500; // New cap for actual stacking canvas dimension
+const MAX_STACKING_SIDE_LENGTH = 3500;
 const MAX_IMAGES_TO_STACK = 10;
 const MIN_VALID_DATA_URL_LENGTH = 100;
 const MAX_STARS_FOR_CENTROID_CALCULATION = 2000;
+const STACKING_BAND_HEIGHT = 50; // Process image in bands of 50 rows
 
 // Helper function to yield to the event loop
 const yieldToEventLoop = async () => {
@@ -127,7 +128,7 @@ function calculateBrightnessCentroid(imageData: ImageData, brightnessThreshold: 
     const { data, width, height } = imageData;
     if (width === 0 || height === 0) {
         console.warn("calculateBrightnessCentroid called with zero-dimension imageData.");
-        return { x: 0, y: 0 }; // or null, but provide a fallback
+        return { x: 0, y: 0 }; 
     }
     let totalBrightness = 0;
     let weightedX = 0;
@@ -323,8 +324,8 @@ export default function AstroStackerPage() {
           targetHeight = MAX_STACKING_SIDE_LENGTH;
           targetWidth = Math.round(targetHeight * aspectRatio);
         }
-        targetWidth = Math.max(1, targetWidth); // Ensure not zero
-        targetHeight = Math.max(1, targetHeight); // Ensure not zero
+        targetWidth = Math.max(1, targetWidth); 
+        targetHeight = Math.max(1, targetHeight); 
         toast({
           title: "Stacking Resolution Capped",
           description: `For stability, stacking resolution has been capped to ${targetWidth}x${targetHeight} because the first image was larger than ${MAX_STACKING_SIDE_LENGTH}px on one side.`,
@@ -337,7 +338,6 @@ export default function AstroStackerPage() {
         setIsProcessing(false);
         return;
       }
-
 
       const offscreenCanvas = document.createElement('canvas');
       offscreenCanvas.width = targetWidth;
@@ -468,112 +468,117 @@ export default function AstroStackerPage() {
         return;
       }
       
-      const pixelDataCollector: Array<{ r: number[], g: number[], b: number[] }> = [];
-      if (targetWidth > 0 && targetHeight > 0) {
-        for (let i = 0; i < targetWidth * targetHeight; i++) {
-          pixelDataCollector.push({ r: [], g: [], b: [] });
-        }
-      } else {
-        toast({ title: "Stacking Error", description: "Target dimensions for stacking are zero. Cannot collect pixel data.", variant: "destructive" });
-        setIsProcessing(false);
-        return;
-      }
-
+      const finalImageData = ctx.createImageData(targetWidth, targetHeight);
       let validImagesStackedCount = 0;
 
-      for (let i = 0; i < imageElements.length; i++) {
-        const img = imageElements[i];
-        if (!img || img.naturalWidth === 0 || img.naturalHeight === 0) {
-            console.warn(`Skipping stacking for invalid image element at index ${i}: ${filesToProcess[i]?.file.name}`);
-            await yieldToEventLoop(); 
+      console.log(`Starting band processing. Band height: ${STACKING_BAND_HEIGHT}px`);
+
+      for (let yBandStart = 0; yBandStart < targetHeight; yBandStart += STACKING_BAND_HEIGHT) {
+        const currentBandHeight = Math.min(STACKING_BAND_HEIGHT, targetHeight - yBandStart);
+        console.log(`Processing band: rows ${yBandStart} to ${yBandStart + currentBandHeight - 1}`);
+
+        const bandPixelDataCollector: Array<{ r: number[], g: number[], b: number[] }> = [];
+        for (let i = 0; i < targetWidth * currentBandHeight; i++) {
+          bandPixelDataCollector.push({ r: [], g: [], b: [] });
+        }
+
+        let imagesContributingToBand = 0;
+        for (let i = 0; i < imageElements.length; i++) {
+          const img = imageElements[i];
+          if (!img || img.naturalWidth === 0 || img.naturalHeight === 0) {
+            console.warn(`Skipping image ${i} for band ${yBandStart} due to invalid element.`);
             continue;
-        }
-        const currentCentroid = centroids[i];
-        
-        let dx = 0;
-        let dy = 0;
-        
-        if (currentCentroid) {
-          dx = referenceCentroid.x - currentCentroid.x;
-          dy = referenceCentroid.y - currentCentroid.y;
-        } else {
-          const nativeGeoCenterX = img.naturalWidth / 2;
-          const nativeGeoCenterY = img.naturalHeight / 2;
-          const targetEquivalentGeoCenterX = nativeGeoCenterX * (targetWidth / img.naturalWidth);
-          const targetEquivalentGeoCenterY = nativeGeoCenterY * (targetHeight / img.naturalHeight);
-          dx = referenceCentroid.x - targetEquivalentGeoCenterX;
-          dy = referenceCentroid.y - targetEquivalentGeoCenterY;
-          console.warn(`Centroid missing for image ${i} (${filesToProcess[i]?.file.name}) at stacking stage. Aligning its geometric center to reference centroid.`);
-        }
-        
-        console.log(`Stacking image ${i} (${filesToProcess[i]?.file.name}) with offset dx=${dx.toFixed(2)}, dy=${dy.toFixed(2)}`);
-        ctx.clearRect(0, 0, targetWidth, targetHeight);
-        ctx.drawImage(img, dx, dy, targetWidth, targetHeight);
-        
-        try {
-          const frameImageData = ctx.getImageData(0, 0, targetWidth, targetHeight);
-          const data = frameImageData.data;
-          for (let j = 0; j < data.length; j += 4) {
-            const pixelIndex = j / 4;
-            if (pixelDataCollector[pixelIndex]) { 
-                pixelDataCollector[pixelIndex].r.push(data[j]);
-                pixelDataCollector[pixelIndex].g.push(data[j + 1]);
-                pixelDataCollector[pixelIndex].b.push(data[j + 2]);
-            }
           }
-          validImagesStackedCount++;
-        } catch (e) {
-          const errorMsg = e instanceof Error ? e.message : String(e);
-          console.error(`Error getting image data for frame ${i} (${filesToProcess[i]?.file.name}) after drawing with offset: ${errorMsg}`);
-          toast({
-            title: `Stacking Error on Frame ${i}`,
-            description: `Could not process pixel data for ${filesToProcess[i]?.file.name || `image ${i}`}: ${errorMsg}. It might be excluded.`,
-            variant: "destructive"
-          });
+          const currentCentroid = centroids[i];
+          
+          let dx = 0;
+          let dy = 0;
+          
+          if (currentCentroid) {
+            dx = referenceCentroid.x - currentCentroid.x;
+            dy = referenceCentroid.y - currentCentroid.y;
+          } else {
+            const nativeGeoCenterX = img.naturalWidth / 2;
+            const nativeGeoCenterY = img.naturalHeight / 2;
+            const targetEquivalentGeoCenterX = nativeGeoCenterX * (targetWidth / img.naturalWidth);
+            const targetEquivalentGeoCenterY = nativeGeoCenterY * (targetHeight / img.naturalHeight);
+            dx = referenceCentroid.x - targetEquivalentGeoCenterX;
+            dy = referenceCentroid.y - targetEquivalentGeoCenterY;
+          }
+          
+          ctx.clearRect(0, 0, targetWidth, targetHeight); // Clear full canvas for drawing aligned image
+          ctx.drawImage(img, dx, dy, targetWidth, targetHeight); // Draw full aligned image
+          
+          try {
+            // Get ImageData for only the current band
+            const bandFrameImageData = ctx.getImageData(0, yBandStart, targetWidth, currentBandHeight);
+            const bandData = bandFrameImageData.data;
+            
+            for (let j = 0; j < bandData.length; j += 4) {
+              const bandPixelIndex = j / 4;
+              if (bandPixelDataCollector[bandPixelIndex]) { 
+                  bandPixelDataCollector[bandPixelIndex].r.push(bandData[j]);
+                  bandPixelDataCollector[bandPixelIndex].g.push(bandData[j + 1]);
+                  bandPixelDataCollector[bandPixelIndex].b.push(bandData[j + 2]);
+              }
+            }
+            if (yBandStart === 0) { // Count valid images only once based on first band processing
+              imagesContributingToBand++;
+            }
+          } catch (e) {
+            const errorMsg = e instanceof Error ? e.message : String(e);
+            console.error(`Error getting image data for band (img ${i}, bandY ${yBandStart}): ${errorMsg}`);
+            toast({
+              title: `Stacking Error on Band Processing`,
+              description: `Could not process pixel data for ${filesToProcess[i]?.file.name || `image ${i}`} for band starting at row ${yBandStart}.`,
+              variant: "destructive"
+            });
+          }
         }
+        if (yBandStart === 0) validImagesStackedCount = imagesContributingToBand;
+
+
+        // Calculate medians for this band and put into finalImageData
+        for (let yInBand = 0; yInBand < currentBandHeight; yInBand++) {
+          for (let x = 0; x < targetWidth; x++) {
+              const bandPixelIndex = yInBand * targetWidth + x;
+              const finalPixelGlobalIndex = ((yBandStart + yInBand) * targetWidth + x) * 4;
+
+              if (bandPixelDataCollector[bandPixelIndex]) {
+                  finalImageData.data[finalPixelGlobalIndex] = getMedian(bandPixelDataCollector[bandPixelIndex].r);
+                  finalImageData.data[finalPixelGlobalIndex + 1] = getMedian(bandPixelDataCollector[bandPixelIndex].g);
+                  finalImageData.data[finalPixelGlobalIndex + 2] = getMedian(bandPixelDataCollector[bandPixelIndex].b);
+                  finalImageData.data[finalPixelGlobalIndex + 3] = 255; 
+              } else {
+                  finalImageData.data[finalPixelGlobalIndex] = 0;
+                  finalImageData.data[finalPixelGlobalIndex + 1] = 0;
+                  finalImageData.data[finalPixelGlobalIndex + 2] = 0;
+                  finalImageData.data[finalPixelGlobalIndex + 3] = 255;
+              }
+          }
+        }
+        console.log(`Finished processing band: rows ${yBandStart} to ${yBandStart + currentBandHeight - 1}. Yielding.`);
         await yieldToEventLoop(); 
       }
 
-      if (validImagesStackedCount === 0) {
-        toast({ title: "Stacking Failed", description: "No images could be successfully processed and stacked.", variant: "destructive" });
+
+      if (validImagesStackedCount === 0 && imageElements.length > 0) {
+         // If this is reached, it means all images failed during band processing or no images were valid from the start.
+         // The initial check for imageElements.length < 2 should catch the "no valid images from start" case.
+         // This handles if all images somehow fail during band data extraction.
+        toast({ title: "Stacking Failed", description: "No images could be successfully processed during band stacking.", variant: "destructive" });
         setIsProcessing(false);
         return;
-      }
-
-      const finalImageData = ctx.createImageData(targetWidth, targetHeight);
-      if (pixelDataCollector.length !== targetWidth * targetHeight) {
-         console.error(`pixelDataCollector length (${pixelDataCollector.length}) does not match target dimensions product (${targetWidth * targetHeight}). Final image may be incorrect.`);
-         toast({title: "Internal Error", description: "Mismatch in pixel data collection size. Result may be incomplete.", variant: "destructive"});
-      }
-
-      for (let y = 0; y < targetHeight; y++) {
-        for (let x = 0; x < targetWidth; x++) {
-            const pixelIndex = y * targetWidth + x;
-            if (pixelDataCollector[pixelIndex]) {
-                finalImageData.data[pixelIndex * 4] = getMedian(pixelDataCollector[pixelIndex].r);
-                finalImageData.data[pixelIndex * 4 + 1] = getMedian(pixelDataCollector[pixelIndex].g);
-                finalImageData.data[pixelIndex * 4 + 2] = getMedian(pixelDataCollector[pixelIndex].b);
-                finalImageData.data[pixelIndex * 4 + 3] = 255;
-            } else {
-                finalImageData.data[pixelIndex * 4] = 0;
-                finalImageData.data[pixelIndex * 4 + 1] = 0;
-                finalImageData.data[pixelIndex * 4 + 2] = 0;
-                finalImageData.data[pixelIndex * 4 + 3] = 255;
-            }
-        }
-        if (y % 10 === 0) { 
-            await yieldToEventLoop();
-        }
       }
       
       ctx.putImageData(finalImageData, 0, 0);
       const resultDataUrl = offscreenCanvas.toDataURL('image/png');
       
       if (!resultDataUrl || resultDataUrl === "data:," || resultDataUrl.length < MIN_VALID_DATA_URL_LENGTH) {
-        console.error("Failed to generate a valid data URL from canvas. Preview will be empty. Canvas might be too large, an operation failed, or the result is empty.");
+        console.error("Failed to generate a valid data URL from canvas. Preview will be empty.");
         toast({
           title: "Preview Generation Failed",
-          description: "Could not generate a valid image preview. The image might be too large, processing resulted in an empty image, or an internal error occurred during canvas processing.",
+          description: "Could not generate a valid image preview. The image might be too large or an internal error occurred.",
           variant: "destructive",
         });
         setStackedImage(null);
@@ -581,11 +586,11 @@ export default function AstroStackerPage() {
         setStackedImage(resultDataUrl);
         const alignmentMessage = successfulStarAlignments > 0
           ? `${successfulStarAlignments}/${imageElements.length} images primarily aligned using star-based centroids. Others used fallbacks.`
-          : `All images aligned using brightness-based centroids or geometric centers due to insufficient stars detected. Analysis for alignment may have been scaled for performance.`;
+          : `All images aligned using brightness-based centroids or geometric centers.`;
         toast({
           title: "Median Stacking Complete",
-          description: `${alignmentMessage} ${validImagesStackedCount} image(s) (out of ${imageElements.length} processed) stacked using median. Processing dimension was ${targetWidth}x${targetHeight}. This can be slow for large images.`,
-          duration: 9000,
+          description: `${alignmentMessage} ${validImagesStackedCount} image(s) (out of ${imageElements.length} processed) stacked using median (banded processing). Dimension: ${targetWidth}x${targetHeight}.`,
+          duration: 10000, // Increased duration for longer message
         });
       }
 
@@ -622,12 +627,11 @@ export default function AstroStackerPage() {
                   Upload & Align Images (Median Stack)
                 </CardTitle>
                 <CardDescription>
-                  Add PNG, JPG, GIF, or WEBP. TIFF/DNG files require manual pre-conversion before they can be stacked. Images are aligned using detected stars (or brightness centroids as fallback) then stacked using the median pixel value to reduce noise.
-                  Analysis for star detection on images larger than {ANALYSIS_MAX_DIMENSION}px (width/height) is done on a scaled-down version for performance.
-                  Max image load dimension: {MAX_IMAGE_LOAD_DIMENSION}px.
-                  Final stacking resolution capped near {MAX_STACKING_SIDE_LENGTH}px on the longest side for stability.
-                  Max images processed for stacking: {MAX_IMAGES_TO_STACK}.
-                  Processing many or very large images may be slow or cause browser issues on some devices. This is computationally intensive.
+                  Add PNG, JPG, GIF, or WEBP. TIFF/DNG files require manual pre-conversion. Images are aligned using stars (or brightness centroids) then stacked using median pixel values (processed in bands for stability).
+                  Analysis for star detection on images larger than {ANALYSIS_MAX_DIMENSION}px is scaled.
+                  Max image load: {MAX_IMAGE_LOAD_DIMENSION}px.
+                  Stacking resolution capped near {MAX_STACKING_SIDE_LENGTH}px. Max {MAX_IMAGES_TO_STACK} images.
+                  Processing can be slow/intensive.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -675,5 +679,6 @@ export default function AstroStackerPage() {
     </div>
   );
 }
+    
 
     
