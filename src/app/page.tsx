@@ -13,7 +13,7 @@ import { ImageQueueItem } from '@/components/astrostacker/ImageQueueItem';
 import { ImagePreview } from '@/components/astrostacker/ImagePreview';
 import { DownloadButton } from '@/components/astrostacker/DownloadButton';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Star as StarIcon, Wand2, SigmaSquare } from 'lucide-react';
+import { Star as StarIcon, Wand2 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
@@ -42,6 +42,7 @@ const STACKING_BAND_HEIGHT = 50;
 
 const SIGMA_CLIP_THRESHOLD = 2.0;
 const SIGMA_CLIP_ITERATIONS = 2;
+const MIN_STARS_FOR_ALIGNMENT = 5; // New constant for minimum stars
 
 // Helper function to yield to the event loop
 const yieldToEventLoop = async (delayMs: number) => {
@@ -95,8 +96,8 @@ function detectStars(imageData: ImageData, brightnessThreshold: number = 200, lo
 
 function calculateStarArrayCentroid(starsInput: Star[]): { x: number; y: number } | null {
   let stars = starsInput;
-  if (stars.length < 3) {
-     console.warn(`Not enough stars (${stars.length}) detected for star-based centroid. Need at least 3.`);
+  if (stars.length < MIN_STARS_FOR_ALIGNMENT) { // Changed from 3 to MIN_STARS_FOR_ALIGNMENT
+     console.warn(`Not enough stars (${stars.length}) detected for star-based centroid. Need at least ${MIN_STARS_FOR_ALIGNMENT}.`);
      return null;
   }
 
@@ -482,7 +483,7 @@ export default function AstroStackerPage() {
                 method = `star-based (${stars.length} stars detected, analysis on ${analysisWidth}x${analysisHeight}${analysisScaleFactor < 1.0 ? ' [scaled]' : ''})`;
                 successfulStarAlignments++;
             } else {
-              const reason = stars.length < 3 ? `only ${stars.length} stars detected (min 3 needed)` : "star detection/centroid calculation failed";
+              const reason = stars.length < MIN_STARS_FOR_ALIGNMENT ? `only ${stars.length} stars detected (min ${MIN_STARS_FOR_ALIGNMENT} needed)` : "star detection/centroid calculation failed";
               method = `brightness-based fallback (${reason}, analysis on ${analysisWidth}x${analysisHeight}${analysisScaleFactor < 1.0 ? ' [scaled]' : ''})`;
               console.warn(`Star-based centroid failed for ${fileNameForLog} (${reason}). Falling back to brightness-based centroid.`);
               analysisImageCentroid = calculateBrightnessCentroid(analysisImageData);
@@ -696,7 +697,7 @@ export default function AstroStackerPage() {
                   Upload & Align Images
                 </CardTitle>
                 <CardDescription>
-                  Add PNG, JPG, GIF, or WEBP. TIFF/DNG files require manual pre-conversion. Images are aligned using stars (or brightness centroids) then stacked.
+                  Add PNG, JPG, GIF, or WEBP. TIFF/DNG files require manual pre-conversion. Images are aligned using stars (min {MIN_STARS_FOR_ALIGNMENT} required) or brightness centroids then stacked.
                   Median stacking uses median pixel values. Sigma Clip stacking iteratively removes outliers and averages the rest. Both processed in bands for stability.
                   Analysis for star detection on images larger than {ANALYSIS_MAX_DIMENSION}px is scaled.
                   Max image load: {MAX_IMAGE_LOAD_DIMENSION}px.
@@ -773,6 +774,4 @@ export default function AstroStackerPage() {
     </div>
   );
 }
-    
-
     
