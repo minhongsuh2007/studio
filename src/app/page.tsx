@@ -35,6 +35,11 @@ const MAX_IMAGES_TO_STACK = 10;
 const MIN_VALID_DATA_URL_LENGTH = 100;
 const MAX_STARS_FOR_CENTROID_CALCULATION = 2000;
 
+// Helper function to yield to the event loop
+const yieldToEventLoop = async () => {
+  await new Promise(resolve => setTimeout(resolve, 0));
+};
+
 function detectStars(imageData: ImageData, brightnessThreshold: number = 200, localContrastFactor: number = 1.5): Star[] {
   const stars: Star[] = [];
   const { data, width, height } = imageData;
@@ -188,11 +193,11 @@ export default function AstroStackerPage() {
             fileType === 'image/x-adobe-dng' || fileType === 'image/x-raw' || fileName.endsWith('.dng')) {
           toast({
             title: "Manual Conversion Required",
-            description: `${file.name} is a TIFF/DNG file. Please convert it to JPG, PNG, or WEBP manually for stacking.`,
-            variant: "default", // Use default variant for informational message
+            description: `${file.name} is a TIFF/DNG file. Please convert it to JPG, PNG, or WEBP manually for stacking. Automatic conversion is not supported.`,
+            variant: "default", 
             duration: 8000,
           });
-          continue; // Skip this file from being added to the queue
+          continue; 
         }
 
         if (!acceptedWebTypes.includes(fileType)) {
@@ -361,6 +366,7 @@ export default function AstroStackerPage() {
             method = "invalid_element_fallback";
             centroids.push(finalScaledCentroid);
             console.log(`Image ${i} (${fileNameForLog}) centroid method: ${method}, Scaled to Target Coords:`, finalScaledCentroid);
+            await yieldToEventLoop(); // Yield after processing this image
             continue;
         }
         
@@ -452,6 +458,7 @@ export default function AstroStackerPage() {
         }
         console.log(`Image ${i} (${fileNameForLog}) centroid method: ${method}, Scaled to Target Coords:`, finalScaledCentroid);
         centroids.push(finalScaledCentroid);
+        await yieldToEventLoop(); // Yield after processing this image
       }
 
       const referenceCentroid = centroids[0];
@@ -478,6 +485,7 @@ export default function AstroStackerPage() {
         const img = imageElements[i];
         if (!img || img.naturalWidth === 0 || img.naturalHeight === 0) {
             console.warn(`Skipping stacking for invalid image element at index ${i}: ${filesToProcess[i]?.file.name}`);
+            await yieldToEventLoop(); // Yield even if skipping
             continue;
         }
         const currentCentroid = centroids[i];
@@ -523,6 +531,7 @@ export default function AstroStackerPage() {
             variant: "destructive"
           });
         }
+        await yieldToEventLoop(); // Yield after processing this image
       }
 
       if (validImagesStackedCount === 0) {
@@ -537,11 +546,25 @@ export default function AstroStackerPage() {
          toast({title: "Internal Error", description: "Mismatch in pixel data collection size. Result may be incomplete.", variant: "destructive"});
       }
 
-      for (let i = 0; i < pixelDataCollector.length; i++) {
-        finalImageData.data[i * 4] = getMedian(pixelDataCollector[i].r);
-        finalImageData.data[i * 4 + 1] = getMedian(pixelDataCollector[i].g);
-        finalImageData.data[i * 4 + 2] = getMedian(pixelDataCollector[i].b);
-        finalImageData.data[i * 4 + 3] = 255;
+      for (let y = 0; y < targetHeight; y++) {
+        for (let x = 0; x < targetWidth; x++) {
+            const pixelIndex = y * targetWidth + x;
+            if (pixelDataCollector[pixelIndex]) {
+                finalImageData.data[pixelIndex * 4] = getMedian(pixelDataCollector[pixelIndex].r);
+                finalImageData.data[pixelIndex * 4 + 1] = getMedian(pixelDataCollector[pixelIndex].g);
+                finalImageData.data[pixelIndex * 4 + 2] = getMedian(pixelDataCollector[pixelIndex].b);
+                finalImageData.data[pixelIndex * 4 + 3] = 255;
+            } else {
+                // Handle missing pixel data if necessary, e.g., set to black
+                finalImageData.data[pixelIndex * 4] = 0;
+                finalImageData.data[pixelIndex * 4 + 1] = 0;
+                finalImageData.data[pixelIndex * 4 + 2] = 0;
+                finalImageData.data[pixelIndex * 4 + 3] = 255;
+            }
+        }
+        if (y % 10 === 0) { // Yield approx every 10 rows 
+            await yieldToEventLoop();
+        }
       }
       
       ctx.putImageData(finalImageData, 0, 0);
@@ -602,7 +625,7 @@ export default function AstroStackerPage() {
                   Upload & Align Images (Median Stack)
                 </CardTitle>
                 <CardDescription>
-                  Add images (JPG, PNG, WEBP preferred). TIFF/DNG files require manual pre-conversion before they can be stacked. Images are aligned using detected stars (or brightness centroids as fallback) then stacked using the median pixel value to reduce noise.
+                  Add PNG, JPG, GIF, or WEBP. TIFF/DNG files require manual pre-conversion before they can be stacked. Images are aligned using detected stars (or brightness centroids as fallback) then stacked using the median pixel value to reduce noise.
                   Analysis for star detection on images larger than {ANALYSIS_MAX_DIMENSION}px (width/height) is done on a scaled-down version for performance.
                   Max image load dimension: {MAX_IMAGE_LOAD_DIMENSION}px.
                   Final stacking resolution capped near {MAX_STACKING_SIDE_LENGTH}px on the longest side for stability.
