@@ -32,6 +32,7 @@ interface Star {
 }
 
 type StackingMode = 'median' | 'sigmaClip';
+type PreviewFitMode = 'contain' | 'cover';
 
 const MAX_IMAGE_LOAD_DIMENSION = 8192;
 const ANALYSIS_MAX_DIMENSION = 600;
@@ -242,6 +243,7 @@ export default function AstroStackerPage() {
   const [stackedImage, setStackedImage] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [stackingMode, setStackingMode] = useState<StackingMode>('median');
+  const [previewFitMode, setPreviewFitMode] = useState<PreviewFitMode>('contain');
   const [progressPercent, setProgressPercent] = useState(0);
   const { toast } = useToast();
 
@@ -260,7 +262,7 @@ export default function AstroStackerPage() {
             fileType === 'image/x-adobe-dng' || fileType === 'image/x-raw' || fileName.endsWith('.dng')) {
           toast({
             title: "Manual Conversion Required",
-            description: `${file.name} is a TIFF/DNG file. Please convert it to JPG, PNG, or WEBP manually for stacking. Automatic conversion is not supported.`,
+            description: `${file.name} is a TIFF/DNG file. Please convert it to JPG, PNG, or WEBP manually for stacking. For online conversion, try: https://convertio.co/kr/tiff-png/`,
             variant: "default", 
             duration: 8000,
           });
@@ -326,6 +328,15 @@ export default function AstroStackerPage() {
   };
 
   const handleStackImages = async () => {
+    if (typeof window === 'undefined' || typeof document === 'undefined') {
+        toast({
+            title: "Environment Error",
+            description: "Stacking cannot proceed outside a browser environment.",
+            variant: "destructive",
+        });
+        setIsProcessing(false);
+        return;
+    }
     if (uploadedFiles.length < 2) {
       toast({ title: "Not Enough Images", description: "Please upload at least two images for stacking." });
       return;
@@ -346,7 +357,7 @@ export default function AstroStackerPage() {
       filesToProcess = uploadedFiles.slice(0, MAX_IMAGES_TO_STACK);
     }
     
-    setProgressPercent(PROGRESS_INITIAL_SETUP); // Initial setup, file loading starts
+    setProgressPercent(PROGRESS_INITIAL_SETUP);
 
     try {
       let imageElements: HTMLImageElement[] = [];
@@ -723,7 +734,7 @@ export default function AstroStackerPage() {
                   Upload & Align Images
                 </CardTitle>
                 <CardDescription>
-                  Add PNG, JPG, GIF, or WEBP. TIFF/DNG files require manual pre-conversion. Images are aligned using the brightest {MIN_STARS_FOR_ALIGNMENT} stars (if detected, min {MIN_STARS_FOR_ALIGNMENT} required) or brightness centroids, then stacked.
+                  Add PNG, JPG, GIF, or WEBP. TIFF/DNG files require manual pre-conversion (e.g., using <a href="https://convertio.co/kr/tiff-png/" target="_blank" rel="noopener noreferrer" className="underline hover:text-accent">Convertio</a>). Images are aligned using the brightest {MIN_STARS_FOR_ALIGNMENT} stars (if detected, min {MIN_STARS_FOR_ALIGNMENT} required) or brightness centroids, then stacked.
                   Median stacking uses median pixel values. Sigma Clip stacking iteratively removes outliers and averages the rest. Both processed in bands for stability.
                   Analysis for star detection on images larger than {ANALYSIS_MAX_DIMENSION}px is scaled.
                   Max image load: {MAX_IMAGE_LOAD_DIMENSION}px.
@@ -780,10 +791,32 @@ export default function AstroStackerPage() {
                        </p>
                     </div>
 
+                    <div className="space-y-2 pt-2">
+                      <Label className="text-base font-semibold text-foreground">Preview Fit</Label>
+                      <RadioGroup
+                        value={previewFitMode}
+                        onValueChange={(value: string) => setPreviewFitMode(value as PreviewFitMode)}
+                        className="flex space-x-4"
+                        disabled={isProcessing}
+                      >
+                        <div className="flex items-center space-x-2">
+                          <RadioGroupItem value="contain" id="fit-contain" />
+                          <Label htmlFor="fit-contain" className="cursor-pointer">Fit (Show Full)</Label>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <RadioGroupItem value="cover" id="fit-cover" />
+                          <Label htmlFor="fit-cover" className="cursor-pointer">Fill (Cover Area)</Label>
+                        </div>
+                      </RadioGroup>
+                       <p className="text-xs text-muted-foreground">
+                        'Fit' shows the entire image. 'Fill' covers the preview area, potentially cropping.
+                       </p>
+                    </div>
+
                     <Button
                       onClick={handleStackImages}
                       disabled={isProcessing || uploadedFiles.length < 2}
-                      className="w-full bg-accent hover:bg-accent/90 text-accent-foreground"
+                      className="w-full bg-accent hover:bg-accent/90 text-accent-foreground mt-4"
                       title={uploadedFiles.length < 2 ? "Upload at least two images for stacking" : `Align & Stack using ${stackingMode === 'median' ? 'Median' : 'Sigma Clip'}`}
                     >
                       <Wand2 className="mr-2 h-5 w-5" />
@@ -796,7 +829,11 @@ export default function AstroStackerPage() {
           </div>
 
           <div className="w-full lg:w-3/5 xl:w-2/3 flex flex-col space-y-6">
-            <ImagePreview imageUrl={stackedImage} isLoading={isProcessing && !stackedImage} />
+            <ImagePreview 
+              imageUrl={stackedImage} 
+              isLoading={isProcessing && !stackedImage}
+              fitMode={previewFitMode} 
+            />
             <DownloadButton imageUrl={stackedImage} isProcessing={isProcessing} />
           </div>
         </div>
@@ -807,6 +844,8 @@ export default function AstroStackerPage() {
     </div>
   );
 }
+    
+
     
 
     
