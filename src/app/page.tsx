@@ -17,6 +17,7 @@ import { Star as StarIcon, Wand2 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
+import { Progress } from "@/components/ui/progress";
 
 
 interface UploadedFile {
@@ -37,12 +38,16 @@ const ANALYSIS_MAX_DIMENSION = 600;
 const MAX_STACKING_SIDE_LENGTH = 3500;
 const MAX_IMAGES_TO_STACK = 10;
 const MIN_VALID_DATA_URL_LENGTH = 100;
-// MAX_STARS_FOR_CENTROID_CALCULATION is removed as we now use the top N brightest.
 const STACKING_BAND_HEIGHT = 50; 
 
 const SIGMA_CLIP_THRESHOLD = 2.0;
 const SIGMA_CLIP_ITERATIONS = 2;
 const MIN_STARS_FOR_ALIGNMENT = 5; 
+
+const PROGRESS_INITIAL_SETUP = 5;
+const PROGRESS_CENTROID_CALCULATION_TOTAL = 30;
+const PROGRESS_BANDED_STACKING_TOTAL = 65;
+
 
 // Helper function to yield to the event loop
 const yieldToEventLoop = async (delayMs: number) => {
@@ -100,10 +105,7 @@ function calculateStarArrayCentroid(starsInput: Star[]): { x: number; y: number 
      return null;
   }
 
-  // Sort stars by brightness in descending order
   const sortedStars = [...starsInput].sort((a, b) => b.brightness - a.brightness);
-
-  // Select the top MIN_STARS_FOR_ALIGNMENT brightest stars
   const brightestStarsToUse = sortedStars.slice(0, MIN_STARS_FOR_ALIGNMENT);
   
   console.log(`Using the ${brightestStarsToUse.length} brightest stars (out of ${starsInput.length} detected) for centroid calculation.`);
@@ -119,8 +121,6 @@ function calculateStarArrayCentroid(starsInput: Star[]): { x: number; y: number 
   }
 
   if (totalBrightness === 0) {
-    // This case should be rare if stars have positive brightness.
-    // Fallback to a simple average of positions if all selected stars had 0 brightness.
     if (brightestStarsToUse.length > 0) {
         console.warn("Total brightness of selected brightest stars is zero. Using simple average of their positions.");
         let sumX = 0;
@@ -131,7 +131,7 @@ function calculateStarArrayCentroid(starsInput: Star[]): { x: number; y: number 
         }
         return { x: sumX / brightestStarsToUse.length, y: sumY / brightestStarsToUse.length};
     }
-    return null; // Should not be reached if MIN_STARS_FOR_ALIGNMENT > 0
+    return null; 
   }
 
   return {
@@ -197,7 +197,7 @@ const calculateMean = (arr: number[]): number => {
 const calculateStdDev = (arr: number[], meanVal?: number): number => {
   if (arr.length < 2) return 0; 
   const mean = meanVal === undefined ? calculateMean(arr) : meanVal;
-  const variance = arr.reduce((acc, val) => acc + Math.pow(val - mean, 2), 0) / (arr.length -1); // Sample standard deviation (n-1)
+  const variance = arr.reduce((acc, val) => acc + Math.pow(val - mean, 2), 0) / (arr.length -1); 
   return Math.sqrt(variance);
 };
 
@@ -230,10 +230,10 @@ const applySigmaClip = (
     currentValues = nextValues;
   }
   
-  if (!currentValues.length) { // If all values were clipped
-    return calculateMean(initialValues); // Fallback to mean of original values
+  if (!currentValues.length) { 
+    return calculateMean(initialValues); 
   }
-  return calculateMean(currentValues); // Return mean of the (remaining) clipped values
+  return calculateMean(currentValues); 
 };
 
 
@@ -242,10 +242,12 @@ export default function AstroStackerPage() {
   const [stackedImage, setStackedImage] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [stackingMode, setStackingMode] = useState<StackingMode>('median');
+  const [progressPercent, setProgressPercent] = useState(0);
   const { toast } = useToast();
 
   const handleFilesAdded = async (files: File[]) => {
     setIsProcessing(true);
+    setProgressPercent(0);
     const newUploadedFiles: UploadedFile[] = [];
     const acceptedWebTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 
@@ -330,6 +332,7 @@ export default function AstroStackerPage() {
     }
     setIsProcessing(true);
     setStackedImage(null);
+    setProgressPercent(0); 
     console.log(`Starting image stacking process (${stackingMode})...`);
 
     let filesToProcess = uploadedFiles;
@@ -342,6 +345,8 @@ export default function AstroStackerPage() {
       });
       filesToProcess = uploadedFiles.slice(0, MAX_IMAGES_TO_STACK);
     }
+    
+    setProgressPercent(PROGRESS_INITIAL_SETUP); // Initial setup, file loading starts
 
     try {
       let imageElements: HTMLImageElement[] = [];
@@ -362,6 +367,7 @@ export default function AstroStackerPage() {
       if (imageElements.length < 2) {
         toast({ title: "Not Enough Valid Images", description: `Need at least two valid images (out of the processed set of ${filesToProcess.length}) for stacking after filtering. Found ${imageElements.length}.`, variant: "destructive" });
         setIsProcessing(false);
+        setProgressPercent(0);
         return;
       }
 
@@ -373,6 +379,7 @@ export default function AstroStackerPage() {
           variant: "destructive",
         });
         setIsProcessing(false);
+        setProgressPercent(0);
         return;
       }
       
@@ -400,6 +407,7 @@ export default function AstroStackerPage() {
       if (targetWidth === 0 || targetHeight === 0) {
         toast({ title: "Error", description: "Calculated target stacking dimensions are zero. Cannot proceed.", variant: "destructive" });
         setIsProcessing(false);
+        setProgressPercent(0);
         return;
       }
       
@@ -411,7 +419,6 @@ export default function AstroStackerPage() {
       const loadScore = (0.3 * normalizedImageFactor) + (0.7 * normalizedPixelFactor); 
       const dynamicDelayMs = Math.max(1, Math.min(50, 1 + Math.floor(loadScore * 49))); 
       console.log(`Calculated dynamic yield delay: ${dynamicDelayMs}ms based on load score: ${loadScore.toFixed(2)} (Images: ${numImages}, Pixels: ${totalPixels})`);
-
 
       const offscreenCanvas = document.createElement('canvas');
       offscreenCanvas.width = targetWidth;
@@ -427,6 +434,7 @@ export default function AstroStackerPage() {
       
       const centroids: ({ x: number; y: number } | null)[] = [];
       let successfulStarAlignments = 0;
+      const centroidProgressIncrement = imageElements.length > 0 ? PROGRESS_CENTROID_CALCULATION_TOTAL / imageElements.length : 0;
 
       for (let i = 0; i < imageElements.length; i++) {
         const imgEl = imageElements[i];
@@ -441,6 +449,7 @@ export default function AstroStackerPage() {
             centroids.push(finalScaledCentroid);
             console.log(`Image ${i} (${fileNameForLog}) centroid method: ${method}, Scaled to Target Coords:`, finalScaledCentroid);
             await yieldToEventLoop(dynamicDelayMs); 
+            setProgressPercent(prev => Math.min(100, prev + centroidProgressIncrement));
             continue;
         }
         
@@ -532,6 +541,7 @@ export default function AstroStackerPage() {
         }
         console.log(`Image ${i} (${fileNameForLog}) centroid method: ${method}, Scaled to Target Coords:`, finalScaledCentroid);
         centroids.push(finalScaledCentroid);
+        setProgressPercent(prev => Math.min(100, prev + centroidProgressIncrement));
         await yieldToEventLoop(dynamicDelayMs); 
       }
 
@@ -539,6 +549,7 @@ export default function AstroStackerPage() {
       if (!referenceCentroid) {
         toast({ title: "Alignment Failed", description: "Could not determine alignment reference for the first image. Stacking cannot proceed.", variant: "destructive" });
         setIsProcessing(false);
+        setProgressPercent(0);
         return;
       }
       
@@ -546,6 +557,9 @@ export default function AstroStackerPage() {
       let validImagesStackedCount = 0;
 
       console.log(`Starting band processing. Band height: ${STACKING_BAND_HEIGHT}px. Dynamic yield delay: ${dynamicDelayMs}ms. Mode: ${stackingMode}`);
+      
+      const numBands = targetHeight > 0 ? Math.ceil(targetHeight / STACKING_BAND_HEIGHT) : 0;
+      const bandProgressIncrement = numBands > 0 ? PROGRESS_BANDED_STACKING_TOTAL / numBands : 0;
 
       for (let yBandStart = 0; yBandStart < targetHeight; yBandStart += STACKING_BAND_HEIGHT) {
         const currentBandHeight = Math.min(STACKING_BAND_HEIGHT, targetHeight - yBandStart);
@@ -637,13 +651,16 @@ export default function AstroStackerPage() {
         if (yBandStart % (STACKING_BAND_HEIGHT * 5) === 0 || yBandStart + currentBandHeight >= targetHeight ) { 
              console.log(`Processed band: rows ${yBandStart} to ${yBandStart + currentBandHeight - 1}. Yielding.`);
         }
+        setProgressPercent(prev => Math.min(100, prev + bandProgressIncrement));
         await yieldToEventLoop(dynamicDelayMs); 
       }
 
+      setProgressPercent(100);
 
       if (validImagesStackedCount === 0 && imageElements.length > 0) {
         toast({ title: "Stacking Failed", description: "No images could be successfully processed during band stacking.", variant: "destructive" });
         setIsProcessing(false);
+        setProgressPercent(0);
         return;
       }
       
@@ -683,6 +700,7 @@ export default function AstroStackerPage() {
       setStackedImage(null);
     } finally {
       setIsProcessing(false);
+      setProgressPercent(0);
       console.log("Image stacking process finished.");
     }
   };
@@ -716,6 +734,13 @@ export default function AstroStackerPage() {
               <CardContent className="space-y-4">
                 <ImageUploadArea onFilesAdded={handleFilesAdded} isProcessing={isProcessing} />
                 
+                {isProcessing && (
+                  <div className="space-y-2">
+                    <Progress value={progressPercent} className="w-full" />
+                    <p className="text-sm text-center text-muted-foreground">{Math.round(progressPercent)}% Complete</p>
+                  </div>
+                )}
+
                 {uploadedFiles.length > 0 && (
                   <>
                     <h3 className="text-lg font-semibold mt-4 text-foreground">Image Queue ({uploadedFiles.length})</h3>
@@ -782,6 +807,8 @@ export default function AstroStackerPage() {
     </div>
   );
 }
+    
+
     
 
     
