@@ -37,7 +37,7 @@ const MAX_STARS_FOR_CENTROID_CALCULATION = 2000;
 
 // Helper function to yield to the event loop
 const yieldToEventLoop = async () => {
-  await new Promise(resolve => setTimeout(resolve, 0));
+  await new Promise(resolve => setTimeout(resolve, 50)); // Increased delay to 50ms
 };
 
 function detectStars(imageData: ImageData, brightnessThreshold: number = 200, localContrastFactor: number = 1.5): Star[] {
@@ -366,7 +366,7 @@ export default function AstroStackerPage() {
             method = "invalid_element_fallback";
             centroids.push(finalScaledCentroid);
             console.log(`Image ${i} (${fileNameForLog}) centroid method: ${method}, Scaled to Target Coords:`, finalScaledCentroid);
-            await yieldToEventLoop(); // Yield after processing this image
+            await yieldToEventLoop(); 
             continue;
         }
         
@@ -458,7 +458,7 @@ export default function AstroStackerPage() {
         }
         console.log(`Image ${i} (${fileNameForLog}) centroid method: ${method}, Scaled to Target Coords:`, finalScaledCentroid);
         centroids.push(finalScaledCentroid);
-        await yieldToEventLoop(); // Yield after processing this image
+        await yieldToEventLoop(); 
       }
 
       const referenceCentroid = centroids[0];
@@ -485,7 +485,7 @@ export default function AstroStackerPage() {
         const img = imageElements[i];
         if (!img || img.naturalWidth === 0 || img.naturalHeight === 0) {
             console.warn(`Skipping stacking for invalid image element at index ${i}: ${filesToProcess[i]?.file.name}`);
-            await yieldToEventLoop(); // Yield even if skipping
+            await yieldToEventLoop(); 
             continue;
         }
         const currentCentroid = centroids[i];
@@ -515,7 +515,7 @@ export default function AstroStackerPage() {
           const data = frameImageData.data;
           for (let j = 0; j < data.length; j += 4) {
             const pixelIndex = j / 4;
-            if (pixelDataCollector[pixelIndex]) { // Ensure pixelIndex is valid
+            if (pixelDataCollector[pixelIndex]) { 
                 pixelDataCollector[pixelIndex].r.push(data[j]);
                 pixelDataCollector[pixelIndex].g.push(data[j + 1]);
                 pixelDataCollector[pixelIndex].b.push(data[j + 2]);
@@ -531,7 +531,7 @@ export default function AstroStackerPage() {
             variant: "destructive"
           });
         }
-        await yieldToEventLoop(); // Yield after processing this image
+        await yieldToEventLoop(); 
       }
 
       if (validImagesStackedCount === 0) {
@@ -555,14 +555,13 @@ export default function AstroStackerPage() {
                 finalImageData.data[pixelIndex * 4 + 2] = getMedian(pixelDataCollector[pixelIndex].b);
                 finalImageData.data[pixelIndex * 4 + 3] = 255;
             } else {
-                // Handle missing pixel data if necessary, e.g., set to black
                 finalImageData.data[pixelIndex * 4] = 0;
                 finalImageData.data[pixelIndex * 4 + 1] = 0;
                 finalImageData.data[pixelIndex * 4 + 2] = 0;
                 finalImageData.data[pixelIndex * 4 + 3] = 255;
             }
         }
-        if (y % 10 === 0) { // Yield approx every 10 rows 
+        if (y % 10 === 0) { 
             await yieldToEventLoop();
         }
       }
@@ -606,9 +605,7 @@ export default function AstroStackerPage() {
   };
   
   useEffect(() => {
-    // Cleanup function if needed
     return () => {
-      // e.g., revoke ObjectURLs if they were used
     };
   }, []);
 
@@ -678,3 +675,5 @@ export default function AstroStackerPage() {
     </div>
   );
 }
+
+    
