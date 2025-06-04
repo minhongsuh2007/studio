@@ -13,8 +13,10 @@ import { ImageQueueItem } from '@/components/astrostacker/ImageQueueItem';
 import { ImagePreview } from '@/components/astrostacker/ImagePreview';
 import { DownloadButton } from '@/components/astrostacker/DownloadButton';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Star as StarIcon, Wand2 } from 'lucide-react';
+import { Star as StarIcon, Wand2, SigmaSquare } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Label } from "@/components/ui/label";
 
 
 interface UploadedFile {
@@ -28,13 +30,18 @@ interface Star {
   brightness: number;
 }
 
+type StackingMode = 'median' | 'sigmaClip';
+
 const MAX_IMAGE_LOAD_DIMENSION = 8192;
 const ANALYSIS_MAX_DIMENSION = 600;
 const MAX_STACKING_SIDE_LENGTH = 3500;
 const MAX_IMAGES_TO_STACK = 10;
 const MIN_VALID_DATA_URL_LENGTH = 100;
 const MAX_STARS_FOR_CENTROID_CALCULATION = 2000;
-const STACKING_BAND_HEIGHT = 50; // Process image in bands of 50 rows
+const STACKING_BAND_HEIGHT = 50; 
+
+const SIGMA_CLIP_THRESHOLD = 2.0;
+const SIGMA_CLIP_ITERATIONS = 2;
 
 // Helper function to yield to the event loop
 const yieldToEventLoop = async (delayMs: number) => {
@@ -65,13 +72,13 @@ function detectStars(imageData: ImageData, brightnessThreshold: number = 200, lo
           for (let dx = -1; dx <= 1; dx++) {
             if (dx === 0 && dy === 0) continue;
             const ni = ((y + dy) * width + (x + dx)) * 4;
-            if (ni >= 0 && ni < data.length -3) { // Boundary check
+            if (ni >= 0 && ni < data.length -3) { 
                 neighborSumBrightness += data[ni] + data[ni + 1] + data[ni + 2];
                 neighborCount++;
             }
           }
         }
-        if (neighborCount === 0) continue; // Avoid division by zero
+        if (neighborCount === 0) continue; 
         const avgNeighborBrightness = neighborSumBrightness / neighborCount;
 
         if (currentPixelBrightness > avgNeighborBrightness * localContrastFactor) {
@@ -173,11 +180,59 @@ const getMedian = (arr: number[]): number => {
   return (sortedArr[mid - 1] + sortedArr[mid]) / 2;
 };
 
+const calculateMean = (arr: number[]): number => {
+  if (!arr.length) return 0;
+  return arr.reduce((acc, val) => acc + val, 0) / arr.length;
+};
+
+const calculateStdDev = (arr: number[], meanVal?: number): number => {
+  if (arr.length < 2) return 0; 
+  const mean = meanVal === undefined ? calculateMean(arr) : meanVal;
+  const variance = arr.reduce((acc, val) => acc + Math.pow(val - mean, 2), 0) / (arr.length -1); // Sample standard deviation (n-1)
+  return Math.sqrt(variance);
+};
+
+const applySigmaClip = (
+  initialValues: number[],
+  sigmaThreshold: number = SIGMA_CLIP_THRESHOLD,
+  maxIterations: number = SIGMA_CLIP_ITERATIONS
+): number => {
+  if (!initialValues.length) return 0;
+  if (initialValues.length === 1) return initialValues[0];
+
+  let currentValues = [...initialValues];
+
+  for (let iter = 0; iter < maxIterations; iter++) {
+    if (currentValues.length < 2) break; 
+
+    const mean = calculateMean(currentValues);
+    const stdDev = calculateStdDev(currentValues, mean);
+
+    if (stdDev === 0) break; 
+
+    const lowerBound = mean - sigmaThreshold * stdDev;
+    const upperBound = mean + sigmaThreshold * stdDev;
+
+    const nextValues = currentValues.filter(val => val >= lowerBound && val <= upperBound);
+
+    if (nextValues.length === currentValues.length) {
+      break; 
+    }
+    currentValues = nextValues;
+  }
+  
+  if (!currentValues.length) { // If all values were clipped
+    return calculateMean(initialValues); // Fallback to mean of original values
+  }
+  return calculateMean(currentValues); // Return mean of the (remaining) clipped values
+};
+
 
 export default function AstroStackerPage() {
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [stackedImage, setStackedImage] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [stackingMode, setStackingMode] = useState<StackingMode>('median');
   const { toast } = useToast();
 
   const handleFilesAdded = async (files: File[]) => {
@@ -261,12 +316,12 @@ export default function AstroStackerPage() {
 
   const handleStackImages = async () => {
     if (uploadedFiles.length < 2) {
-      toast({ title: "Not Enough Images", description: "Please upload at least two images for median stacking." });
+      toast({ title: "Not Enough Images", description: "Please upload at least two images for stacking." });
       return;
     }
     setIsProcessing(true);
     setStackedImage(null);
-    console.log("Starting image stacking process (Median)...");
+    console.log(`Starting image stacking process (${stackingMode})...`);
 
     let filesToProcess = uploadedFiles;
     if (uploadedFiles.length > MAX_IMAGES_TO_STACK) {
@@ -296,7 +351,7 @@ export default function AstroStackerPage() {
       }
 
       if (imageElements.length < 2) {
-        toast({ title: "Not Enough Valid Images", description: `Need at least two valid images (out of the processed set of ${filesToProcess.length}) for median stacking after filtering. Found ${imageElements.length}.`, variant: "destructive" });
+        toast({ title: "Not Enough Valid Images", description: `Need at least two valid images (out of the processed set of ${filesToProcess.length}) for stacking after filtering. Found ${imageElements.length}.`, variant: "destructive" });
         setIsProcessing(false);
         return;
       }
@@ -339,14 +394,13 @@ export default function AstroStackerPage() {
         return;
       }
       
-      // Calculate dynamic delay for yielding
       const numImages = imageElements.length;
       const totalPixels = targetWidth * targetHeight;
       const normalizedImageFactor = Math.min(1, numImages / MAX_IMAGES_TO_STACK);
       const maxPossiblePixels = (MAX_STACKING_SIDE_LENGTH || 1) * (MAX_STACKING_SIDE_LENGTH || 1);
       const normalizedPixelFactor = Math.min(1, totalPixels / maxPossiblePixels);
-      const loadScore = (0.3 * normalizedImageFactor) + (0.7 * normalizedPixelFactor); // score from 0 to 1
-      const dynamicDelayMs = Math.max(1, Math.min(50, 1 + Math.floor(loadScore * 49))); // Ensures delay is between 1ms and 50ms.
+      const loadScore = (0.3 * normalizedImageFactor) + (0.7 * normalizedPixelFactor); 
+      const dynamicDelayMs = Math.max(1, Math.min(50, 1 + Math.floor(loadScore * 49))); 
       console.log(`Calculated dynamic yield delay: ${dynamicDelayMs}ms based on load score: ${loadScore.toFixed(2)} (Images: ${numImages}, Pixels: ${totalPixels})`);
 
 
@@ -482,11 +536,10 @@ export default function AstroStackerPage() {
       const finalImageData = ctx.createImageData(targetWidth, targetHeight);
       let validImagesStackedCount = 0;
 
-      console.log(`Starting band processing. Band height: ${STACKING_BAND_HEIGHT}px. Dynamic yield delay: ${dynamicDelayMs}ms`);
+      console.log(`Starting band processing. Band height: ${STACKING_BAND_HEIGHT}px. Dynamic yield delay: ${dynamicDelayMs}ms. Mode: ${stackingMode}`);
 
       for (let yBandStart = 0; yBandStart < targetHeight; yBandStart += STACKING_BAND_HEIGHT) {
         const currentBandHeight = Math.min(STACKING_BAND_HEIGHT, targetHeight - yBandStart);
-        // console.log(`Processing band: rows ${yBandStart} to ${yBandStart + currentBandHeight - 1}`);
 
         const bandPixelDataCollector: Array<{ r: number[], g: number[], b: number[] }> = [];
         for (let i = 0; i < targetWidth * currentBandHeight; i++) {
@@ -497,7 +550,6 @@ export default function AstroStackerPage() {
         for (let i = 0; i < imageElements.length; i++) {
           const img = imageElements[i];
           if (!img || img.naturalWidth === 0 || img.naturalHeight === 0) {
-            // console.warn(`Skipping image ${i} for band ${yBandStart} due to invalid element.`);
             continue;
           }
           const currentCentroid = centroids[i];
@@ -544,7 +596,6 @@ export default function AstroStackerPage() {
               variant: "destructive"
             });
           }
-          // Yield after processing each image for the current band's pixel data collection
            await yieldToEventLoop(dynamicDelayMs);
         }
         if (yBandStart === 0) validImagesStackedCount = imagesContributingToBand;
@@ -556,10 +607,16 @@ export default function AstroStackerPage() {
               const finalPixelGlobalIndex = ((yBandStart + yInBand) * targetWidth + x) * 4;
 
               if (bandPixelDataCollector[bandPixelIndex]) {
+                if (stackingMode === 'median') {
                   finalImageData.data[finalPixelGlobalIndex] = getMedian(bandPixelDataCollector[bandPixelIndex].r);
                   finalImageData.data[finalPixelGlobalIndex + 1] = getMedian(bandPixelDataCollector[bandPixelIndex].g);
                   finalImageData.data[finalPixelGlobalIndex + 2] = getMedian(bandPixelDataCollector[bandPixelIndex].b);
-                  finalImageData.data[finalPixelGlobalIndex + 3] = 255; 
+                } else { // sigmaClip
+                  finalImageData.data[finalPixelGlobalIndex] = applySigmaClip(bandPixelDataCollector[bandPixelIndex].r);
+                  finalImageData.data[finalPixelGlobalIndex + 1] = applySigmaClip(bandPixelDataCollector[bandPixelIndex].g);
+                  finalImageData.data[finalPixelGlobalIndex + 2] = applySigmaClip(bandPixelDataCollector[bandPixelIndex].b);
+                }
+                finalImageData.data[finalPixelGlobalIndex + 3] = 255; 
               } else {
                   finalImageData.data[finalPixelGlobalIndex] = 0;
                   finalImageData.data[finalPixelGlobalIndex + 1] = 0;
@@ -568,7 +625,7 @@ export default function AstroStackerPage() {
               }
           }
         }
-        if (yBandStart % (STACKING_BAND_HEIGHT * 5) === 0 || yBandStart + currentBandHeight >= targetHeight ) { // Log progress periodically
+        if (yBandStart % (STACKING_BAND_HEIGHT * 5) === 0 || yBandStart + currentBandHeight >= targetHeight ) { 
              console.log(`Processed band: rows ${yBandStart} to ${yBandStart + currentBandHeight - 1}. Yielding.`);
         }
         await yieldToEventLoop(dynamicDelayMs); 
@@ -597,9 +654,11 @@ export default function AstroStackerPage() {
         const alignmentMessage = successfulStarAlignments > 0
           ? `${successfulStarAlignments}/${imageElements.length} images primarily aligned using star-based centroids. Others used fallbacks.`
           : `All images aligned using brightness-based centroids or geometric centers.`;
+        
+        const stackingMethodUsed = stackingMode === 'median' ? 'Median' : 'Sigma Clip';
         toast({
-          title: "Median Stacking Complete",
-          description: `${alignmentMessage} ${validImagesStackedCount} image(s) (out of ${imageElements.length} processed) stacked using median (banded processing). Dimension: ${targetWidth}x${targetHeight}.`,
+          title: `${stackingMethodUsed} Stacking Complete`,
+          description: `${alignmentMessage} ${validImagesStackedCount} image(s) (out of ${imageElements.length} processed) stacked using ${stackingMode === 'median' ? 'median' : 'sigma clipping'} (banded processing). Dimension: ${targetWidth}x${targetHeight}.`,
           duration: 10000, 
         });
       }
@@ -615,7 +674,7 @@ export default function AstroStackerPage() {
       setStackedImage(null);
     } finally {
       setIsProcessing(false);
-      console.log("Image median stacking process finished.");
+      console.log("Image stacking process finished.");
     }
   };
   
@@ -634,18 +693,20 @@ export default function AstroStackerPage() {
               <CardHeader>
                 <CardTitle className="flex items-center text-xl font-headline">
                   <StarIcon className="mr-2 h-5 w-5 text-accent" />
-                  Upload & Align Images (Median Stack)
+                  Upload & Align Images
                 </CardTitle>
                 <CardDescription>
-                  Add PNG, JPG, GIF, or WEBP. TIFF/DNG files require manual pre-conversion. Images are aligned using stars (or brightness centroids) then stacked using median pixel values (processed in bands for stability).
+                  Add PNG, JPG, GIF, or WEBP. TIFF/DNG files require manual pre-conversion. Images are aligned using stars (or brightness centroids) then stacked.
+                  Median stacking uses median pixel values. Sigma Clip stacking iteratively removes outliers and averages the rest. Both processed in bands for stability.
                   Analysis for star detection on images larger than {ANALYSIS_MAX_DIMENSION}px is scaled.
                   Max image load: {MAX_IMAGE_LOAD_DIMENSION}px.
                   Stacking resolution capped near {MAX_STACKING_SIDE_LENGTH}px. Max {MAX_IMAGES_TO_STACK} images.
-                  Processing can be slow/intensive.
+                  Processing can be slow/intensive. Sigma Clip is generally slower than Median.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <ImageUploadArea onFilesAdded={handleFilesAdded} isProcessing={isProcessing} />
+                
                 {uploadedFiles.length > 0 && (
                   <>
                     <h3 className="text-lg font-semibold mt-4 text-foreground">Image Queue ({uploadedFiles.length})</h3>
@@ -662,14 +723,37 @@ export default function AstroStackerPage() {
                         ))}
                       </div>
                     </ScrollArea>
+
+                    <div className="space-y-2 pt-2">
+                      <Label className="text-base font-semibold text-foreground">Stacking Mode</Label>
+                      <RadioGroup
+                        value={stackingMode}
+                        onValueChange={(value: string) => setStackingMode(value as StackingMode)}
+                        className="flex space-x-4"
+                        disabled={isProcessing}
+                      >
+                        <div className="flex items-center space-x-2">
+                          <RadioGroupItem value="median" id="median-stack" />
+                          <Label htmlFor="median-stack" className="cursor-pointer">Median</Label>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <RadioGroupItem value="sigmaClip" id="sigma-clip-stack" />
+                          <Label htmlFor="sigma-clip-stack" className="cursor-pointer">Sigma Clip</Label>
+                        </div>
+                      </RadioGroup>
+                       <p className="text-xs text-muted-foreground">
+                        Median is generally faster. Sigma Clip can be better for outlier rejection but is more computationally intensive.
+                       </p>
+                    </div>
+
                     <Button
                       onClick={handleStackImages}
                       disabled={isProcessing || uploadedFiles.length < 2}
                       className="w-full bg-accent hover:bg-accent/90 text-accent-foreground"
-                      title={uploadedFiles.length < 2 ? "Upload at least two images for median stacking" : "Align & Median Stack Images"}
+                      title={uploadedFiles.length < 2 ? "Upload at least two images for stacking" : `Align & Stack using ${stackingMode === 'median' ? 'Median' : 'Sigma Clip'}`}
                     >
                       <Wand2 className="mr-2 h-5 w-5" />
-                      {isProcessing ? 'Processing...' : `Align & Median Stack (${Math.min(uploadedFiles.length, MAX_IMAGES_TO_STACK)})`}
+                      {isProcessing ? 'Processing...' : `Align & ${stackingMode === 'median' ? 'Median' : 'Sigma Clip'} Stack (${Math.min(uploadedFiles.length, MAX_IMAGES_TO_STACK)})`}
                     </Button>
                   </>
                 )}
@@ -689,5 +773,6 @@ export default function AstroStackerPage() {
     </div>
   );
 }
+    
 
     
