@@ -37,12 +37,12 @@ const ANALYSIS_MAX_DIMENSION = 600;
 const MAX_STACKING_SIDE_LENGTH = 3500;
 const MAX_IMAGES_TO_STACK = 10;
 const MIN_VALID_DATA_URL_LENGTH = 100;
-const MAX_STARS_FOR_CENTROID_CALCULATION = 2000;
+// MAX_STARS_FOR_CENTROID_CALCULATION is removed as we now use the top N brightest.
 const STACKING_BAND_HEIGHT = 50; 
 
 const SIGMA_CLIP_THRESHOLD = 2.0;
 const SIGMA_CLIP_ITERATIONS = 2;
-const MIN_STARS_FOR_ALIGNMENT = 5; // New constant for minimum stars
+const MIN_STARS_FOR_ALIGNMENT = 5; 
 
 // Helper function to yield to the event loop
 const yieldToEventLoop = async (delayMs: number) => {
@@ -89,41 +89,49 @@ function detectStars(imageData: ImageData, brightnessThreshold: number = 200, lo
     }
   }
   if (stars.length > 1000) {
-    console.warn(`Detected a large number of stars (${stars.length}) during analysis. This might slow down centroid calculation or indicate a noisy image. Consider adjusting detection parameters if results are suboptimal.`);
+    console.warn(`Detected a large number of stars (${stars.length}) during analysis. This might slow down initial sorting for brightest star selection or indicate a noisy image. Consider adjusting detection parameters if results are suboptimal.`);
   }
   return stars;
 }
 
 function calculateStarArrayCentroid(starsInput: Star[]): { x: number; y: number } | null {
-  let stars = starsInput;
-  if (stars.length < MIN_STARS_FOR_ALIGNMENT) { // Changed from 3 to MIN_STARS_FOR_ALIGNMENT
-     console.warn(`Not enough stars (${stars.length}) detected for star-based centroid. Need at least ${MIN_STARS_FOR_ALIGNMENT}.`);
+  if (starsInput.length < MIN_STARS_FOR_ALIGNMENT) {
+     console.warn(`Not enough stars (${starsInput.length}) detected for star-based centroid. Need at least ${MIN_STARS_FOR_ALIGNMENT}.`);
      return null;
   }
 
-  if (stars.length > MAX_STARS_FOR_CENTROID_CALCULATION) {
-    console.warn(`More than ${MAX_STARS_FOR_CENTROID_CALCULATION} stars detected (${stars.length}). Using a random sample of ${MAX_STARS_FOR_CENTROID_CALCULATION} stars for centroid calculation to improve performance.`);
-    const sampledStars: Star[] = [];
-    const indices = new Set<number>();
-    while (indices.size < MAX_STARS_FOR_CENTROID_CALCULATION && indices.size < stars.length) {
-      indices.add(Math.floor(Math.random() * stars.length));
-    }
-    indices.forEach(index => sampledStars.push(stars[index]));
-    stars = sampledStars;
-  }
+  // Sort stars by brightness in descending order
+  const sortedStars = [...starsInput].sort((a, b) => b.brightness - a.brightness);
+
+  // Select the top MIN_STARS_FOR_ALIGNMENT brightest stars
+  const brightestStarsToUse = sortedStars.slice(0, MIN_STARS_FOR_ALIGNMENT);
+  
+  console.log(`Using the ${brightestStarsToUse.length} brightest stars (out of ${starsInput.length} detected) for centroid calculation.`);
 
   let totalBrightness = 0;
   let weightedX = 0;
   let weightedY = 0;
 
-  for (const star of stars) {
+  for (const star of brightestStarsToUse) {
     weightedX += star.x * star.brightness;
     weightedY += star.y * star.brightness;
     totalBrightness += star.brightness;
   }
 
   if (totalBrightness === 0) {
-    return stars.length > 0 ? { x: stars[0].x, y: stars[0].y } : null;
+    // This case should be rare if stars have positive brightness.
+    // Fallback to a simple average of positions if all selected stars had 0 brightness.
+    if (brightestStarsToUse.length > 0) {
+        console.warn("Total brightness of selected brightest stars is zero. Using simple average of their positions.");
+        let sumX = 0;
+        let sumY = 0;
+        for (const star of brightestStarsToUse) {
+            sumX += star.x;
+            sumY += star.y;
+        }
+        return { x: sumX / brightestStarsToUse.length, y: sumY / brightestStarsToUse.length};
+    }
+    return null; // Should not be reached if MIN_STARS_FOR_ALIGNMENT > 0
   }
 
   return {
@@ -480,10 +488,10 @@ export default function AstroStackerPage() {
             let analysisImageCentroid = calculateStarArrayCentroid(stars);
             
             if (analysisImageCentroid) {
-                method = `star-based (${stars.length} stars detected, analysis on ${analysisWidth}x${analysisHeight}${analysisScaleFactor < 1.0 ? ' [scaled]' : ''})`;
+                method = `star-based (${stars.length} stars detected, using brightest ${MIN_STARS_FOR_ALIGNMENT} for alignment, analysis on ${analysisWidth}x${analysisHeight}${analysisScaleFactor < 1.0 ? ' [scaled]' : ''})`;
                 successfulStarAlignments++;
             } else {
-              const reason = stars.length < MIN_STARS_FOR_ALIGNMENT ? `only ${stars.length} stars detected (min ${MIN_STARS_FOR_ALIGNMENT} needed)` : "star detection/centroid calculation failed";
+              const reason = stars.length < MIN_STARS_FOR_ALIGNMENT ? `only ${stars.length} stars detected (min ${MIN_STARS_FOR_ALIGNMENT} needed for brightest star alignment)` : "star detection/centroid calculation failed";
               method = `brightness-based fallback (${reason}, analysis on ${analysisWidth}x${analysisHeight}${analysisScaleFactor < 1.0 ? ' [scaled]' : ''})`;
               console.warn(`Star-based centroid failed for ${fileNameForLog} (${reason}). Falling back to brightness-based centroid.`);
               analysisImageCentroid = calculateBrightnessCentroid(analysisImageData);
@@ -653,7 +661,7 @@ export default function AstroStackerPage() {
       } else {
         setStackedImage(resultDataUrl);
         const alignmentMessage = successfulStarAlignments > 0
-          ? `${successfulStarAlignments}/${imageElements.length} images primarily aligned using star-based centroids. Others used fallbacks.`
+          ? `${successfulStarAlignments}/${imageElements.length} images primarily aligned using the brightest ${MIN_STARS_FOR_ALIGNMENT} stars. Others used fallbacks.`
           : `All images aligned using brightness-based centroids or geometric centers.`;
         
         const stackingMethodUsed = stackingMode === 'median' ? 'Median' : 'Sigma Clip';
@@ -697,7 +705,7 @@ export default function AstroStackerPage() {
                   Upload & Align Images
                 </CardTitle>
                 <CardDescription>
-                  Add PNG, JPG, GIF, or WEBP. TIFF/DNG files require manual pre-conversion. Images are aligned using stars (min {MIN_STARS_FOR_ALIGNMENT} required) or brightness centroids then stacked.
+                  Add PNG, JPG, GIF, or WEBP. TIFF/DNG files require manual pre-conversion. Images are aligned using the brightest {MIN_STARS_FOR_ALIGNMENT} stars (if detected, min {MIN_STARS_FOR_ALIGNMENT} required) or brightness centroids, then stacked.
                   Median stacking uses median pixel values. Sigma Clip stacking iteratively removes outliers and averages the rest. Both processed in bands for stability.
                   Analysis for star detection on images larger than {ANALYSIS_MAX_DIMENSION}px is scaled.
                   Max image load: {MAX_IMAGE_LOAD_DIMENSION}px.
@@ -774,4 +782,6 @@ export default function AstroStackerPage() {
     </div>
   );
 }
+    
+
     
