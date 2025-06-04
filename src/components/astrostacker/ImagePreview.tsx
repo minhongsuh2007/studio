@@ -40,8 +40,8 @@ export function ImagePreview({ imageUrl, isLoading, fitMode }: ImagePreviewProps
           key={imageUrl + '-' + fitMode} 
           src={imageUrl}
           alt="Stacked astrophotography image"
-          layout="fill"
-          objectFit={fitMode}
+          fill
+          style={{ objectFit: fitMode }}
           className="rounded-md"
           data-ai-hint="galaxy nebula"
           onError={handleImageError}
