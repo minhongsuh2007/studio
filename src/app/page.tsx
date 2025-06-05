@@ -49,18 +49,16 @@ const STACKING_BAND_HEIGHT = 50;
 
 const SIGMA_CLIP_THRESHOLD = 2.0;
 const SIGMA_CLIP_ITERATIONS = 2;
-const MIN_STARS_FOR_ALIGNMENT = 3; // Reduced from 5
+const MIN_STARS_FOR_ALIGNMENT = 3; 
 
 const PROGRESS_INITIAL_SETUP = 5;
 const PROGRESS_CENTROID_CALCULATION_TOTAL = 30;
 const PROGRESS_BANDED_STACKING_TOTAL = 65;
 
-// Default parameters for detectStars (if not passed)
-const DEFAULT_STAR_BRIGHTNESS_THRESHOLD_COMBINED = 220; // For sum of R+G+B
+const DEFAULT_STAR_BRIGHTNESS_THRESHOLD_COMBINED = 220; 
 const DEFAULT_STAR_LOCAL_CONTRAST_FACTOR = 1.4;
 
 
-// Helper function to yield to the event loop
 const yieldToEventLoop = async (delayMs: number) => {
   await new Promise(resolve => setTimeout(resolve, delayMs));
 };
@@ -84,9 +82,8 @@ function detectStars(
       const r = data[i];
       const g = data[i + 1];
       const b = data[i + 2];
-      const currentPixelBrightness = r + g + b; // Combined brightness
+      const currentPixelBrightness = r + g + b; 
 
-      // Use combined brightness for the main threshold check
       if (currentPixelBrightness > brightnessThresholdCombined) {
         let neighborSumBrightness = 0;
         let neighborCount = 0;
@@ -103,7 +100,6 @@ function detectStars(
         if (neighborCount === 0) continue; 
         const avgNeighborBrightness = neighborSumBrightness / neighborCount;
 
-        // Check against local contrast
         if (currentPixelBrightness > avgNeighborBrightness * localContrastFactor) {
           stars.push({ x, y, brightness: currentPixelBrightness });
         }
@@ -127,13 +123,11 @@ function calculateStarArrayCentroid(starsInput: Star[], addLog: (message: string
   }
 
   const sortedStars = [...starsInput].sort((a, b) => b.brightness - a.brightness);
-  // Use up to MIN_STARS_FOR_ALIGNMENT, but fewer if not that many were detected (though the check above should handle < MIN_STARS_FOR_ALIGNMENT)
-  const brightestStarsToUse = sortedStars.slice(0, Math.min(starsInput.length, MIN_STARS_FOR_ALIGNMENT * 2)); // Use a slightly larger pool if available, up to 2x MIN_STARS
+  const brightestStarsToUse = sortedStars.slice(0, Math.min(starsInput.length, MIN_STARS_FOR_ALIGNMENT * 2)); 
   
   const message = `Using ${brightestStarsToUse.length} brightest stars (out of ${starsInput.length} detected, min ${MIN_STARS_FOR_ALIGNMENT} required) for centroid.`;
   console.log(message);
   addLog(`[ALIGN] ${message}`);
-
 
   let totalBrightness = 0;
   let weightedX = 0;
@@ -187,7 +181,7 @@ function calculateBrightnessCentroid(imageData: ImageData, addLog: (message: str
         const r = data[i];
         const g = data[i + 1];
         const b = data[i + 2];
-        const brightness = 0.299 * r + 0.587 * g + 0.114 * b; // Luminance
+        const brightness = 0.299 * r + 0.587 * g + 0.114 * b; 
 
         if (brightness > brightnessThreshold) {
           weightedX += x * brightness;
@@ -292,24 +286,21 @@ export default function AstroStackerPage() {
         message 
       };
       const updatedLogs = [newLog, ...prevLogs];
-      // Keep only the last 100 logs to prevent performance issues
       return updatedLogs.slice(0, 100); 
     });
   }, []);
 
   useEffect(() => {
     if (logContainerRef.current) {
-      logContainerRef.current.scrollTop = 0; // Scroll to top for new messages
+      logContainerRef.current.scrollTop = 0; 
     }
   }, [logs]);
 
 
   const handleFilesAdded = async (files: File[]) => {
-    setIsProcessing(true); // Should be set before async ops if it gates UI
+    setIsProcessing(true); 
     setProgressPercent(0);
-    // Don't clear logs here, allow logs from previous stacking to persist until new stacking starts
-    // setLogs([]); 
-
+    
     const newUploadedFiles: UploadedFile[] = [];
     const acceptedWebTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
     let fileProcessingMessage = `Attempting to add ${files.length} file(s).`;
@@ -318,13 +309,11 @@ export default function AstroStackerPage() {
     }
     addLog(fileProcessingMessage);
 
-
     for (const file of files) {
       try {
         const fileType = file.type.toLowerCase();
         const fileName = file.name.toLowerCase();
         addLog(`Processing file: ${file.name} (Type: ${fileType || 'unknown'})`);
-
 
         if (fileType === 'image/tiff' || fileName.endsWith('.tiff') || fileName.endsWith('.tif') ||
             fileType === 'image/x-adobe-dng' || fileType === 'image/x-raw' || fileName.endsWith('.dng')) {
@@ -431,13 +420,12 @@ export default function AstroStackerPage() {
     setIsProcessing(true);
     setStackedImage(null);
     setProgressPercent(0); 
-    setLogs([]); // Clear logs for new stacking process
+    setLogs([]); 
     logIdCounter.current = 0;
     
     addLog(`Starting image stacking. Mode: ${stackingMode}. Output: ${outputFormat.toUpperCase()}. Files: ${uploadedFiles.length}.`);
     addLog(`Star Alignment: Min Stars = ${MIN_STARS_FOR_ALIGNMENT}.`);
     addLog(`Star Detection Params: Combined Brightness Threshold = ${DEFAULT_STAR_BRIGHTNESS_THRESHOLD_COMBINED}, Local Contrast Factor = ${DEFAULT_STAR_LOCAL_CONTRAST_FACTOR}.`);
-
 
     const filesToProcess = uploadedFiles;
     
@@ -458,7 +446,6 @@ export default function AstroStackerPage() {
         }
       }
       addLog(`Successfully loaded ${imageElements.length} out of ${filesToProcess.length} images into HTMLImageElements.`);
-
 
       if (imageElements.length < 2) {
         const notEnoughValidMsg = `Need at least two valid images (out of ${filesToProcess.length} processed) for stacking after filtering. Found ${imageElements.length}.`;
@@ -482,7 +469,6 @@ export default function AstroStackerPage() {
       let targetWidth = firstImage.naturalWidth;
       let targetHeight = firstImage.naturalHeight;
       addLog(`Reference image dimensions: ${targetWidth}x${targetHeight}.`);
-
 
       if (targetWidth > MAX_STACKING_SIDE_LENGTH || targetHeight > MAX_STACKING_SIDE_LENGTH) {
         const aspectRatio = targetWidth / targetHeight;
@@ -596,7 +582,7 @@ export default function AstroStackerPage() {
           }
 
           if (analysisImageData) {
-            const stars = detectStars(analysisImageData); // Uses new defaults/logic
+            const stars = detectStars(analysisImageData); 
             addLog(`[ALIGN] Detected ${stars.length} star(s) in ${fileNameForLog} (analysis size ${analysisWidth}x${analysisHeight}).`);
             let analysisImageCentroid = calculateStarArrayCentroid(stars, addLog);
             
@@ -686,7 +672,6 @@ export default function AstroStackerPage() {
             dx = referenceCentroid.x - currentCentroid.x;
             dy = referenceCentroid.y - currentCentroid.y;
           } else {
-            // This case should ideally be rare now due to fallbacks ensuring centroids[i] exists
             addLog(`[STACK WARN] Image ${i} (${filesToProcess[i]?.file?.name}) had no centroid for offset calculation. Using 0,0 offset (no alignment).`);
           }
           
@@ -721,7 +706,6 @@ export default function AstroStackerPage() {
             addLog(`[STACK] ${validImagesStackedCount} images contributed to the first band.`);
         }
 
-
         for (let yInBand = 0; yInBand < currentBandHeight; yInBand++) {
           for (let x = 0; x < targetWidth; x++) {
               const bandPixelIndex = yInBand * targetWidth + x;
@@ -732,7 +716,7 @@ export default function AstroStackerPage() {
                   finalImageData.data[finalPixelGlobalIndex] = getMedian(bandPixelDataCollector[bandPixelIndex].r);
                   finalImageData.data[finalPixelGlobalIndex + 1] = getMedian(bandPixelDataCollector[bandPixelIndex].g);
                   finalImageData.data[finalPixelGlobalIndex + 2] = getMedian(bandPixelDataCollector[bandPixelIndex].b);
-                } else { // sigmaClip
+                } else { 
                   finalImageData.data[finalPixelGlobalIndex] = applySigmaClip(bandPixelDataCollector[bandPixelIndex].r);
                   finalImageData.data[finalPixelGlobalIndex + 1] = applySigmaClip(bandPixelDataCollector[bandPixelIndex].g);
                   finalImageData.data[finalPixelGlobalIndex + 2] = applySigmaClip(bandPixelDataCollector[bandPixelIndex].b);
@@ -755,7 +739,6 @@ export default function AstroStackerPage() {
 
       setProgressPercent(100);
       addLog(`All bands processed. Finalizing image.`);
-
 
       if (validImagesStackedCount === 0 && imageElements.length > 0) {
         const noStackMsg = "No images could be successfully processed during band stacking.";
@@ -960,7 +943,6 @@ export default function AstroStackerPage() {
                       </div>
                     )}
 
-
                     <Button
                       onClick={handleStackImages}
                       disabled={isProcessing || uploadedFiles.length < 2}
@@ -1012,15 +994,5 @@ export default function AstroStackerPage() {
     </div>
   );
 }
-    
 
     
-
-    
-
-    
-
-
-
-    
-
