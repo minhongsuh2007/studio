@@ -55,8 +55,8 @@ const PROGRESS_INITIAL_SETUP = 5;
 const PROGRESS_CENTROID_CALCULATION_TOTAL = 30;
 const PROGRESS_BANDED_STACKING_TOTAL = 65;
 
-const DEFAULT_STAR_BRIGHTNESS_THRESHOLD_COMBINED = 220; 
-const DEFAULT_STAR_LOCAL_CONTRAST_FACTOR = 1.4;
+const DEFAULT_STAR_BRIGHTNESS_THRESHOLD_COMBINED = 150; 
+const DEFAULT_STAR_LOCAL_CONTRAST_FACTOR = 1.2;
 
 
 const yieldToEventLoop = async (delayMs: number) => {
@@ -162,7 +162,7 @@ function calculateStarArrayCentroid(starsInput: Star[], addLog: (message: string
   };
 }
 
-function calculateBrightnessCentroid(imageData: ImageData, addLog: (message: string) => void, brightnessThreshold: number = 60): { x: number; y: number } | null {
+function calculateBrightnessCentroid(imageData: ImageData, addLog: (message: string) => void, brightnessThreshold: number = 30): { x: number; y: number } | null {
     const { data, width, height } = imageData;
     if (width === 0 || height === 0) {
         const warnMsg = "calculateBrightnessCentroid called with zero-dimension imageData.";
@@ -426,6 +426,8 @@ export default function AstroStackerPage() {
     addLog(`Starting image stacking. Mode: ${stackingMode}. Output: ${outputFormat.toUpperCase()}. Files: ${uploadedFiles.length}.`);
     addLog(`Star Alignment: Min Stars = ${MIN_STARS_FOR_ALIGNMENT}.`);
     addLog(`Star Detection Params: Combined Brightness Threshold = ${DEFAULT_STAR_BRIGHTNESS_THRESHOLD_COMBINED}, Local Contrast Factor = ${DEFAULT_STAR_LOCAL_CONTRAST_FACTOR}.`);
+    addLog(`Brightness Centroid Fallback Threshold: 30 (grayscale equivalent).`);
+
 
     const filesToProcess = uploadedFiles;
     
@@ -593,7 +595,7 @@ export default function AstroStackerPage() {
               const reason = stars.length < MIN_STARS_FOR_ALIGNMENT ? `only ${stars.length} stars (min ${MIN_STARS_FOR_ALIGNMENT} required)` : "star detection/centroid failed";
               method = `brightness-based fallback (${reason})`;
               addLog(`[ALIGN WARN] Star-based centroid failed for ${fileNameForLog} (${reason}). Falling back to brightness-based centroid.`);
-              analysisImageCentroid = calculateBrightnessCentroid(analysisImageData, addLog);
+              analysisImageCentroid = calculateBrightnessCentroid(analysisImageData, addLog); // Uses default threshold of 30
             }
             
             if (analysisImageCentroid) {
@@ -823,6 +825,7 @@ export default function AstroStackerPage() {
                  Add PNG, JPG, GIF, or WEBP. TIFF/DNG files require manual pre-conversion (e.g., using <a href="https://convertio.co/kr/tiff-png/" target="_blank" rel="noopener noreferrer" className="underline hover:text-accent">Convertio</a>). Images are aligned using star-based centroids (min {MIN_STARS_FOR_ALIGNMENT} stars detected) or brightness centroids, then stacked.
                   Median stacking uses median pixel values. Sigma Clip stacking iteratively removes outliers and averages the rest. Both processed in bands for stability.
                   Star detection uses combined brightness threshold: {DEFAULT_STAR_BRIGHTNESS_THRESHOLD_COMBINED}, local contrast: {DEFAULT_STAR_LOCAL_CONTRAST_FACTOR}.
+                  Brightness centroid fallback threshold: 30 (grayscale equivalent).
                   Analysis for star detection on images larger than {ANALYSIS_MAX_DIMENSION}px is scaled.
                   Max image load: {MAX_IMAGE_LOAD_DIMENSION}px.
                   Stacking resolution capped near {MAX_STACKING_SIDE_LENGTH}px.
@@ -994,5 +997,7 @@ export default function AstroStackerPage() {
     </div>
   );
 }
+
+    
 
     
