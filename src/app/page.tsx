@@ -39,7 +39,7 @@ type OutputFormat = 'png' | 'jpeg';
 const MAX_IMAGE_LOAD_DIMENSION = 8192;
 const ANALYSIS_MAX_DIMENSION = 600;
 const MAX_STACKING_SIDE_LENGTH = 3500;
-const MAX_IMAGES_TO_STACK = 10;
+// const MAX_IMAGES_TO_STACK = 10; // Limit removed
 const MIN_VALID_DATA_URL_LENGTH = 100;
 const STACKING_BAND_HEIGHT = 50; 
 
@@ -350,16 +350,16 @@ export default function AstroStackerPage() {
     setProgressPercent(0); 
     console.log(`Starting image stacking process (${stackingMode})...`);
 
-    let filesToProcess = uploadedFiles;
-    if (uploadedFiles.length > MAX_IMAGES_TO_STACK) {
-      toast({
-        title: "Processing Limit Applied",
-        description: `To ensure stability, only the first ${MAX_IMAGES_TO_STACK} images will be stacked.`,
-        variant: "default",
-        duration: 7000,
-      });
-      filesToProcess = uploadedFiles.slice(0, MAX_IMAGES_TO_STACK);
-    }
+    const filesToProcess = uploadedFiles;
+    // if (uploadedFiles.length > MAX_IMAGES_TO_STACK) { // Limit removed
+    //   toast({
+    //     title: "Processing Limit Applied",
+    //     description: `To ensure stability, only the first ${MAX_IMAGES_TO_STACK} images will be stacked.`,
+    //     variant: "default",
+    //     duration: 7000,
+    //   });
+    //   filesToProcess = uploadedFiles.slice(0, MAX_IMAGES_TO_STACK);
+    // }
     
     setProgressPercent(PROGRESS_INITIAL_SETUP);
 
@@ -428,7 +428,8 @@ export default function AstroStackerPage() {
       
       const numImages = imageElements.length;
       const totalPixels = targetWidth * targetHeight;
-      const normalizedImageFactor = Math.min(1, numImages / MAX_IMAGES_TO_STACK);
+      // Adjust dynamic delay slightly if no explicit MAX_IMAGES_TO_STACK, base it on a moderate number like 20 for calculation.
+      const normalizedImageFactor = Math.min(1, numImages / 20); 
       const maxPossiblePixels = (MAX_STACKING_SIDE_LENGTH || 1) * (MAX_STACKING_SIDE_LENGTH || 1);
       const normalizedPixelFactor = Math.min(1, totalPixels / maxPossiblePixels);
       const loadScore = (0.3 * normalizedImageFactor) + (0.7 * normalizedPixelFactor); 
@@ -750,7 +751,7 @@ export default function AstroStackerPage() {
                   Median stacking uses median pixel values. Sigma Clip stacking iteratively removes outliers and averages the rest. Both processed in bands for stability.
                   Analysis for star detection on images larger than {ANALYSIS_MAX_DIMENSION}px is scaled.
                   Max image load: {MAX_IMAGE_LOAD_DIMENSION}px.
-                  Stacking resolution capped near {MAX_STACKING_SIDE_LENGTH}px. Max {MAX_IMAGES_TO_STACK} images.
+                  Stacking resolution capped near {MAX_STACKING_SIDE_LENGTH}px.
                   Processing can be slow/intensive. Sigma Clip is generally slower than Median.
                 </CardDescription>
               </CardHeader>
@@ -876,7 +877,7 @@ export default function AstroStackerPage() {
                       title={uploadedFiles.length < 2 ? "Upload at least two images for stacking" : `Align & Stack using ${stackingMode === 'median' ? 'Median' : 'Sigma Clip'} (Output: ${outputFormat.toUpperCase()})`}
                     >
                       <Wand2 className="mr-2 h-5 w-5" />
-                      {isProcessing ? 'Processing...' : `Align & ${stackingMode === 'median' ? 'Median' : 'Sigma Clip'} Stack (${outputFormat.toUpperCase()}) (${Math.min(uploadedFiles.length, MAX_IMAGES_TO_STACK)})`}
+                      {isProcessing ? 'Processing...' : `Align & ${stackingMode === 'median' ? 'Median' : 'Sigma Clip'} Stack (${outputFormat.toUpperCase()}) (${uploadedFiles.length})`}
                     </Button>
                   </>
                 )}
@@ -907,3 +908,6 @@ export default function AstroStackerPage() {
 
     
 
+
+
+    
