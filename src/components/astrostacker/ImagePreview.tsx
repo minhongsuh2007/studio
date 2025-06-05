@@ -1,50 +1,45 @@
 
 "use client";
 
-import NextImage from 'next/image';
-import { ImageOff, Loader2 } from 'lucide-react';
+import { ImageOff } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { useState, useEffect } from 'react';
 
 interface ImagePreviewProps {
   imageUrl: string | null;
-  isLoading: boolean;
   fitMode: 'contain' | 'cover';
 }
 
-export function ImagePreview({ imageUrl, isLoading, fitMode }: ImagePreviewProps) {
-  const [hasLoadError, setHasLoadError] = useState(false);
+export function ImagePreview({ imageUrl, fitMode }: ImagePreviewProps) {
+  const [displayError, setDisplayError] = useState(false);
 
   useEffect(() => {
-    setHasLoadError(false);
-  }, [imageUrl, isLoading, fitMode]);
+    // Reset error state when imageUrl changes, or when fitMode changes (to retry loading if necessary)
+    setDisplayError(false);
+  }, [imageUrl, fitMode]);
 
   const handleImageError = () => {
-    console.warn("ImagePreview: NextImage onError triggered, indicating an issue loading the image source.");
-    setHasLoadError(true);
+    console.warn("ImagePreview: <img> onError triggered. The image source might be invalid, corrupt, or the data URI is too large for the browser to handle for an <img> tag.");
+    setDisplayError(true);
   };
 
   let contentToRender;
 
-  if (isLoading) {
-    contentToRender = (
-      <div className="flex flex-col items-center space-y-2 text-muted-foreground">
-        <Loader2 className="h-12 w-12 animate-spin text-accent" />
-        <p>Processing image...</p>
-      </div>
-    );
-  } else if (imageUrl && !hasLoadError) {
+  if (imageUrl && !displayError) {
     contentToRender = (
       <div className="relative w-full h-full">
-        <NextImage
-          key={imageUrl + '-' + fitMode} 
-          src={imageUrl}
+        <img
+          key={imageUrl + '-' + fitMode} // Add key to help React re-render if src or fitMode changes
+          src={imageUrl} // This is expected to be a data URI string (e.g., "data:image/jpeg;base64,...")
           alt="Stacked astrophotography image"
-          fill
-          style={{ objectFit: fitMode }}
-          className="rounded-md"
-          data-ai-hint="galaxy nebula"
+          style={{
+            width: '100%',
+            height: '100%',
+            objectFit: fitMode,
+            borderRadius: '0.375rem', // Tailwind's rounded-md, applied via style for <img>
+          }}
           onError={handleImageError}
+          data-ai-hint="galaxy nebula"
         />
       </div>
     );
@@ -52,16 +47,16 @@ export function ImagePreview({ imageUrl, isLoading, fitMode }: ImagePreviewProps
     let titleMessage = "Your stacked image will appear here";
     let detailMessage = "Upload images and click 'Align & Stack Images' to begin.";
 
-    if (hasLoadError) {
-      titleMessage = "Image Preview Error";
-      detailMessage = "Could not load the preview. The image data might be invalid, corrupt, or too large for the browser to display.";
-    } else if (imageUrl === null && !isLoading) {
-      titleMessage = "No Preview Available";
-      detailMessage = "Image processing finished, but no valid preview could be generated. The resulting image might be empty or an error occurred during its creation.";
+    if (displayError) {
+        titleMessage = "Image Preview Error";
+        detailMessage = "Could not load the preview. The image data might be invalid, corrupt, or too large for the browser to display.";
+    } else if (imageUrl === null) { 
+      // This case covers when stacking hasn't happened or finished without a result.
+      // The default messages are appropriate here.
     }
 
     contentToRender = (
-      <div className="flex flex-col items-center space-y-2 text-muted-foreground text-center p-4">
+      <div className="flex flex-col items-center justify-center h-full space-y-2 text-muted-foreground text-center p-4">
         <ImageOff className="h-16 w-16" />
         <p className="text-lg font-medium">{titleMessage}</p>
         <p className="text-sm">{detailMessage}</p>
@@ -77,5 +72,3 @@ export function ImagePreview({ imageUrl, isLoading, fitMode }: ImagePreviewProps
     </Card>
   );
 }
-
-    

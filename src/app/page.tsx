@@ -887,7 +887,6 @@ export default function AstroStackerPage() {
           <div className="w-full lg:w-3/5 xl:w-2/3 flex flex-col space-y-6">
             <ImagePreview 
               imageUrl={stackedImage} 
-              isLoading={isProcessing && !stackedImage}
               fitMode={previewFitMode} 
             />
             <DownloadButton imageUrl={stackedImage} isProcessing={isProcessing} />
@@ -907,3 +906,4 @@ export default function AstroStackerPage() {
     
 
     
+
