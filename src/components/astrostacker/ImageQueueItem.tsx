@@ -2,19 +2,23 @@
 "use client";
 
 import Image from 'next/image';
-import { X, Edit3, Loader2, CheckCircle } from 'lucide-react';
+import { X, Edit3, Loader2, CheckCircle, Orbit, Settings2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardFooter } from '@/components/ui/card';
-import { cn } from '@/lib/utils';
+import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
+import type { StarSelectionMode } from '@/app/page'; // Assuming type is exported from page.tsx or a types file
 
 interface ImageQueueItemProps {
   id: string;
   file: File;
   previewUrl: string;
   isAnalyzing: boolean;
-  isReviewed: boolean;
+  isReviewed: boolean; // True if manual stars have been confirmed
+  starSelectionMode: StarSelectionMode;
   onRemove: () => void;
   onEditStars: () => void;
+  onToggleStarSelectionMode: () => void;
   isProcessing: boolean; // General UI disable flag
 }
 
@@ -24,18 +28,22 @@ export function ImageQueueItem({
   previewUrl,
   isAnalyzing,
   isReviewed,
+  starSelectionMode,
   onRemove,
   onEditStars,
+  onToggleStarSelectionMode,
   isProcessing
 }: ImageQueueItemProps) {
+  const isManualMode = starSelectionMode === 'manual';
+
   return (
     <Card className="relative group overflow-hidden shadow-md hover:shadow-lg transition-shadow flex flex-col">
       <CardContent className="p-0 relative">
         <Image
           src={previewUrl}
           alt={file.name}
-          width={150}
-          height={100}
+          width={200} // Adjusted for potentially wider card
+          height={120}
           className="object-cover w-full h-32"
           data-ai-hint="sky night"
         />
@@ -51,8 +59,8 @@ export function ImageQueueItem({
             <X className="h-4 w-4" />
           </Button>
         </div>
-        {isReviewed && (
-            <div className="absolute top-1 left-1 bg-green-500/80 text-white p-1 rounded-full">
+        {isManualMode && isReviewed && (
+            <div className="absolute top-1 left-1 bg-green-500/80 text-white p-1 rounded-full" title="Manual stars confirmed">
                 <CheckCircle className="h-4 w-4" />
             </div>
         )}
@@ -60,22 +68,38 @@ export function ImageQueueItem({
       <div className="p-2 text-xs text-muted-foreground truncate bg-card-foreground/5 flex-grow">
         {file.name}
       </div>
-      <CardFooter className="p-2 border-t">
-        <Button
+      <CardFooter className="p-2 border-t flex flex-col space-y-2">
+        <div className="flex items-center justify-between w-full">
+          <div className="flex items-center space-x-2">
+            <Switch
+              id={`star-mode-switch-${id}`}
+              checked={isManualMode}
+              onCheckedChange={onToggleStarSelectionMode}
+              disabled={isProcessing || isAnalyzing}
+              aria-label={isManualMode ? "Switch to Automatic Star Detection" : "Switch to Manual Star Editing"}
+            />
+            <Label htmlFor={`star-mode-switch-${id}`} className="text-xs cursor-pointer flex items-center">
+              {isManualMode ? <Settings2 className="mr-1 h-3 w-3" /> : <Orbit className="mr-1 h-3 w-3" />}
+              {isManualMode ? 'Manual Stars' : 'Auto Stars'}
+            </Label>
+          </div>
+         
+        </div>
+         <Button
             variant="outline"
             size="sm"
             onClick={onEditStars}
-            disabled={isProcessing || isAnalyzing}
+            disabled={isProcessing || isAnalyzing || (isManualMode && isAnalyzing)}
             className="w-full"
-            title={isAnalyzing ? "Analyzing..." : (isReviewed ? "Re-edit Stars" : "Edit Stars")}
-        >
+            title={isAnalyzing ? "Analyzing..." : (isManualMode ? (isReviewed ? "Re-edit Manual Stars" : "Edit Manual Stars") : "View/Edit Auto Stars (Switches to Manual)")}
+          >
             {isAnalyzing ? (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
             ) : (
                 <Edit3 className="mr-2 h-4 w-4" />
             )}
-            {isAnalyzing ? "Analyzing..." : (isReviewed ? "Re-Edit" : "Edit Stars")}
-        </Button>
+            {isAnalyzing ? "Analyzing..." : (isManualMode ? (isReviewed ? "Re-Edit" : "Edit Stars") : "Edit/Review")}
+          </Button>
       </CardFooter>
     </Card>
   );
