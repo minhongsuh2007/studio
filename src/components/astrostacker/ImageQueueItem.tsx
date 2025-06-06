@@ -1,3 +1,4 @@
+
 "use client";
 
 import Image from 'next/image';
@@ -22,7 +23,7 @@ export function ImageQueueItem({ file, previewUrl, onRemove, isProcessing }: Ima
           width={150}
           height={100}
           className="object-cover w-full h-32"
-          data-ai-hint="astronomy space"
+          data-ai-hint="sky night"
         />
         <div className="absolute inset-0 bg-black/30 group-hover:bg-black/50 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100">
           <Button

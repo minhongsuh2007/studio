@@ -13,12 +13,14 @@ import { ImageQueueItem } from '@/components/astrostacker/ImageQueueItem';
 import { ImagePreview } from '@/components/astrostacker/ImagePreview';
 import { DownloadButton } from '@/components/astrostacker/DownloadButton';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Star as StarIcon, Wand2, ListChecks } from 'lucide-react';
+import { Star as StarIcon, Wand2, ListChecks, CheckCircle, RefreshCcw, Edit3 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { Slider } from "@/components/ui/slider";
+import { StarAnnotationCanvas, type Star } from '@/components/astrostacker/StarAnnotationCanvas';
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 interface LogEntry {
   id: number;
@@ -31,34 +33,31 @@ interface UploadedFile {
   previewUrl: string;
 }
 
-interface Star {
-  x: number;
-  y: number;
-  brightness: number;
-}
+// Star interface moved to StarAnnotationCanvas.tsx and imported
 
 type StackingMode = 'median' | 'sigmaClip';
 type PreviewFitMode = 'contain' | 'cover';
 type OutputFormat = 'png' | 'jpeg';
 
 const MAX_IMAGE_LOAD_DIMENSION = 8192;
-const ANALYSIS_MAX_DIMENSION = 600;
+const ANALYSIS_MAX_DIMENSION = 1000; // Increased for potentially better star detail
 const MAX_STACKING_SIDE_LENGTH = 3500;
 const MIN_VALID_DATA_URL_LENGTH = 100;
 const STACKING_BAND_HEIGHT = 50;
 
 const SIGMA_CLIP_THRESHOLD = 2.0;
 const SIGMA_CLIP_ITERATIONS = 2;
-const MIN_STARS_FOR_ALIGNMENT = 3;
+const MIN_STARS_FOR_ALIGNMENT = 3; // Reduced for flexibility
 
 const PROGRESS_INITIAL_SETUP = 5;
 const PROGRESS_CENTROID_CALCULATION_TOTAL = 30;
-const PROGRESS_BANDED_STACKING_TOTAL = 65;
+const PROGRESS_BANDED_STACKING_TOTAL = 65; // Remainder of progress
 
-const DEFAULT_STAR_BRIGHTNESS_THRESHOLD_COMBINED = 180;
-const DEFAULT_STAR_LOCAL_CONTRAST_FACTOR = 1.5;
+const DEFAULT_STAR_BRIGHTNESS_THRESHOLD_COMBINED = 200; // Base for auto-detection and manual add
+const DEFAULT_STAR_LOCAL_CONTRAST_FACTOR = 1.6; // Stricter
 const BRIGHTNESS_CENTROID_FALLBACK_THRESHOLD_GRAYSCALE_EQUIVALENT = 30;
 
+const STAR_CLICK_TOLERANCE_ANALYSIS_UNITS_SQUARED = (10 * 10) * ((ANALYSIS_MAX_DIMENSION / 600)**2); // 10px on a 600px canvas, scaled to analysis size
 
 const yieldToEventLoop = async (delayMs: number) => {
   await new Promise(resolve => setTimeout(resolve, delayMs));
@@ -107,7 +106,7 @@ function detectStars(
       }
     }
   }
-  if (stars.length > 1000) {
+   if (stars.length > 1000) {
     console.warn(`Detected a large number of stars (${stars.length}) during analysis. This might slow down initial sorting for brightest star selection or indicate a noisy image. Consider adjusting detection parameters if results are suboptimal.`);
   } else if (stars.length === 0) {
     console.warn(`No stars detected with current parameters (Combined Threshold: ${brightnessThresholdCombined}, Contrast Factor: ${localContrastFactor}).`);
@@ -123,10 +122,12 @@ function calculateStarArrayCentroid(starsInput: Star[], addLog: (message: string
      return null;
   }
 
+  // Sort by brightness, then take up to MIN_STARS_FOR_ALIGNMENT * 2, or all if fewer than that
   const sortedStars = [...starsInput].sort((a, b) => b.brightness - a.brightness);
-  const brightestStarsToUse = sortedStars.slice(0, Math.min(starsInput.length, MIN_STARS_FOR_ALIGNMENT * 2));
+  const brightestStarsToUse = sortedStars.slice(0, Math.min(starsInput.length, Math.max(MIN_STARS_FOR_ALIGNMENT, MIN_STARS_FOR_ALIGNMENT * 2)));
 
-  const message = `Using ${brightestStarsToUse.length} brightest stars (out of ${starsInput.length} detected, min ${MIN_STARS_FOR_ALIGNMENT} required) for centroid.`;
+
+  const message = `Using ${brightestStarsToUse.length} brightest stars (out of ${starsInput.length} available, min ${MIN_STARS_FOR_ALIGNMENT} required) for centroid.`;
   console.log(message);
   addLog(`[ALIGN] ${message}`);
 
@@ -182,7 +183,7 @@ function calculateBrightnessCentroid(imageData: ImageData, addLog: (message: str
         const r = data[i];
         const g = data[i + 1];
         const b = data[i + 2];
-        const brightness = 0.299 * r + 0.587 * g + 0.114 * b;
+        const brightness = 0.299 * r + 0.587 * g + 0.114 * b; // Grayscale equivalent
 
         if (brightness > brightnessThreshold) {
           weightedX += x * brightness;
@@ -225,7 +226,7 @@ const calculateMean = (arr: number[]): number => {
 const calculateStdDev = (arr: number[], meanVal?: number): number => {
   if (arr.length < 2) return 0;
   const mean = meanVal === undefined ? calculateMean(arr) : meanVal;
-  const variance = arr.reduce((acc, val) => acc + Math.pow(val - mean, 2), 0) / (arr.length -1);
+  const variance = arr.reduce((acc, val) => acc + Math.pow(val - mean, 2), 0) / (arr.length -1); // sample std dev
   return Math.sqrt(variance);
 };
 
@@ -240,35 +241,38 @@ const applySigmaClip = (
   let currentValues = [...initialValues];
 
   for (let iter = 0; iter < maxIterations; iter++) {
-    if (currentValues.length < 2) break;
+    if (currentValues.length < 2) break; // Need at least 2 points to calculate std dev
 
     const mean = calculateMean(currentValues);
     const stdDev = calculateStdDev(currentValues, mean);
 
-    if (stdDev === 0) break;
+    if (stdDev === 0) break; // No variation, no clipping needed
 
     const lowerBound = mean - sigmaThreshold * stdDev;
     const upperBound = mean + sigmaThreshold * stdDev;
 
     const nextValues = currentValues.filter(val => val >= lowerBound && val <= upperBound);
 
-    if (nextValues.length === currentValues.length) {
+    if (nextValues.length === currentValues.length) { // No values were clipped
       break;
     }
     currentValues = nextValues;
   }
 
+  // If all values were clipped, fall back to the mean of the original set
   if (!currentValues.length) {
+    // This scenario should be rare with good data but is a safeguard
     return calculateMean(initialValues);
   }
-  return calculateMean(currentValues);
+  return calculateMean(currentValues); // Return mean of the clipped set
 };
 
 
 export default function AstroStackerPage() {
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [stackedImage, setStackedImage] = useState<string | null>(null);
-  const [isProcessing, setIsProcessing] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false); // True during actual stacking
+  const [isAnalyzingForStars, setIsAnalyzingForStars] = useState(false); // True during initial star detection for editing
   const [stackingMode, setStackingMode] = useState<StackingMode>('median');
   const [previewFitMode, setPreviewFitMode] = useState<PreviewFitMode>('contain');
   const [outputFormat, setOutputFormat] = useState<OutputFormat>('png');
@@ -279,6 +283,13 @@ export default function AstroStackerPage() {
   const logContainerRef = useRef<HTMLDivElement>(null);
   const logIdCounter = useRef(0);
 
+  // State for interactive star selection
+  const [isAwaitingStarConfirmation, setIsAwaitingStarConfirmation] = useState(false);
+  const [referenceImagePreviewForStarEditing, setReferenceImagePreviewForStarEditing] = useState<string | null>(null);
+  const [currentAnalysisStars, setCurrentAnalysisStars] = useState<Star[]>([]);
+  const [currentAnalysisImageDimensions, setCurrentAnalysisImageDimensions] = useState<{width: number, height: number} | null>(null);
+  const initialAutoDetectedStarsRef = useRef<Star[]>([]); // To store original auto-detected stars for reset
+
   const addLog = useCallback((message: string) => {
     setLogs(prevLogs => {
       const newLog = {
@@ -287,7 +298,7 @@ export default function AstroStackerPage() {
         message
       };
       const updatedLogs = [newLog, ...prevLogs];
-      return updatedLogs.slice(0, 100);
+      return updatedLogs.slice(0, 100); 
     });
   }, []);
 
@@ -299,7 +310,7 @@ export default function AstroStackerPage() {
 
 
   const handleFilesAdded = async (files: File[]) => {
-    setIsProcessing(true);
+    setIsProcessing(true); // General processing indicator
     setProgressPercent(0);
 
     const newUploadedFiles: UploadedFile[] = [];
@@ -402,7 +413,113 @@ export default function AstroStackerPage() {
     });
   };
 
-  const handleStackImages = async () => {
+  // Step 1: Initial call to analyze reference image for star editing
+  const handleAnalyzeAndEditStars = async () => {
+    if (uploadedFiles.length === 0) {
+      toast({ title: "No Images", description: "Please upload at least one image." });
+      return;
+    }
+    setIsAnalyzingForStars(true);
+    setLogs([]);
+    logIdCounter.current = 0;
+    addLog("Starting star analysis for reference image...");
+
+    const referenceFile = uploadedFiles[0].file;
+    try {
+      const imgEl = await loadImage(referenceFile);
+      const dataUrl = await fileToDataURL(referenceFile); // For display
+
+      const tempAnalysisCanvas = document.createElement('canvas');
+      const tempAnalysisCtx = tempAnalysisCanvas.getContext('2d', { willReadFrequently: true });
+      if (!tempAnalysisCtx) throw new Error("Could not get analysis canvas context.");
+
+      let analysisWidth = imgEl.naturalWidth;
+      let analysisHeight = imgEl.naturalHeight;
+      if (imgEl.naturalWidth > ANALYSIS_MAX_DIMENSION || imgEl.naturalHeight > ANALYSIS_MAX_DIMENSION) {
+        const scaleFactor = (imgEl.naturalWidth > imgEl.naturalHeight)
+          ? ANALYSIS_MAX_DIMENSION / imgEl.naturalWidth
+          : ANALYSIS_MAX_DIMENSION / imgEl.naturalHeight;
+        analysisWidth = Math.round(imgEl.naturalWidth * scaleFactor);
+        analysisHeight = Math.round(imgEl.naturalHeight * scaleFactor);
+      }
+      analysisWidth = Math.max(1, analysisWidth);
+      analysisHeight = Math.max(1, analysisHeight);
+      
+      tempAnalysisCanvas.width = analysisWidth;
+      tempAnalysisCanvas.height = analysisHeight;
+      tempAnalysisCtx.drawImage(imgEl, 0, 0, analysisWidth, analysisHeight);
+      const analysisImageData = tempAnalysisCtx.getImageData(0, 0, analysisWidth, analysisHeight);
+      
+      const detectedStars = detectStars(analysisImageData);
+      addLog(`Auto-detected ${detectedStars.length} stars in reference image (${referenceFile.name}).`);
+      
+      setCurrentAnalysisStars(detectedStars);
+      initialAutoDetectedStarsRef.current = [...detectedStars]; // Save for reset
+      setReferenceImagePreviewForStarEditing(dataUrl);
+      setCurrentAnalysisImageDimensions({ width: analysisWidth, height: analysisHeight });
+      setIsAwaitingStarConfirmation(true);
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      addLog(`[ERROR] Failed to analyze reference image: ${errorMessage}`);
+      toast({ title: "Analysis Failed", description: errorMessage, variant: "destructive" });
+    } finally {
+      setIsAnalyzingForStars(false);
+    }
+  };
+  
+  const handleStarAnnotationClick = (clickedX: number, clickedY: number) => {
+    if (!currentAnalysisImageDimensions) return;
+
+    let starFoundAndRemoved = false;
+    const updatedStars = currentAnalysisStars.filter(star => {
+      const dx = star.x - clickedX;
+      const dy = star.y - clickedY;
+      const distSq = dx * dx + dy * dy;
+      if (distSq < STAR_CLICK_TOLERANCE_ANALYSIS_UNITS_SQUARED) {
+        starFoundAndRemoved = true;
+        addLog(`Removed star at (${star.x.toFixed(0)}, ${star.y.toFixed(0)}).`);
+        return false; // Remove this star
+      }
+      return true; // Keep this star
+    });
+
+    if (!starFoundAndRemoved) {
+      const newStar: Star = {
+        x: clickedX,
+        y: clickedY,
+        brightness: DEFAULT_STAR_BRIGHTNESS_THRESHOLD_COMBINED + 1, // Give it a decent brightness
+        isManuallyAdded: true,
+      };
+      updatedStars.push(newStar);
+      addLog(`Added manual star at (${clickedX.toFixed(0)}, ${clickedY.toFixed(0)}). Total stars: ${updatedStars.length}`);
+    } else {
+       addLog(`Total stars after removal: ${updatedStars.length}`);
+    }
+    setCurrentAnalysisStars(updatedStars);
+  };
+
+  const handleResetStars = () => {
+    setCurrentAnalysisStars([...initialAutoDetectedStarsRef.current]);
+    addLog(`Stars reset to ${initialAutoDetectedStarsRef.current.length} auto-detected stars.`);
+    toast({title: "Stars Reset", description: "Star selection has been reset to automatically detected."});
+  };
+
+  // Step 2: Main stacking logic, now called after star confirmation
+  const handleConfirmStarsAndStack = async () => {
+    setIsAwaitingStarConfirmation(false); // Exit editing mode
+    setIsProcessing(true); // Start actual stacking
+    setProgressPercent(0);
+    // Logs were reset in handleAnalyzeAndEditStars or should be selectively cleared.
+    // For now, we'll append. If handleAnalyzeAndEditStars resets logs, this is fine.
+    // If not, consider adding: setLogs([]); logIdCounter.current = 0; here for stacking specific logs.
+
+    addLog(`Starting image stacking with user-confirmed/modified stars for reference. Mode: ${stackingMode}. Output: ${outputFormat.toUpperCase()}. Files: ${uploadedFiles.length}.`);
+    addLog(`Using ${currentAnalysisStars.length} stars for reference image alignment.`);
+    addLog(`Star Alignment: Min Stars = ${MIN_STARS_FOR_ALIGNMENT}.`);
+    addLog(`Star Detection Params (for other images): Combined Brightness Threshold = ${DEFAULT_STAR_BRIGHTNESS_THRESHOLD_COMBINED}, Local Contrast Factor = ${DEFAULT_STAR_LOCAL_CONTRAST_FACTOR}.`);
+    addLog(`Brightness Centroid Fallback Threshold: ${BRIGHTNESS_CENTROID_FALLBACK_THRESHOLD_GRAYSCALE_EQUIVALENT} (grayscale equivalent).`);
+
     if (typeof window === 'undefined' || typeof document === 'undefined') {
         const envErrorMsg = "Stacking cannot proceed outside a browser environment.";
         addLog(`[ERROR] ${envErrorMsg}`);
@@ -411,27 +528,20 @@ export default function AstroStackerPage() {
         return;
     }
 
-    if (uploadedFiles.length < 2) {
-      const notEnoughMsg = "Please upload at least two images for stacking.";
-      addLog(`[WARN] ${notEnoughMsg}`);
-      toast({ title: "Not Enough Images", description: notEnoughMsg });
-      return;
+    if (uploadedFiles.length < 2 && currentAnalysisStars.length > 0) {
+        addLog("[INFO] Only one image uploaded. Will process it as a single frame (no stacking). Useful for previewing alignment points on a single image if desired, though alignment isn't applied to one image.");
+        // Potentially allow "stacking" a single image to just save it in the target format/size
+        // For now, let's assume stacking needs >=2 or user is just testing star selection
+    } else if (uploadedFiles.length < 2) {
+         const notEnoughMsg = "Please upload at least two images for stacking.";
+         addLog(`[WARN] ${notEnoughMsg}`);
+         toast({ title: "Not Enough Images", description: notEnoughMsg });
+         setIsProcessing(false);
+         return;
     }
-
-    setIsProcessing(true);
-    setStackedImage(null);
-    setProgressPercent(0);
-    setLogs([]);
-    logIdCounter.current = 0;
-
-    addLog(`Starting image stacking. Mode: ${stackingMode}. Output: ${outputFormat.toUpperCase()}. Files: ${uploadedFiles.length}.`);
-    addLog(`Star Alignment: Min Stars = ${MIN_STARS_FOR_ALIGNMENT}.`);
-    addLog(`Star Detection Params: Combined Brightness Threshold = ${DEFAULT_STAR_BRIGHTNESS_THRESHOLD_COMBINED}, Local Contrast Factor = ${DEFAULT_STAR_LOCAL_CONTRAST_FACTOR}.`);
-    addLog(`Brightness Centroid Fallback Threshold: ${BRIGHTNESS_CENTROID_FALLBACK_THRESHOLD_GRAYSCALE_EQUIVALENT} (grayscale equivalent).`);
 
 
     const filesToProcess = uploadedFiles;
-
     setProgressPercent(PROGRESS_INITIAL_SETUP);
     addLog(`Initial setup complete. Progress: ${PROGRESS_INITIAL_SETUP}%.`);
 
@@ -500,19 +610,20 @@ export default function AstroStackerPage() {
 
       const numImages = imageElements.length;
       const totalPixels = targetWidth * targetHeight;
-      const normalizedImageFactor = Math.min(1, numImages / 20);
-      const maxPossiblePixels = (MAX_STACKING_SIDE_LENGTH || 1) * (MAX_STACKING_SIDE_LENGTH || 1);
+      const normalizedImageFactor = Math.min(1, numImages / 20); // Normalize based on 20 images being "a lot"
+      const maxPossiblePixels = (MAX_STACKING_SIDE_LENGTH || 1) * (MAX_STACKING_SIDE_LENGTH || 1); // Avoid division by zero
       const normalizedPixelFactor = Math.min(1, totalPixels / maxPossiblePixels);
-      const loadScore = (0.3 * normalizedImageFactor) + (0.7 * normalizedPixelFactor);
-      const dynamicDelayMs = Math.max(1, Math.min(50, 1 + Math.floor(loadScore * 49)));
+      const loadScore = (0.3 * normalizedImageFactor) + (0.7 * normalizedPixelFactor); // Weight pixels more
+      const dynamicDelayMs = Math.max(1, Math.min(50, 1 + Math.floor(loadScore * 49))); // Scale between 1ms and 50ms
       addLog(`Calculated dynamic yield delay: ${dynamicDelayMs}ms (Load score: ${loadScore.toFixed(2)}, Images: ${numImages}, Pixels: ${totalPixels})`);
+
 
       const offscreenCanvas = document.createElement('canvas');
       offscreenCanvas.width = targetWidth;
       offscreenCanvas.height = targetHeight;
       const ctx = offscreenCanvas.getContext('2d', { willReadFrequently: true });
 
-      const tempAnalysisCanvas = document.createElement('canvas');
+      const tempAnalysisCanvas = document.createElement('canvas'); // Re-use for each image analysis
       const tempAnalysisCtx = tempAnalysisCanvas.getContext('2d', { willReadFrequently: true });
 
       if (!ctx || !tempAnalysisCtx) {
@@ -532,12 +643,13 @@ export default function AstroStackerPage() {
         const fileNameForLog = filesToProcess[i]?.file?.name || `image ${i}`;
         let finalScaledCentroid: { x: number; y: number } | null = null;
         let method = "unknown";
+        let starsForThisImage: Star[] = [];
 
         if (!imgEl || imgEl.naturalWidth === 0 || imgEl.naturalHeight === 0) {
             const skipMsg = `Skipping analysis for invalid image element ${i}: ${fileNameForLog}. Using target geometric center.`;
             console.warn(skipMsg);
             addLog(`[ALIGN WARN] ${skipMsg}`);
-            finalScaledCentroid = { x: targetWidth / 2, y: targetHeight / 2 };
+            finalScaledCentroid = { x: targetWidth / 2, y: targetHeight / 2 }; // Use target center
             method = "invalid_element_fallback";
             centroids.push(finalScaledCentroid);
             addLog(`[ALIGN] Image ${i} (${fileNameForLog}) centroid (scaled to target): ${finalScaledCentroid.x.toFixed(2)}, ${finalScaledCentroid.y.toFixed(2)} (Method: ${method})`);
@@ -550,7 +662,7 @@ export default function AstroStackerPage() {
           addLog(`[ALIGN] Analyzing image ${i} (${fileNameForLog}): ${imgEl.naturalWidth}x${imgEl.naturalHeight}`);
           let analysisWidth = imgEl.naturalWidth;
           let analysisHeight = imgEl.naturalHeight;
-          let analysisScaleFactor = 1.0;
+          let analysisScaleFactor = 1.0; // Scale from original image to analysis image
 
           if (imgEl.naturalWidth > ANALYSIS_MAX_DIMENSION || imgEl.naturalHeight > ANALYSIS_MAX_DIMENSION) {
             if (imgEl.naturalWidth > imgEl.naturalHeight) {
@@ -566,49 +678,79 @@ export default function AstroStackerPage() {
           }
           analysisWidth = Math.max(1, Math.round(analysisWidth));
           analysisHeight = Math.max(1, Math.round(analysisHeight));
+          
+          if (i === 0 && currentAnalysisStars.length > 0 && currentAnalysisImageDimensions) {
+             // Use user-confirmed stars for the reference image
+            starsForThisImage = currentAnalysisStars;
+            // Ensure analysisWidth/Height match what currentAnalysisStars were based on
+            analysisWidth = currentAnalysisImageDimensions.width;
+            analysisHeight = currentAnalysisImageDimensions.height;
+            // analysisScaleFactor needs to be recalculated if imgEl natural dims were different from currentAnalysisImageDimensions basis
+            // This assumes currentAnalysisImageDimensions ARE the dimensions of the analysis image.
+            if (imgEl.naturalWidth !== analysisWidth || imgEl.naturalHeight !== analysisHeight) {
+                // This case should ideally not happen if currentAnalysisImageDimensions is set correctly.
+                // We might need to re-calc analysisScaleFactor if imgEl.natural * scaleFactor = analysisWidth/Height from currentAnalysisImageDimensions
+                 analysisScaleFactor = analysisWidth / imgEl.naturalWidth; // Assuming aspect ratio is maintained
+            }
 
-          tempAnalysisCanvas.width = analysisWidth;
-          tempAnalysisCanvas.height = analysisHeight;
-          tempAnalysisCtx.clearRect(0, 0, analysisWidth, analysisHeight);
-          tempAnalysisCtx.drawImage(imgEl, 0, 0, analysisWidth, analysisHeight);
+            addLog(`[ALIGN] Using ${starsForThisImage.length} user-confirmed/modified stars for reference image ${fileNameForLog}.`);
+          } else {
+            // Auto-detect for other images or if reference image had no user stars
+            tempAnalysisCanvas.width = analysisWidth;
+            tempAnalysisCanvas.height = analysisHeight;
+            tempAnalysisCtx.clearRect(0, 0, analysisWidth, analysisHeight);
+            tempAnalysisCtx.drawImage(imgEl, 0, 0, analysisWidth, analysisHeight);
+            let analysisImageData: ImageData | null = null;
+            try {
+                analysisImageData = tempAnalysisCtx.getImageData(0, 0, analysisWidth, analysisHeight);
+            } catch (getImageDataError) {
+                 const err = getImageDataError instanceof Error ? getImageDataError.message : String(getImageDataError);
+                 const getImageDataMsg = `Error getting image data for analysis canvas (${fileNameForLog}): ${err}. Aligning to geometric center.`;
+                 console.error(getImageDataMsg);
+                 addLog(`[ALIGN ERROR] ${getImageDataMsg}`);
+                 toast({ title: `Analysis Error (getImageData) for ${fileNameForLog}`, description: `Could not get pixel data for analysis. It may not align optimally. Error: ${err}`, variant: "destructive"});
+                method = "getImageData_error";
+            }
+            if (analysisImageData) {
+                starsForThisImage = detectStars(analysisImageData);
+                addLog(`[ALIGN] Auto-detected ${starsForThisImage.length} star(s) in ${fileNameForLog} (analysis size ${analysisWidth}x${analysisHeight}).`);
+            }
+          }
+          
+          let analysisImageCentroid = calculateStarArrayCentroid(starsForThisImage, addLog);
 
-          let analysisImageData: ImageData | null = null;
-          try {
-            analysisImageData = tempAnalysisCtx.getImageData(0, 0, analysisWidth, analysisHeight);
-          } catch (getImageDataError) {
-             const err = getImageDataError instanceof Error ? getImageDataError.message : String(getImageDataError);
-             const getImageDataMsg = `Error getting image data for analysis canvas (${fileNameForLog}): ${err}. Aligning to geometric center.`;
-             console.error(getImageDataMsg);
-             addLog(`[ALIGN ERROR] ${getImageDataMsg}`);
-             toast({ title: `Analysis Error (getImageData) for ${fileNameForLog}`, description: `Could not get pixel data for analysis. It may not align optimally. Error: ${err}`, variant: "destructive"});
-            method = "getImageData_error";
+          if (analysisImageCentroid) {
+              method = i === 0 && currentAnalysisStars.length > 0 ? `user-star-based` : `auto-star-based`;
+              successfulStarAlignments++;
+          } else {
+            const reason = starsForThisImage.length < MIN_STARS_FOR_ALIGNMENT ? `only ${starsForThisImage.length} stars (min ${MIN_STARS_FOR_ALIGNMENT} required)` : "star detection/centroid failed";
+            method = `brightness-based fallback (${reason})`;
+            addLog(`[ALIGN WARN] Star-based centroid failed for ${fileNameForLog} (${reason}). Falling back to brightness-based centroid.`);
+            
+            // Ensure tempAnalysisCanvas has the image data if not already drawn (e.g. for i===0 with user stars)
+            if (!(i === 0 && currentAnalysisStars.length > 0)) { // if it wasn't user stars, it was drawn
+              // it was drawn already by auto-detect path
+            } else { // for i===0 with user stars, analysisImageData might not be populated for brightness fallback yet
+                tempAnalysisCanvas.width = analysisWidth;
+                tempAnalysisCanvas.height = analysisHeight;
+                tempAnalysisCtx.clearRect(0, 0, analysisWidth, analysisHeight);
+                tempAnalysisCtx.drawImage(imgEl, 0, 0, analysisWidth, analysisHeight);
+            }
+            const fallbackImageData = tempAnalysisCtx.getImageData(0, 0, analysisWidth, analysisHeight);
+            analysisImageCentroid = calculateBrightnessCentroid(fallbackImageData, addLog);
           }
 
-          if (analysisImageData) {
-            const stars = detectStars(analysisImageData);
-            addLog(`[ALIGN] Detected ${stars.length} star(s) in ${fileNameForLog} (analysis size ${analysisWidth}x${analysisHeight}).`);
-            let analysisImageCentroid = calculateStarArrayCentroid(stars, addLog);
-
-            if (analysisImageCentroid) {
-                method = `star-based`;
-                successfulStarAlignments++;
-            } else {
-              const reason = stars.length < MIN_STARS_FOR_ALIGNMENT ? `only ${stars.length} stars (min ${MIN_STARS_FOR_ALIGNMENT} required)` : "star detection/centroid failed";
-              method = `brightness-based fallback (${reason})`;
-              addLog(`[ALIGN WARN] Star-based centroid failed for ${fileNameForLog} (${reason}). Falling back to brightness-based centroid.`);
-              analysisImageCentroid = calculateBrightnessCentroid(analysisImageData, addLog);
-            }
-
-            if (analysisImageCentroid) {
-              const nativeEquivalentCentroid = {
-                  x: analysisImageCentroid.x / analysisScaleFactor,
-                  y: analysisImageCentroid.y / analysisScaleFactor,
-              };
-              finalScaledCentroid = {
-                  x: nativeEquivalentCentroid.x * (targetWidth / imgEl.naturalWidth),
-                  y: nativeEquivalentCentroid.y * (targetHeight / imgEl.naturalHeight),
-              };
-            }
+          if (analysisImageCentroid) {
+            // Convert centroid from analysis image coords back to original image coords
+            const nativeEquivalentCentroid = {
+                x: analysisImageCentroid.x / analysisScaleFactor,
+                y: analysisImageCentroid.y / analysisScaleFactor,
+            };
+            // Scale native centroid to target stacking dimensions
+            finalScaledCentroid = {
+                x: nativeEquivalentCentroid.x * (targetWidth / imgEl.naturalWidth),
+                y: nativeEquivalentCentroid.y * (targetHeight / imgEl.naturalHeight),
+            };
           }
 
         } catch (imgAnalysisError) {
@@ -622,7 +764,7 @@ export default function AstroStackerPage() {
             const noCentroidMsg = `Could not determine any centroid for ${fileNameForLog}. It will be aligned to target geometric center.`;
             addLog(`[ALIGN ERROR] ${noCentroidMsg}`);
             toast({ title: "Centroid Failed", description: noCentroidMsg, variant: "destructive" });
-            finalScaledCentroid = { x: targetWidth / 2, y: targetHeight / 2 };
+            finalScaledCentroid = { x: targetWidth / 2, y: targetHeight / 2 }; // Fallback to target geometric center
             method = method.includes("_error") || method === "unknown" ? `${method}_geometric_fallback` : "geometric_center_fallback";
         }
         addLog(`[ALIGN] Image ${i} (${fileNameForLog}) centroid (scaled to target): ${finalScaledCentroid.x.toFixed(2)}, ${finalScaledCentroid.y.toFixed(2)} (Method: ${method})`);
@@ -677,23 +819,26 @@ export default function AstroStackerPage() {
           } else {
             addLog(`[STACK WARN] Image ${i} (${filesToProcess[i]?.file?.name}) had no centroid for offset calculation. Using 0,0 offset (no alignment).`);
           }
-
-          ctx.clearRect(0, 0, targetWidth, targetHeight);
-          ctx.drawImage(img, dx, dy, targetWidth, targetHeight);
+          
+          // Draw the current image (shifted) onto the offscreenCanvas's context (ctx)
+          // which is sized to targetWidth, targetHeight
+          ctx.clearRect(0, 0, targetWidth, targetHeight); // Clear for current image draw
+          ctx.drawImage(img, dx, dy, targetWidth, targetHeight); // Draw shifted & scaled
 
           try {
+            // Get pixel data for the current band from the offscreenCanvas
             const bandFrameImageData = ctx.getImageData(0, yBandStart, targetWidth, currentBandHeight);
             const bandData = bandFrameImageData.data;
 
             for (let j = 0; j < bandData.length; j += 4) {
-              const bandPixelIndex = j / 4;
-              if (bandPixelDataCollector[bandPixelIndex]) {
+              const bandPixelIndex = j / 4; // Index within the bandPixelDataCollector array
+              if (bandPixelDataCollector[bandPixelIndex]) { // Ensure index is valid
                   bandPixelDataCollector[bandPixelIndex].r.push(bandData[j]);
                   bandPixelDataCollector[bandPixelIndex].g.push(bandData[j + 1]);
                   bandPixelDataCollector[bandPixelIndex].b.push(bandData[j + 2]);
               }
             }
-            if (yBandStart === 0) {
+            if (yBandStart === 0) { // Only count for the first band to get a general sense
               imagesContributingToBand++;
             }
           } catch (e) {
@@ -702,30 +847,32 @@ export default function AstroStackerPage() {
             addLog(`[STACK ERROR] ${bandErrorMsg}`);
             toast({ title: `Stacking Error on Band Processing`, description: `Could not process pixel data for ${filesToProcess[i]?.file.name || `image ${i}`} for band at row ${yBandStart}.`, variant: "destructive"});
           }
-           await yieldToEventLoop(dynamicDelayMs);
+           await yieldToEventLoop(dynamicDelayMs); // Yield inside the image loop for very large images/many images
         }
-        if (yBandStart === 0) {
+        if (yBandStart === 0) { // Log count after processing all images for the first band
             validImagesStackedCount = imagesContributingToBand;
             addLog(`[STACK] ${validImagesStackedCount} images contributed to the first band.`);
         }
 
+        // Process collected pixel data for the band
         for (let yInBand = 0; yInBand < currentBandHeight; yInBand++) {
           for (let x = 0; x < targetWidth; x++) {
               const bandPixelIndex = yInBand * targetWidth + x;
               const finalPixelGlobalIndex = ((yBandStart + yInBand) * targetWidth + x) * 4;
 
-              if (bandPixelDataCollector[bandPixelIndex]) {
+              if (bandPixelDataCollector[bandPixelIndex] && bandPixelDataCollector[bandPixelIndex].r.length > 0) {
                 if (stackingMode === 'median') {
                   finalImageData.data[finalPixelGlobalIndex] = getMedian(bandPixelDataCollector[bandPixelIndex].r);
                   finalImageData.data[finalPixelGlobalIndex + 1] = getMedian(bandPixelDataCollector[bandPixelIndex].g);
                   finalImageData.data[finalPixelGlobalIndex + 2] = getMedian(bandPixelDataCollector[bandPixelIndex].b);
-                } else {
+                } else { // sigmaClip
                   finalImageData.data[finalPixelGlobalIndex] = applySigmaClip(bandPixelDataCollector[bandPixelIndex].r);
                   finalImageData.data[finalPixelGlobalIndex + 1] = applySigmaClip(bandPixelDataCollector[bandPixelIndex].g);
                   finalImageData.data[finalPixelGlobalIndex + 2] = applySigmaClip(bandPixelDataCollector[bandPixelIndex].b);
                 }
-                finalImageData.data[finalPixelGlobalIndex + 3] = 255;
+                finalImageData.data[finalPixelGlobalIndex + 3] = 255; // Alpha
               } else {
+                  // Fallback for pixels with no data (should be rare if images cover area)
                   finalImageData.data[finalPixelGlobalIndex] = 0;
                   finalImageData.data[finalPixelGlobalIndex + 1] = 0;
                   finalImageData.data[finalPixelGlobalIndex + 2] = 0;
@@ -733,14 +880,15 @@ export default function AstroStackerPage() {
               }
           }
         }
+        // Log progress periodically and yield
         if (yBandStart % (STACKING_BAND_HEIGHT * 5) === 0 || yBandStart + currentBandHeight >= targetHeight ) {
              addLog(`Processed band: rows ${yBandStart} to ${yBandStart + currentBandHeight - 1}. Yielding.`);
         }
         setProgressPercent(prev => Math.min(100, prev + bandProgressIncrement));
-        await yieldToEventLoop(dynamicDelayMs);
+        await yieldToEventLoop(dynamicDelayMs); // Yield after each band is fully processed
       }
 
-      setProgressPercent(100);
+      setProgressPercent(100); // Mark as 100% before final image generation
       addLog(`All bands processed. Finalizing image.`);
 
       if (validImagesStackedCount === 0 && imageElements.length > 0) {
@@ -751,7 +899,8 @@ export default function AstroStackerPage() {
         setProgressPercent(0);
         return;
       }
-
+      
+      // Put the final composited image data onto the offscreenCanvas
       ctx.putImageData(finalImageData, 0, 0);
 
       let resultDataUrl: string;
@@ -760,7 +909,7 @@ export default function AstroStackerPage() {
         outputMimeType = 'image/jpeg';
         resultDataUrl = offscreenCanvas.toDataURL(outputMimeType, jpegQuality / 100);
         addLog(`Generated JPEG image (Quality: ${jpegQuality}%).`);
-      } else {
+      } else { // PNG
         resultDataUrl = offscreenCanvas.toDataURL(outputMimeType);
         addLog(`Generated PNG image.`);
       }
@@ -775,7 +924,7 @@ export default function AstroStackerPage() {
         const alignmentMessage = successfulStarAlignments > 0
           ? `${successfulStarAlignments}/${imageElements.length} images primarily aligned using star-based centroids.`
           : `All images aligned using brightness-based centroids or geometric centers.`;
-
+        
         const stackingMethodUsed = stackingMode === 'median' ? 'Median' : 'Sigma Clip';
         const successToastMsg = `${alignmentMessage} ${validImagesStackedCount} image(s) (out of ${imageElements.length} processed) stacked. Dim: ${targetWidth}x${targetHeight}.`;
         addLog(`Stacking complete. ${successToastMsg}`);
@@ -795,26 +944,33 @@ export default function AstroStackerPage() {
         description: `An unexpected error occurred: ${errorMessage}. Check console and logs.`,
         variant: "destructive",
       });
-      setStackedImage(null);
+      setStackedImage(null); // Clear any previous stacked image
     } finally {
-      setIsProcessing(false);
-      setProgressPercent(0);
+      setIsProcessing(false); // Stacking finished
+      setProgressPercent(0); // Reset progress
       addLog("Image stacking process finished.");
       console.log("Image stacking process finished.");
     }
   };
+  
 
   useEffect(() => {
+    // Cleanup if needed when component unmounts
     return () => {
-      // Cleanup if needed
+      // e.g., revoke Object URLs if they were used
     };
   }, []);
+
+  const canStartStacking = uploadedFiles.length > 0;
+  const isUiDisabled = isProcessing || isAnalyzingForStars || isAwaitingStarConfirmation;
+
 
   return (
     <div className="flex flex-col min-h-screen bg-background">
       <AppHeader />
       <main className="flex-grow container mx-auto py-6 px-2 sm:px-4 md:px-6">
         <div className="flex flex-col lg:flex-row gap-6">
+          {/* Control Panel Column */}
           <div className="w-full lg:w-2/5 xl:w-1/3 space-y-6">
             <Card className="shadow-lg">
               <CardHeader>
@@ -823,172 +979,227 @@ export default function AstroStackerPage() {
                   Upload & Align Images
                 </CardTitle>
                 <CardDescription>
-                 Add PNG, JPG, GIF, or WEBP. TIFF/DNG files require manual pre-conversion (e.g., using <a href="https://convertio.co/kr/tiff-png/" target="_blank" rel="noopener noreferrer" className="underline hover:text-accent">Convertio</a>). Images are aligned using star-based centroids (min {MIN_STARS_FOR_ALIGNMENT} stars detected) or brightness centroids, then stacked.
+                 Add PNG, JPG, GIF, or WEBP. TIFF/DNG files require manual pre-conversion (e.g., using <a href="https://convertio.co/kr/tiff-png/" target="_blank" rel="noopener noreferrer" className="underline hover:text-accent">Convertio</a>). 
+                 Images are aligned using star-based centroids or brightness centroids.
+                 Edit detected stars on the reference image after uploading.
                   Median stacking uses median pixel values. Sigma Clip stacking iteratively removes outliers and averages the rest. Both processed in bands for stability.
-                  Star detection uses combined brightness threshold: {DEFAULT_STAR_BRIGHTNESS_THRESHOLD_COMBINED}, local contrast: {DEFAULT_STAR_LOCAL_CONTRAST_FACTOR}.
+                  Star detection: Brightness Threshold (Combined R+G+B) = {DEFAULT_STAR_BRIGHTNESS_THRESHOLD_COMBINED}, Local Contrast Factor = {DEFAULT_STAR_LOCAL_CONTRAST_FACTOR}. Min Stars for Alignment = {MIN_STARS_FOR_ALIGNMENT}.
                   Brightness centroid fallback threshold: {BRIGHTNESS_CENTROID_FALLBACK_THRESHOLD_GRAYSCALE_EQUIVALENT} (grayscale equivalent).
-                  Analysis for star detection on images larger than {ANALYSIS_MAX_DIMENSION}px is scaled.
+                  Analysis for star detection on images larger than {ANALYSIS_MAX_DIMENSION}px is scaled (current max analysis side: {ANALYSIS_MAX_DIMENSION}px).
                   Max image load: {MAX_IMAGE_LOAD_DIMENSION}px.
                   Stacking resolution capped near {MAX_STACKING_SIDE_LENGTH}px.
                   Processing can be slow/intensive. Sigma Clip is generally slower than Median.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <ImageUploadArea onFilesAdded={handleFilesAdded} isProcessing={isProcessing} />
+                {!isAwaitingStarConfirmation ? (
+                  <>
+                    <ImageUploadArea onFilesAdded={handleFilesAdded} isProcessing={isProcessing || isAnalyzingForStars} />
 
-                {isProcessing && (
-                  <div className="space-y-2">
-                    <Progress value={progressPercent} className="w-full" />
-                    <p className="text-sm text-center text-muted-foreground">{Math.round(progressPercent)}% Complete</p>
+                    {(isProcessing || isAnalyzingForStars) && progressPercent > 0 && (
+                      <div className="space-y-2">
+                        <Progress value={progressPercent} className="w-full" />
+                        <p className="text-sm text-center text-muted-foreground">{Math.round(progressPercent)}% Complete</p>
+                      </div>
+                    )}
+                     {isAnalyzingForStars && !progressPercent && (
+                        <div className="flex items-center justify-center space-x-2 py-2">
+                            <RefreshCcw className="h-5 w-5 animate-spin text-accent" />
+                            <p className="text-sm text-muted-foreground">Analyzing reference image for stars...</p>
+                        </div>
+                    )}
+
+
+                    {uploadedFiles.length > 0 && (
+                      <>
+                        <h3 className="text-lg font-semibold mt-4 text-foreground">Image Queue ({uploadedFiles.length})</h3>
+                        <ScrollArea className="h-64 border rounded-md p-2 bg-background/30">
+                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                            {uploadedFiles.map((uploadedFile, index) => (
+                              <ImageQueueItem
+                                key={`${uploadedFile.file.name}-${index}`} // Ensure unique key
+                                file={uploadedFile.file}
+                                previewUrl={uploadedFile.previewUrl}
+                                onRemove={() => handleRemoveImage(index)}
+                                isProcessing={isUiDisabled}
+                              />
+                            ))}
+                          </div>
+                        </ScrollArea>
+
+                        <div className="space-y-2 pt-2">
+                          <Label className="text-base font-semibold text-foreground">Stacking Mode</Label>
+                          <RadioGroup
+                            value={stackingMode}
+                            onValueChange={(value: string) => setStackingMode(value as StackingMode)}
+                            className="flex space-x-4"
+                            disabled={isUiDisabled}
+                          >
+                            <div className="flex items-center space-x-2">
+                              <RadioGroupItem value="median" id="median-stack" />
+                              <Label htmlFor="median-stack" className="cursor-pointer">Median</Label>
+                            </div>
+                            <div className="flex items-center space-x-2">
+                              <RadioGroupItem value="sigmaClip" id="sigma-clip-stack" />
+                              <Label htmlFor="sigma-clip-stack" className="cursor-pointer">Sigma Clip</Label>
+                            </div>
+                          </RadioGroup>
+                          <p className="text-xs text-muted-foreground">
+                            Median is generally faster. Sigma Clip can be better for outlier rejection but is more computationally intensive.
+                          </p>
+                        </div>
+
+                        <div className="space-y-2 pt-2">
+                          <Label className="text-base font-semibold text-foreground">Preview Fit (Final Image)</Label>
+                          <RadioGroup
+                            value={previewFitMode}
+                            onValueChange={(value: string) => setPreviewFitMode(value as PreviewFitMode)}
+                            className="flex space-x-4"
+                            disabled={isUiDisabled}
+                          >
+                            <div className="flex items-center space-x-2">
+                              <RadioGroupItem value="contain" id="fit-contain" />
+                              <Label htmlFor="fit-contain" className="cursor-pointer">Fit (Show Full)</Label>
+                            </div>
+                            <div className="flex items-center space-x-2">
+                              <RadioGroupItem value="cover" id="fit-cover" />
+                              <Label htmlFor="fit-cover" className="cursor-pointer">Fill (Cover Area)</Label>
+                            </div>
+                          </RadioGroup>
+                          <p className="text-xs text-muted-foreground">
+                            'Fit' shows the entire image. 'Fill' covers the preview area, potentially cropping.
+                          </p>
+                        </div>
+
+                        <div className="space-y-2 pt-2">
+                          <Label className="text-base font-semibold text-foreground">Output Format</Label>
+                          <RadioGroup
+                            value={outputFormat}
+                            onValueChange={(value: string) => setOutputFormat(value as OutputFormat)}
+                            className="flex space-x-4"
+                            disabled={isUiDisabled}
+                          >
+                            <div className="flex items-center space-x-2">
+                              <RadioGroupItem value="png" id="format-png" />
+                              <Label htmlFor="format-png" className="cursor-pointer">PNG</Label>
+                            </div>
+                            <div className="flex items-center space-x-2">
+                              <RadioGroupItem value="jpeg" id="format-jpeg" />
+                              <Label htmlFor="format-jpeg" className="cursor-pointer">JPG</Label>
+                            </div>
+                          </RadioGroup>
+                          <p className="text-xs text-muted-foreground">
+                            PNG offers lossless quality. JPG is smaller but lossy.
+                          </p>
+                        </div>
+
+                        {outputFormat === 'jpeg' && (
+                          <div className="space-y-2 pt-2">
+                            <Label htmlFor="jpegQualitySlider" className="text-base font-semibold text-foreground">
+                              JPG Quality: {jpegQuality}%
+                            </Label>
+                            <Slider
+                              id="jpegQualitySlider"
+                              min={10}
+                              max={100}
+                              step={1}
+                              value={[jpegQuality]}
+                              onValueChange={(value) => setJpegQuality(value[0])}
+                              disabled={isUiDisabled}
+                              className="w-[60%]"
+                            />
+                             <p className="text-xs text-muted-foreground">
+                              Higher quality means larger file size. Recommended: 85-95.
+                            </p>
+                          </div>
+                        )}
+
+                        <Button
+                          onClick={handleAnalyzeAndEditStars}
+                          disabled={!canStartStacking || isUiDisabled}
+                          className="w-full bg-accent hover:bg-accent/90 text-accent-foreground mt-4"
+                          title={!canStartStacking ? "Upload at least one image" : (uploadedFiles.length < 2 ? "Edit stars for single image (stacking needs >=2)" : "Edit Stars & Proceed to Stack")}
+                        >
+                          <Edit3 className="mr-2 h-5 w-5" />
+                          {isAnalyzingForStars ? 'Analyzing Stars...' : (uploadedFiles.length < 2 ? 'Edit Stars on Reference' : 'Edit Stars & Stack')}
+                        </Button>
+                      </>
+                    )}
+                  </>
+                ) : (
+                  // Star Editing UI
+                  <div className="space-y-4">
+                     <Alert>
+                        <StarIcon className="h-4 w-4 text-accent" />
+                        <AlertTitle>Edit Stars for Reference Image</AlertTitle>
+                        <AlertDescription>
+                            Click on the image to add a star (cyan circle). Click an existing star (red/cyan) to remove it.
+                            Reference image: {uploadedFiles[0]?.file.name || 'Unknown'}.
+                            Stars found/selected: {currentAnalysisStars.length}.
+                        </AlertDescription>
+                    </Alert>
+                    {referenceImagePreviewForStarEditing && currentAnalysisImageDimensions && (
+                      <StarAnnotationCanvas
+                        imageUrl={referenceImagePreviewForStarEditing}
+                        stars={currentAnalysisStars}
+                        analysisWidth={currentAnalysisImageDimensions.width}
+                        analysisHeight={currentAnalysisImageDimensions.height}
+                        onCanvasClick={handleStarAnnotationClick}
+                        canvasDisplayWidth={Math.min(500, currentAnalysisImageDimensions.width)} // Control display size
+                      />
+                    )}
+                    <div className="flex flex-col sm:flex-row gap-2 pt-2">
+                       <Button onClick={handleResetStars} variant="outline" className="flex-1">
+                         <RefreshCcw className="mr-2 h-4 w-4" /> Reset to Auto-Detected
+                       </Button>
+                       <Button 
+                        onClick={handleConfirmStarsAndStack} 
+                        className="flex-1 bg-green-600 hover:bg-green-700 text-white"
+                        disabled={uploadedFiles.length < 2 && currentAnalysisStars.length === 0} // Disable if only one image and no stars selected (stacking won't happen)
+                        title={uploadedFiles.length < 2 ? "Stacking requires at least 2 images. Add more or this will just prepare the reference." : `Proceed to stack ${uploadedFiles.length} images`}
+                       >
+                         <CheckCircle className="mr-2 h-4 w-4" />
+                         Confirm Stars & {uploadedFiles.length < 2 ? 'Prepare Reference' : `Stack (${uploadedFiles.length})`}
+                       </Button>
+                    </div>
+                     <Button onClick={() => setIsAwaitingStarConfirmation(false)} variant="ghost" className="w-full text-muted-foreground">
+                        Cancel Star Editing
+                     </Button>
                   </div>
                 )}
 
-                {uploadedFiles.length > 0 && (
-                  <>
-                    <h3 className="text-lg font-semibold mt-4 text-foreground">Image Queue ({uploadedFiles.length})</h3>
-                    <ScrollArea className="h-64 border rounded-md p-2 bg-background/30">
-                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                        {uploadedFiles.map((uploadedFile, index) => (
-                          <ImageQueueItem
-                            key={index}
-                            file={uploadedFile.file}
-                            previewUrl={uploadedFile.previewUrl}
-                            onRemove={() => handleRemoveImage(index)}
-                            isProcessing={isProcessing}
-                          />
+                {/* Processing Logs - shown in both modes if logs exist */}
+                {logs.length > 0 && (
+                  <Card className="mt-4">
+                    <CardHeader className="p-3 border-b">
+                      <CardTitle className="text-base flex items-center">
+                        <ListChecks className="mr-2 h-4 w-4" />
+                        Processing Logs
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="p-0">
+                      <ScrollArea ref={logContainerRef} className="h-48 p-3 text-xs bg-muted/20 rounded-b-md">
+                        {logs.map((log) => (
+                          <div key={log.id} className="mb-1 font-mono">
+                            <span className="text-muted-foreground mr-2">{log.timestamp}</span>
+                            <span className={log.message.startsWith('[ERROR]') ? 'text-destructive' : (log.message.startsWith('[WARN]') ? 'text-yellow-500' : 'text-foreground/80')}>{log.message}</span>
+                          </div>
                         ))}
-                      </div>
-                    </ScrollArea>
-
-                    <div className="space-y-2 pt-2">
-                      <Label className="text-base font-semibold text-foreground">Stacking Mode</Label>
-                      <RadioGroup
-                        value={stackingMode}
-                        onValueChange={(value: string) => setStackingMode(value as StackingMode)}
-                        className="flex space-x-4"
-                        disabled={isProcessing}
-                      >
-                        <div className="flex items-center space-x-2">
-                          <RadioGroupItem value="median" id="median-stack" />
-                          <Label htmlFor="median-stack" className="cursor-pointer">Median</Label>
-                        </div>
-                        <div className="flex items-center space-x-2">
-                          <RadioGroupItem value="sigmaClip" id="sigma-clip-stack" />
-                          <Label htmlFor="sigma-clip-stack" className="cursor-pointer">Sigma Clip</Label>
-                        </div>
-                      </RadioGroup>
-                       <p className="text-xs text-muted-foreground">
-                        Median is generally faster. Sigma Clip can be better for outlier rejection but is more computationally intensive.
-                       </p>
-                    </div>
-
-                    <div className="space-y-2 pt-2">
-                      <Label className="text-base font-semibold text-foreground">Preview Fit</Label>
-                      <RadioGroup
-                        value={previewFitMode}
-                        onValueChange={(value: string) => setPreviewFitMode(value as PreviewFitMode)}
-                        className="flex space-x-4"
-                        disabled={isProcessing}
-                      >
-                        <div className="flex items-center space-x-2">
-                          <RadioGroupItem value="contain" id="fit-contain" />
-                          <Label htmlFor="fit-contain" className="cursor-pointer">Fit (Show Full)</Label>
-                        </div>
-                        <div className="flex items-center space-x-2">
-                          <RadioGroupItem value="cover" id="fit-cover" />
-                          <Label htmlFor="fit-cover" className="cursor-pointer">Fill (Cover Area)</Label>
-                        </div>
-                      </RadioGroup>
-                       <p className="text-xs text-muted-foreground">
-                        'Fit' shows the entire image. 'Fill' covers the preview area, potentially cropping.
-                       </p>
-                    </div>
-
-                    <div className="space-y-2 pt-2">
-                      <Label className="text-base font-semibold text-foreground">Output Format</Label>
-                      <RadioGroup
-                        value={outputFormat}
-                        onValueChange={(value: string) => setOutputFormat(value as OutputFormat)}
-                        className="flex space-x-4"
-                        disabled={isProcessing}
-                      >
-                        <div className="flex items-center space-x-2">
-                          <RadioGroupItem value="png" id="format-png" />
-                          <Label htmlFor="format-png" className="cursor-pointer">PNG</Label>
-                        </div>
-                        <div className="flex items-center space-x-2">
-                          <RadioGroupItem value="jpeg" id="format-jpeg" />
-                          <Label htmlFor="format-jpeg" className="cursor-pointer">JPG</Label>
-                        </div>
-                      </RadioGroup>
-                       <p className="text-xs text-muted-foreground">
-                        PNG offers lossless quality. JPG is smaller but lossy.
-                       </p>
-                    </div>
-
-                    {outputFormat === 'jpeg' && (
-                      <div className="space-y-2 pt-2">
-                        <Label htmlFor="jpegQualitySlider" className="text-base font-semibold text-foreground">
-                          JPG Quality: {jpegQuality}%
-                        </Label>
-                        <Slider
-                          id="jpegQualitySlider"
-                          min={10}
-                          max={100}
-                          step={1}
-                          value={[jpegQuality]}
-                          onValueChange={(value) => setJpegQuality(value[0])}
-                          disabled={isProcessing}
-                          className="w-[60%]"
-                        />
-                        <p className="text-xs text-muted-foreground">
-                          Higher quality means larger file size. Recommended: 85-95.
-                        </p>
-                      </div>
-                    )}
-
-                    <Button
-                      onClick={handleStackImages}
-                      disabled={isProcessing || uploadedFiles.length < 2}
-                      className="w-full bg-accent hover:bg-accent/90 text-accent-foreground mt-4"
-                      title={uploadedFiles.length < 2 ? "Upload at least two images for stacking" : `Align & Stack using ${stackingMode === 'median' ? 'Median' : 'Sigma Clip'} (Output: ${outputFormat.toUpperCase()})`}
-                    >
-                      <Wand2 className="mr-2 h-5 w-5" />
-                      {isProcessing ? 'Processing...' : `Align & ${stackingMode === 'median' ? 'Median' : 'Sigma Clip'} Stack (${outputFormat.toUpperCase()}) (${uploadedFiles.length})`}
-                    </Button>
-
-                    {logs.length > 0 && (
-                      <Card className="mt-4">
-                        <CardHeader className="p-3 border-b">
-                          <CardTitle className="text-base flex items-center">
-                            <ListChecks className="mr-2 h-4 w-4" />
-                            Processing Logs
-                          </CardTitle>
-                        </CardHeader>
-                        <CardContent className="p-0">
-                          <ScrollArea ref={logContainerRef} className="h-48 p-3 text-xs bg-muted/20 rounded-b-md">
-                            {logs.map((log) => (
-                              <div key={log.id} className="mb-1 font-mono">
-                                <span className="text-muted-foreground mr-2">{log.timestamp}</span>
-                                <span className={log.message.startsWith('[ERROR]') ? 'text-destructive' : (log.message.startsWith('[WARN]') ? 'text-yellow-500' : 'text-foreground/80')}>{log.message}</span>
-                              </div>
-                            ))}
-                          </ScrollArea>
-                        </CardContent>
-                      </Card>
-                    )}
-                  </>
+                      </ScrollArea>
+                    </CardContent>
+                  </Card>
                 )}
               </CardContent>
             </Card>
           </div>
 
+          {/* Image Preview Column */}
           <div className="w-full lg:w-3/5 xl:w-2/3 flex flex-col space-y-6">
             <ImagePreview
               imageUrl={stackedImage}
               fitMode={previewFitMode}
             />
-            <DownloadButton imageUrl={stackedImage} isProcessing={isProcessing} />
+            <DownloadButton imageUrl={stackedImage} isProcessing={isProcessing || isAnalyzingForStars || isAwaitingStarConfirmation} />
           </div>
         </div>
       </main>
