@@ -7,19 +7,19 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardFooter } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
-import type { StarSelectionMode } from '@/app/page'; // Assuming type is exported from page.tsx or a types file
+import type { StarSelectionMode } from '@/app/page'; 
 
 interface ImageQueueItemProps {
   id: string;
   file: File;
   previewUrl: string;
   isAnalyzing: boolean;
-  isReviewed: boolean; // True if manual stars have been confirmed
+  isReviewed: boolean; 
   starSelectionMode: StarSelectionMode;
   onRemove: () => void;
   onEditStars: () => void;
   onToggleStarSelectionMode: () => void;
-  isProcessing: boolean; // General UI disable flag
+  isProcessing: boolean; 
 }
 
 export function ImageQueueItem({
@@ -42,7 +42,7 @@ export function ImageQueueItem({
         <Image
           src={previewUrl}
           alt={file.name}
-          width={200} // Adjusted for potentially wider card
+          width={200} 
           height={120}
           className="object-cover w-full h-32"
           data-ai-hint="sky night"
@@ -60,10 +60,15 @@ export function ImageQueueItem({
           </Button>
         </div>
         {isManualMode && isReviewed && (
-            <div className="absolute top-1 left-1 bg-green-500/80 text-white p-1 rounded-full" title="Manual stars confirmed">
-                <CheckCircle className="h-4 w-4" />
+            <div className="absolute top-1 left-1 bg-green-500/80 text-white p-1 rounded-full flex items-center justify-center" title="Manual stars confirmed/applied">
+                <CheckCircle className="h-3 w-3" />
             </div>
         )}
+         {isAnalyzing && (
+             <div className="absolute bottom-1 left-1 bg-background/70 text-foreground p-1 rounded-sm text-xs flex items-center">
+                <Loader2 className="mr-1 h-3 w-3 animate-spin" /> Analyzing...
+             </div>
+         )}
       </CardContent>
       <div className="p-2 text-xs text-muted-foreground truncate bg-card-foreground/5 flex-grow">
         {file.name}
@@ -89,18 +94,19 @@ export function ImageQueueItem({
             variant="outline"
             size="sm"
             onClick={onEditStars}
-            disabled={isProcessing || isAnalyzing || (isManualMode && isAnalyzing)}
+            disabled={isProcessing || isAnalyzing }
             className="w-full"
-            title={isAnalyzing ? "Analyzing..." : (isManualMode ? (isReviewed ? "Re-edit Manual Stars" : "Edit Manual Stars") : "View/Edit Auto Stars (Switches to Manual)")}
+            title={isAnalyzing ? "Analyzing..." : (isManualMode ? (isReviewed ? "Re-edit Manual Stars" : "Edit Manual Stars") : "Review Auto Stars (Switches to Manual)")}
           >
-            {isAnalyzing ? (
+            {isAnalyzing && starSelectionMode === 'manual' ? ( // Show loader only if analyzing for manual mode specifically
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
             ) : (
                 <Edit3 className="mr-2 h-4 w-4" />
             )}
-            {isAnalyzing ? "Analyzing..." : (isManualMode ? (isReviewed ? "Re-Edit" : "Edit Stars") : "Edit/Review")}
+            {isAnalyzing && starSelectionMode === 'manual' ? "Analyzing..." : (isManualMode ? (isReviewed ? "Re-Edit" : "Edit Stars") : "Review/Edit")}
           </Button>
       </CardFooter>
     </Card>
   );
 }
+
