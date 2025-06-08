@@ -6,6 +6,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
 import { fileToDataURL } from '@/lib/utils';
+import { useLanguage } from '@/contexts/LanguageContext'; // Added import
 
 import { AppHeader } from '@/components/astrostacker/AppHeader';
 import { ImageUploadArea } from '@/components/astrostacker/ImageUploadArea';
@@ -341,6 +342,7 @@ const applySigmaClip = (
 
 
 export default function AstroStackerPage() {
+  const { t } = useLanguage(); // Added hook
   const [allImageStarData, setAllImageStarData] = useState<ImageStarEntry[]>([]);
   const [stackedImage, setStackedImage] = useState<string | null>(null); // This will hold the raw stacked image
   const [isProcessingStack, setIsProcessingStack] = useState(false);
@@ -1264,6 +1266,7 @@ export default function AstroStackerPage() {
   const currentImageForEditing = currentEditingImageIndex !== null ? allImageStarData[currentEditingImageIndex] : null;
   const sourceImageForDialog = allImageStarData.find(img => img.id === sourceImageIdForApplyToAll);
 
+  const currentYear = new Date().getFullYear();
 
   return (
     <div className="flex flex-col min-h-screen bg-background">
@@ -1275,13 +1278,10 @@ export default function AstroStackerPage() {
               <CardHeader>
                 <CardTitle className="flex items-center text-xl font-headline">
                   <StarIcon className="mr-2 h-5 w-5 text-accent" />
-                  Upload & Configure Images
+                  {t('uploadAndConfigure')} {/* Translated title */}
                 </CardTitle>
                  <CardDescription className="text-sm max-h-32 overflow-y-auto">
-                    Add PNG, JPG, GIF, or WEBP. TIFF/DNG files require manual pre-conversion.
-                    Images are aligned using star-based centroids or brightness centroids.
-                    Star analysis and stacking use original image resolution. Large images may impact performance.
-                    Median stacking uses median pixel values. Sigma Clip removes outliers then averages.
+                   {t('cardDescription')}
                  </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -1292,13 +1292,13 @@ export default function AstroStackerPage() {
                     {isProcessingStack && progressPercent > 0 && (
                       <div className="space-y-2">
                         <Progress value={progressPercent} className="w-full" />
-                        <p className="text-sm text-center text-muted-foreground">{Math.round(progressPercent)}% Complete</p>
+                        <p className="text-sm text-center text-muted-foreground">{t('stackingProgress', {progressPercent: Math.round(progressPercent)})}</p>
                       </div>
                     )}
 
                     {allImageStarData.length > 0 && (
                       <>
-                        <h3 className="text-lg font-semibold mt-4 text-foreground">Image Queue ({allImageStarData.length})</h3>
+                        <h3 className="text-lg font-semibold mt-4 text-foreground">{t('imageQueueCount', {count: allImageStarData.length})}</h3>
                         <ScrollArea className="h-60 border rounded-md p-2 bg-background/30">
                           <div className="grid grid-cols-1 gap-3">
                             {allImageStarData.map((entry, index) => (
@@ -1321,7 +1321,7 @@ export default function AstroStackerPage() {
                         </ScrollArea>
 
                         <div className="space-y-2 pt-2">
-                          <Label className="text-base font-semibold text-foreground">Stacking Mode</Label>
+                          <Label className="text-base font-semibold text-foreground">{t('stackingMode')}</Label>
                           <RadioGroup
                             value={stackingMode}
                             onValueChange={(value: string) => setStackingMode(value as StackingMode)}
@@ -1340,7 +1340,7 @@ export default function AstroStackerPage() {
                         </div>
 
                         <div className="space-y-2 pt-2">
-                          <Label className="text-base font-semibold text-foreground">Preview Fit (Final Image Display)</Label>
+                          <Label className="text-base font-semibold text-foreground">{t('previewFit')}</Label>
                           <RadioGroup
                             value={previewFitMode}
                             onValueChange={(value: string) => setPreviewFitMode(value as PreviewFitMode)}
@@ -1349,17 +1349,17 @@ export default function AstroStackerPage() {
                           >
                             <div className="flex items-center space-x-2">
                               <RadioGroupItem value="contain" id="fit-contain" />
-                              <Label htmlFor="fit-contain" className="cursor-pointer">Fit (Show Full)</Label>
+                              <Label htmlFor="fit-contain" className="cursor-pointer">{t('fitContain')}</Label>
                             </div>
                             <div className="flex items-center space-x-2">
                               <RadioGroupItem value="cover" id="fit-cover" />
-                              <Label htmlFor="fit-cover" className="cursor-pointer">Fill (Cover Area)</Label>
+                              <Label htmlFor="fit-cover" className="cursor-pointer">{t('fitCover')}</Label>
                             </div>
                           </RadioGroup>
                         </div>
 
                         <div className="space-y-2 pt-2">
-                          <Label className="text-base font-semibold text-foreground">Output Format</Label>
+                          <Label className="text-base font-semibold text-foreground">{t('outputFormat')}</Label>
                           <RadioGroup
                             value={outputFormat}
                             onValueChange={(value: string) => setOutputFormat(value as OutputFormat)}
@@ -1380,7 +1380,7 @@ export default function AstroStackerPage() {
                         {outputFormat === 'jpeg' && (
                           <div className="space-y-2 pt-2">
                             <Label htmlFor="jpegQualitySlider" className="text-base font-semibold text-foreground">
-                              JPG Quality: {jpegQuality}%
+                              {t('jpgQuality', {jpegQuality})}
                             </Label>
                             <Slider
                               id="jpegQualitySlider"
@@ -1401,7 +1401,7 @@ export default function AstroStackerPage() {
                           className="w-full bg-accent hover:bg-accent/90 text-accent-foreground mt-4"
                           title={!canStartStacking ? "Upload at least two images to enable stacking." : "Stack All Images"}
                         >
-                          {isProcessingStack ? <><Loader2 className="mr-2 h-5 w-5 animate-spin" />Stacking...</> : <><CheckCircle className="mr-2 h-5 w-5" />Stack Images ({allImageStarData.length})</>}
+                          {isProcessingStack ? <><Loader2 className="mr-2 h-5 w-5 animate-spin" />Stacking...</> : <><CheckCircle className="mr-2 h-5 w-5" />{t('stackImagesButton', { count: allImageStarData.length })}</>}
                         </Button>
                       </>
                     )}
@@ -1411,9 +1411,9 @@ export default function AstroStackerPage() {
                     <div className="space-y-4">
                       <Alert>
                           <StarIcon className="h-4 w-4 text-accent" />
-                          <AlertTitle>Edit Stars for: {currentImageForEditing.file.name}</AlertTitle>
+                          <AlertTitle>{t('editStarsFor', {fileName: currentImageForEditing.file.name})}</AlertTitle>
                           <AlertDescription>
-                              Click image to add/remove star. Selected: {currentImageForEditing.analysisStars.length}. (Analysis: {currentImageForEditing.analysisDimensions.width}x{currentImageForEditing.analysisDimensions.height})
+                            {t('editStarsDescription', {starCount: currentImageForEditing.analysisStars.length, width: currentImageForEditing.analysisDimensions.width, height: currentImageForEditing.analysisDimensions.height })}
                           </AlertDescription>
                       </Alert>
                       <StarAnnotationCanvas
@@ -1426,10 +1426,10 @@ export default function AstroStackerPage() {
                       />
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-2">
                         <Button onClick={handleResetStars} variant="outline" className="w-full" disabled={isUiDisabled}>
-                          <RefreshCcw className="mr-2 h-4 w-4" /> Reset to Auto
+                          <RefreshCcw className="mr-2 h-4 w-4" /> {t('resetToAuto')}
                         </Button>
                         <Button onClick={handleWipeAllStarsForCurrentImage} variant="destructive" className="w-full" disabled={isUiDisabled}>
-                          <Trash2 className="mr-2 h-4 w-4" /> Wipe All Stars
+                          <Trash2 className="mr-2 h-4 w-4" /> {t('wipeAllStars')}
                         </Button>
                         <Button
                           onClick={handleConfirmStarsForCurrentImage}
@@ -1437,11 +1437,11 @@ export default function AstroStackerPage() {
                           disabled={isUiDisabled}
                         >
                           <CheckCircle className="mr-2 h-4 w-4" />
-                          Confirm & Close
+                          {t('confirmAndClose')}
                         </Button>
                       </div>
                       <Button onClick={() => {setIsStarEditingMode(false); setCurrentEditingImageIndex(null);}} variant="ghost" className="w-full text-muted-foreground" disabled={isUiDisabled}>
-                          Cancel Editing
+                          {t('cancelEditing')}
                       </Button>
                     </div>
                   )
@@ -1452,7 +1452,7 @@ export default function AstroStackerPage() {
                     <CardHeader className="p-3 border-b">
                       <CardTitle className="text-base flex items-center">
                         <ListChecks className="mr-2 h-4 w-4" />
-                        Processing Logs
+                        {t('processingLogs')}
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="p-0">
@@ -1473,7 +1473,7 @@ export default function AstroStackerPage() {
 
           <div className="w-full lg:w-3/5 xl:w-2/3 flex flex-col space-y-6">
             <ImagePreview
-              imageUrl={stackedImage} // Display raw stacked image here or final edited, if editor is closed
+              imageUrl={stackedImage} 
               fitMode={previewFitMode}
             />
             {stackedImage && !showPostProcessEditor && (
@@ -1484,16 +1484,16 @@ export default function AstroStackerPage() {
                 disabled={isProcessingStack}
               >
                 <Wand2 className="mr-2 h-5 w-5" />
-                Finalize & Download Image
+                {t('finalizeAndDownload')}
               </Button>
             )}
           </div>
         </div>
       </main>
       <footer className="py-6 text-center text-sm text-muted-foreground border-t border-border">
-        <div>AstroStacker &copy; {new Date().getFullYear()}</div>
+        <div>{t('creditsLine1', {year: currentYear})}</div>
         <div className="mt-2 px-4">
-        천관사님, 새턴님, 구구님, 플렉님, 라떼님, 얼음세상님, 늅님, 오르트님, 지민님, 그리고 다른 여러 분들의 도움으로 서민홍(암흑광자) 에 의해 제작되었습니다.
+        {t('creditsLine2Part1')}
         </div>
       </footer>
 
@@ -1503,18 +1503,22 @@ export default function AstroStackerPage() {
                 <AlertDialogHeader>
                     <AlertDialogTitle className="flex items-center">
                         <CopyCheck className="mr-2 h-5 w-5 text-accent" />
-                        Apply Star Selection to Other Images?
+                        {t('applyStarsToOther')}
                     </AlertDialogTitle>
                     <AlertDialogDescription>
-                        You have manually edited stars for <strong>{sourceImageForDialog.file.name}</strong>.
-                        Would you like to apply this star selection ({starsToApplyToAll?.length || 0} stars) and its analysis dimensions ({analysisDimensionsToApplyToAll?.width}x{analysisDimensionsToApplyToAll?.height}) to all other {allImageStarData.length -1} image(s) in the queue?
-                        <br />This will overwrite their current star selections, set them to manual mode, and mark them as reviewed.
+                      {t('applyStarsDescription', {
+                        fileName: sourceImageForDialog.file.name,
+                        starCount: starsToApplyToAll?.length || 0,
+                        width: analysisDimensionsToApplyToAll?.width,
+                        height: analysisDimensionsToApplyToAll?.height,
+                        otherImageCount: allImageStarData.length - 1
+                      })}
                     </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
-                    <AlertDialogCancel onClick={handleCancelApplyToAll}>No, Keep Individual</AlertDialogCancel>
+                    <AlertDialogCancel onClick={handleCancelApplyToAll}>{t('noKeepIndividual')}</AlertDialogCancel>
                     <AlertDialogAction onClick={handleApplyStarsToAllImages} className="bg-accent hover:bg-accent/90 text-accent-foreground">
-                        Yes, Apply to All
+                        {t('yesApplyToAll')}
                     </AlertDialogAction>
                 </AlertDialogFooter>
             </AlertDialogContent>
