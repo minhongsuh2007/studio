@@ -12,7 +12,6 @@ import { AppHeader } from '@/components/astrostacker/AppHeader';
 import { ImageUploadArea } from '@/components/astrostacker/ImageUploadArea';
 import { ImageQueueItem } from '@/components/astrostacker/ImageQueueItem';
 import { ImagePreview } from '@/components/astrostacker/ImagePreview';
-// import { DownloadButton } from '@/components/astrostacker/DownloadButton'; // Integrated into ImagePostProcessEditor
 import { ImagePostProcessEditor } from '@/components/astrostacker/ImagePostProcessEditor';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Star as StarIcon, ListChecks, CheckCircle, RefreshCcw, Edit3, Loader2, Settings2, Orbit, Trash2, CopyCheck, AlertTriangle, Wand2 } from 'lucide-react';
@@ -36,11 +35,11 @@ export type StarSelectionMode = 'auto' | 'manual';
 
 export interface ImageStarEntry {
   id: string;
-  file: File; // Original file, mainly for name and type reference
-  previewUrl: string; // Data URL of the image to be processed (potentially downscaled)
+  file: File; 
+  previewUrl: string; 
   analysisStars: Star[];
   initialAutoStars: Star[];
-  analysisDimensions: { width: number; height: number }; // Dimensions of the image in previewUrl
+  analysisDimensions: { width: number; height: number }; 
   userReviewed: boolean;
   isAnalyzed: boolean;
   isAnalyzing: boolean;
@@ -70,8 +69,8 @@ const BRIGHTNESS_CENTROID_FALLBACK_THRESHOLD_GRAYSCALE_EQUIVALENT = 30;
 const STAR_ANNOTATION_MAX_DISPLAY_WIDTH = 500; 
 const STAR_CLICK_TOLERANCE_ON_DISPLAY_CANVAS_PX = 10; 
 
-const IS_LARGE_IMAGE_THRESHOLD_MP = 12; // Megapixels for downscale prompt
-const MAX_DIMENSION_DOWNSCALED = 2048; // Target max dimension if downscaled
+const IS_LARGE_IMAGE_THRESHOLD_MP = 12; 
+const MAX_DIMENSION_DOWNSCALED = 2048; 
 
 const yieldToEventLoop = async (delayMs: number) => {
   await new Promise(resolve => setTimeout(resolve, delayMs));
@@ -79,9 +78,9 @@ const yieldToEventLoop = async (delayMs: number) => {
 
 const applyImageAdjustmentsToDataURL = async (
   baseDataUrl: string,
-  brightness: number, // 0-200, 100 is no change
-  exposure: number,   // -100 to 100, 0 is no change
-  saturation: number, // 0-200, 100 is no change
+  brightness: number, 
+  exposure: number,   
+  saturation: number, 
   outputFormat: 'png' | 'jpeg' = 'png',
   jpegQuality = 0.92
 ): Promise<string> => {
@@ -479,7 +478,6 @@ export default function AstroStackerPage() {
                         const ctx = canvas.getContext('2d');
                         if (!ctx) {
                             toast({ title: "Downscale Error", description: `Could not get canvas context for ${file.name}. Using original.`, variant: "destructive" });
-                            // Proceed with original if canvas fails
                         } else {
                             let targetWidth = naturalWidth;
                             let targetHeight = naturalHeight;
@@ -595,7 +593,6 @@ export default function AstroStackerPage() {
       const tempAnalysisCtx = tempAnalysisCanvas.getContext('2d', { willReadFrequently: true });
       if (!tempAnalysisCtx) throw new Error("Could not get analysis canvas context.");
 
-      // Use dimensions from the loaded image element, which reflects the previewUrl's data
       const analysisWidth = imgEl.naturalWidth;
       const analysisHeight = imgEl.naturalHeight;
 
@@ -612,7 +609,7 @@ export default function AstroStackerPage() {
           const newEntry = {
             ...entry,
             initialAutoStars: [...detectedStars],
-            analysisDimensions: { width: analysisWidth, height: analysisHeight }, // Ensure this is updated
+            analysisDimensions: { width: analysisWidth, height: analysisHeight },
             isAnalyzed: true,
             isAnalyzing: false,
           };
@@ -628,7 +625,15 @@ export default function AstroStackerPage() {
       const errorMessage = error instanceof Error ? error.message : String(error);
       addLog(`[ERROR] Failed to analyze ${currentEntry.file.name}: ${errorMessage}`);
       toast({ title: `Analysis Failed for ${currentEntry.file.name}`, description: errorMessage, variant: "destructive" });
-      setAllImageStarData(prev => prev.map((entry, idx) => idx === imageIndex ? { ...entry, isAnalyzing: false, isAnalyzed: false } : entry));
+      setAllImageStarData(prev => prev.map((entry, idx) => 
+        idx === imageIndex ? { 
+          ...entry, 
+          isAnalyzing: false, 
+          isAnalyzed: false, 
+          analysisStars: [], 
+          initialAutoStars: [] 
+        } : entry
+      ));
       return false;
     }
   }, [allImageStarData, addLog, toast]);
@@ -702,7 +707,6 @@ export default function AstroStackerPage() {
       return;
     }
     
-    // After potential analysis, get the latest entry data
     const finalEntryForEditing = allImageStarData.find(e => e.id === updatedEntryForAnalysisCheck.id);
 
     if (finalEntryForEditing && finalEntryForEditing.isAnalyzed && finalEntryForEditing.analysisDimensions) {
@@ -821,16 +825,12 @@ export default function AstroStackerPage() {
 
     addLog(`Applying star selection from image ID ${sourceImageIdForApplyToAll} to all other images.`);
     setAllImageStarData(prev => prev.map(entry => {
-      // Only apply if the target image's dimensions match the source's analysis dimensions.
-      // This is a safeguard if "Apply to All" is used with images of different (potentially downscaled) sizes.
-      // A more advanced approach might try to scale stars, but that's complex.
       if (entry.id !== sourceImageIdForApplyToAll && 
           entry.analysisDimensions.width === analysisDimensionsToApplyToAll.width &&
           entry.analysisDimensions.height === analysisDimensionsToApplyToAll.height) {
         return {
           ...entry,
           analysisStars: [...starsToApplyToAll],
-          // analysisDimensions remain as they are, they should match
           starSelectionMode: 'manual' as StarSelectionMode,
           userReviewed: true, 
           isAnalyzed: true, 
@@ -894,34 +894,42 @@ export default function AstroStackerPage() {
     addLog(`Initial setup complete. Progress: ${PROGRESS_INITIAL_SETUP}%.`);
 
     const updatedStarDataForStacking = [...allImageStarData];
-    let analysisRequiredAndFailed = false;
 
+    addLog(`Starting pre-stack analysis for ${updatedStarDataForStacking.length} images if needed...`);
     for (let i = 0; i < updatedStarDataForStacking.length; i++) {
         let entry = updatedStarDataForStacking[i];
         if (!entry.isAnalyzed && !entry.isAnalyzing) {
-            addLog(`Image ${entry.file.name} not analyzed. Analyzing now...`);
+            addLog(`Image ${entry.file.name} (${entry.id}) not analyzed. Analyzing now...`);
             
-            // Temporarily update state for this specific entry for UI feedback
-            setAllImageStarData(prev => prev.map((e, idx) => idx === i ? {...e, isAnalyzing: true} : e));
+            setAllImageStarData(prev => prev.map((e) => e.id === entry.id ? {...e, isAnalyzing: true} : e));
             
-            const success = await analyzeImageForStars(i); // This will update allImageStarData internally
+            const analysisSuccess = await analyzeImageForStars(i); 
             
-            // Re-fetch the entry from the (potentially updated by analyzeImageForStars) state
-            const analyzedEntry = allImageStarData.find(e => e.id === entry.id); 
+            const potentiallyUpdatedEntryFromState = allImageStarData.find(e => e.id === entry.id);
 
-            if (!success || !analyzedEntry) {
-                const analyzeFailMsg = `Failed to analyze ${entry.file.name} during pre-stack check. Cannot proceed.`;
-                addLog(`[ERROR] ${analyzeFailMsg}`);
-                toast({ title: "Stacking Aborted", description: analyzeFailMsg, variant: "destructive"});
-                analysisRequiredAndFailed = true;
-                break;
+            if (analysisSuccess && potentiallyUpdatedEntryFromState && potentiallyUpdatedEntryFromState.isAnalyzed) {
+                addLog(`Analysis successful for ${entry.file.name}. isAnalyzed: ${potentiallyUpdatedEntryFromState.isAnalyzed}`);
+                updatedStarDataForStacking[i] = { ...potentiallyUpdatedEntryFromState };
+                entry = updatedStarDataForStacking[i];
+            } else {
+                const analyzeFailMsg = `Analysis failed for ${entry.file.name}. It will be processed with fallback alignment.`;
+                addLog(`[WARN] ${analyzeFailMsg} (Details: analysisSuccess=${analysisSuccess}, entryFound=${!!potentiallyUpdatedEntryFromState}, entryAnalyzed=${potentiallyUpdatedEntryFromState?.isAnalyzed})`);
+                toast({ title: `Analysis Warning for ${entry.file.name}`, description: analyzeFailMsg, variant: "default"});
+                
+                updatedStarDataForStacking[i] = { 
+                    ...(potentiallyUpdatedEntryFromState || entry),
+                    isAnalyzed: false, 
+                    isAnalyzing: false, 
+                    analysisStars: [], 
+                    initialAutoStars: [] 
+                };
+                entry = updatedStarDataForStacking[i];
             }
-            entry = analyzedEntry; // Use the fully updated entry
-            updatedStarDataForStacking[i] = entry;
+             setAllImageStarData(prev => prev.map((e) => e.id === entry.id ? {...e, isAnalyzing: false, isAnalyzed: entry.isAnalyzed } : e));
         }
 
         if (entry.starSelectionMode === 'auto') {
-            if (!entry.analysisStars || entry.analysisStars.length === 0 || entry.analysisStars !== entry.initialAutoStars) {
+            if (JSON.stringify(entry.analysisStars) !== JSON.stringify(entry.initialAutoStars)) {
                  updatedStarDataForStacking[i] = { ...entry, analysisStars: [...entry.initialAutoStars] };
                  addLog(`For auto mode image ${entry.file.name}, ensuring analysis stars are set from initial auto-detected (${entry.initialAutoStars.length} stars).`);
             }
@@ -933,7 +941,7 @@ export default function AstroStackerPage() {
                 } else if (entry.analysisStars && entry.analysisStars.length > 0) {
                     addLog(`For unreviewed manual image ${entry.file.name}, using its existing ${entry.analysisStars.length} analysis stars.`);
                 } else {
-                     addLog(`For unreviewed manual image ${entry.file.name}, no stars available (neither analysisStars nor initialAutoStars).`);
+                     addLog(`For unreviewed manual image ${entry.file.name}, no stars available. Will use fallback alignment.`);
                 }
             } else {
                  addLog(`For reviewed manual image ${entry.file.name}, using its ${entry.analysisStars.length} user-confirmed stars.`);
@@ -942,15 +950,9 @@ export default function AstroStackerPage() {
          await yieldToEventLoop(10);
     }
 
-    if (analysisRequiredAndFailed) {
-        setIsProcessingStack(false);
-        setProgressPercent(0);
-        setAllImageStarData(prev => prev.map(e => ({...e, isAnalyzing: false}))); // Reset all analyzing flags
-        return;
-    }
-    // Ensure allImageStarData reflects these pre-stacking updates if any were made.
     setAllImageStarData(updatedStarDataForStacking);
-    await yieldToEventLoop(100); // Allow state to settle
+    addLog("Pre-stack analysis and star-list preparation finished.");
+    await yieldToEventLoop(100); 
 
     try {
       let imageElements: HTMLImageElement[] = [];
@@ -988,7 +990,6 @@ export default function AstroStackerPage() {
         return;
       }
 
-      // Target dimensions are based on the (potentially downscaled) first image's analysisDimensions
       let targetWidth = firstImageEntry.analysisDimensions.width;
       let targetHeight = firstImageEntry.analysisDimensions.height;
       addLog(`Target stacking dimensions (from first image's analysisDimensions): ${targetWidth}x${targetHeight}.`);
@@ -1034,19 +1035,19 @@ export default function AstroStackerPage() {
 
       addLog(`Starting centroid calculation for ${imageElements.length} images...`);
       for (let i = 0; i < imageElements.length; i++) {
-        const imgEl = imageElements[i]; // Image element from previewUrl (potentially downscaled)
-        const entryData = allImageStarData[i]; // Corresponding entry from state
+        const imgEl = imageElements[i]; 
+        const entryData = allImageStarData[i]; 
         const fileNameForLog = entryData.file.name;
         let finalScaledCentroid: { x: number; y: number } | null = null;
         let method = "unknown";
-
-        // entryData.analysisDimensions IS the dimensions of imgEl here
-        if (!imgEl || imgEl.naturalWidth === 0 || imgEl.naturalHeight === 0 || !entryData.analysisDimensions) {
-            const skipMsg = `Skipping centroid for invalid image/data ${i}: ${fileNameForLog}. Using target geometric center.`;
+        
+        if (!imgEl || imgEl.naturalWidth === 0 || imgEl.naturalHeight === 0 || !entryData.analysisDimensions || !entryData.isAnalyzed) {
+            const reason = !entryData.isAnalyzed ? "analysis failed or skipped" : "invalid image element or data";
+            const skipMsg = `Centroid for ${fileNameForLog} (${reason}): using target geometric center.`;
             console.warn(skipMsg);
             addLog(`[ALIGN WARN] ${skipMsg}`);
             finalScaledCentroid = { x: targetWidth / 2, y: targetHeight / 2 };
-            method = "invalid_element_or_data_fallback";
+            method = `${reason}_geometric_fallback`;
             centroids.push(finalScaledCentroid);
             addLog(`[ALIGN] Image ${i} (${fileNameForLog}) centroid (scaled to target): ${finalScaledCentroid.x.toFixed(2)}, ${finalScaledCentroid.y.toFixed(2)} (Method: ${method})`);
             await yieldToEventLoop(dynamicDelayMs);
@@ -1060,7 +1061,6 @@ export default function AstroStackerPage() {
           const starsForCentroid = entryData.analysisStars;
           addLog(`[ALIGN] Analyzing image ${i} (${fileNameForLog}): ${analysisWidth}x${analysisHeight} using ${starsForCentroid.length} stars (Mode: ${entryData.starSelectionMode}, Reviewed: ${entryData.userReviewed}).`);
           
-          // Stars are already relative to analysisDimensions. No scaling needed for centroid calculation.
           let analysisImageCentroid = calculateStarArrayCentroid(starsForCentroid, addLog);
 
           if (analysisImageCentroid) {
@@ -1077,21 +1077,12 @@ export default function AstroStackerPage() {
             tempAnalysisCanvasForFallback.width = analysisWidth;
             tempAnalysisCanvasForFallback.height = analysisHeight;
             tempAnalysisCtxForFallback.clearRect(0, 0, analysisWidth, analysisHeight);
-            // Draw imgEl (which is from previewUrl, already at analysisDimensions)
             tempAnalysisCtxForFallback.drawImage(imgEl, 0, 0, analysisWidth, analysisHeight);
             const fallbackImageData = tempAnalysisCtxForFallback.getImageData(0, 0, analysisWidth, analysisHeight);
             analysisImageCentroid = calculateBrightnessCentroid(fallbackImageData, addLog);
           }
 
           if (analysisImageCentroid) {
-            // Centroid is in analysisDimensions space. Scale it to targetDimensions space if necessary.
-            // This is only needed if current image's analysisDimensions differ from targetWidth/Height.
-            // All images are drawn onto the target canvas *at* targetWidth/Height for stacking,
-            // so the centroid should be scaled relative to how the image itself is scaled when drawn.
-            // Since we draw each image with ctx.drawImage(img, dx, dy, targetWidth, targetHeight),
-            // the image is effectively stretched/shrunk to target dimensions.
-            // The centroid must thus be scaled from its native space (analysisWidth, analysisHeight)
-            // to the target space (targetWidth, targetHeight).
              finalScaledCentroid = {
                 x: (analysisImageCentroid.x / analysisWidth) * targetWidth,
                 y: (analysisImageCentroid.y / analysisHeight) * targetHeight,
@@ -1147,8 +1138,8 @@ export default function AstroStackerPage() {
 
         let imagesContributingToBand = 0;
         for (let i = 0; i < imageElements.length; i++) {
-          const img = imageElements[i]; // This is the HTMLImageElement from previewUrl
-          const currentCentroid = centroids[i]; // This is already scaled to target space
+          const img = imageElements[i]; 
+          const currentCentroid = centroids[i]; 
 
           if (!img || img.naturalWidth === 0 || img.naturalHeight === 0) {
             addLog(`[STACK SKIP] Skipping invalid image element ${i} during band processing.`);
@@ -1166,8 +1157,6 @@ export default function AstroStackerPage() {
           }
 
           ctx.clearRect(0, 0, targetWidth, targetHeight);
-          // Draw the image (img, which is already at its analysisDimensions)
-          // scaled to fit the targetWidth and targetHeight, applying the offset.
           ctx.drawImage(img, dx, dy, targetWidth, targetHeight); 
 
           try {
@@ -1295,7 +1284,7 @@ export default function AstroStackerPage() {
       setStackedImage(null);
     } finally {
       setIsProcessingStack(false);
-      setProgressPercent(0); // Reset progress here, or after a short delay if preferred
+      setProgressPercent(0); 
       setAllImageStarData(prev => prev.map(e => ({...e, isAnalyzing: false})));
       addLog("Image stacking process finished.");
       console.log("Image stacking process finished.");
@@ -1599,8 +1588,8 @@ export default function AstroStackerPage() {
         <ImagePostProcessEditor
           isOpen={showPostProcessEditor}
           onClose={() => setShowPostProcessEditor(false)}
-          baseImageUrl={imageForPostProcessing} // This should be the raw stacked image
-          editedImageUrl={editedPreviewUrl} // This is for the live preview in editor
+          baseImageUrl={imageForPostProcessing} 
+          editedImageUrl={editedPreviewUrl} 
           brightness={brightness}
           setBrightness={setBrightness}
           exposure={exposure}
