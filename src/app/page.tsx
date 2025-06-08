@@ -698,7 +698,7 @@ export default function AstroStackerPage() {
       addLog(`Analyzing ${updatedEntryForAnalysisCheck.file.name} before editing stars.`);
       const analysisSuccess = await analyzeImageForStars(imageIndex);
       if (!analysisSuccess) {
-        toast({title: "Analysis Required", description: `Could not analyze ${updatedEntryForAnalysisCheck.file.name}. Please try again or check logs.`, variant: "destructive"});
+        // toast({title: "Analysis Required", description: `Could not analyze ${updatedEntryForAnalysisCheck.file.name}. Please try again or check logs.`, variant: "destructive"});
         return;
       }
       await yieldToEventLoop(100);
@@ -723,7 +723,8 @@ export default function AstroStackerPage() {
       setIsStarEditingMode(true);
       addLog(`Opened star editor for ${finalEntryForEditing.file.name}. Mode: Manual. Initial stars for edit: ${starsToEdit.length}. Dim: ${finalEntryForEditing.analysisDimensions.width}x${finalEntryForEditing.analysisDimensions.height}`);
     } else {
-       toast({title: "Cannot Edit Stars", description: `Analysis or dimension data for ${finalEntryForEditing?.file.name || 'image'} is not complete or failed.`, variant: "destructive"});
+       // Removed toast: toast({title: "Cannot Edit Stars", description: `Analysis or dimension data for ${finalEntryForEditing?.file.name || 'image'} is not complete or failed.`, variant: "destructive"});
+       console.warn(`Cannot edit stars for ${finalEntryForEditing?.file.name || 'image'}: Analysis or dimension data incomplete or failed.`);
     }
   };
 
