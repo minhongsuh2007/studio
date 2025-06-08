@@ -21,6 +21,7 @@ interface ImageQueueItemProps {
   onToggleStarSelectionMode: () => void;
   isProcessing: boolean; 
   isAnalyzed: boolean;
+  analysisDimensions: { width: number; height: number };
 }
 
 export function ImageQueueItem({
@@ -34,7 +35,8 @@ export function ImageQueueItem({
   onEditStars,
   onToggleStarSelectionMode,
   isProcessing,
-  isAnalyzed
+  isAnalyzed,
+  analysisDimensions
 }: ImageQueueItemProps) {
   const isManualMode = starSelectionMode === 'manual';
 
@@ -78,7 +80,7 @@ export function ImageQueueItem({
          )}
       </CardContent>
       <div className="p-2 text-xs text-muted-foreground truncate bg-card-foreground/5 flex-grow">
-        {file.name}
+        {file.name} ({analysisDimensions.width}x{analysisDimensions.height})
       </div>
       <CardFooter className="p-2 border-t flex flex-col space-y-2">
         <div className="flex items-center justify-between w-full">
@@ -101,7 +103,7 @@ export function ImageQueueItem({
             variant="outline"
             size="sm"
             onClick={onEditStars}
-            disabled={isProcessing || isAnalyzing }
+            disabled={isProcessing || isAnalyzing || !analysisDimensions } // Disable if no dimensions yet
             className="w-full"
             title={isAnalyzing ? "Analyzing..." : (isManualMode ? (isReviewed ? "Re-edit Manual Stars" : "Edit Manual Stars") : "Review/Edit (Switches to Manual)")}
           >
@@ -116,4 +118,3 @@ export function ImageQueueItem({
     </Card>
   );
 }
-
