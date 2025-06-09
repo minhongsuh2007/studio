@@ -17,7 +17,7 @@ export const translations: Translations = {
     uploadAndConfigure: 'Upload & Configure Images',
     cardDescription: "Add PNG, JPG, GIF, WEBP, or FITS files. FITS files are processed using a built-in parser. Images are aligned using star centroids or brightness. Optionally downscale large images on upload. Stacking uses processed resolution. Median or Sigma Clip methods available. DNG files may require manual pre-conversion. TIFF processing is currently disabled.",
     creditsLine1: 'AstroStacker © {year}',
-    creditsLine2Part1: 'Created by Min Hong Seo (암흑광자) with invaluable help from 천관사, Saturn, 구구, Plex, Latte, 얼음세상, 뉴비, 오르트, 지민, 모닥별, 배추빙수, 응애, and many others.',
+    creditsLine2Part1: 'Created by Min Hong Seo (암흑광자) with invaluable help from 천관사, Saturn, 구구, Flec, Latte, 얼음세상, 뉴비, 오르트, 지민, 모닥별, 배추빙수, 응애, and many others.',
     switchToEnglish: 'EN',
     switchToKorean: 'KO',
     switchToChinese: 'ZH',
@@ -177,7 +177,7 @@ export const translations: Translations = {
     uploadAndConfigure: '上传和配置图像',
     cardDescription: "添加 PNG, JPG, GIF, WEBP, 或 FITS 文件。FITS 文件使用内置解析器进行处理。图像使用星点质心或亮度对齐。上传时可选择缩小大图像。叠加使用处理后的分辨率。可使用中值或Sigma裁剪方法。DNG文件可能需要手动预转换。TIFF 处理当前已禁用。",
     creditsLine1: '天文图像叠加器 © {year}',
-    creditsLine2Part1: '由 Min Hong Seo (암흑광자) 在 천관사, Saturn, 구구, Plex, Latte, 얼음세상, 뉴비, 오르트, 지민, 모닥별, 배추빙수, 응애 及许多其他人的宝贵帮助下创建。',
+    creditsLine2Part1: '由 Min Hong Seo (암흑광자) 在 천관사, Saturn, 구구, Flec, Latte, 얼음세상, 뉴비, 오르트, 지민, 모닥별, 배추빙수, 응애 及许多其他人的宝贵帮助下创建。',
     switchToEnglish: '英',
     switchToKorean: '韩',
     switchToChinese: '中',
@@ -258,6 +258,8 @@ export const defaultLocale: Locale = 'en';
 
 export const getTranslations = (locale: Locale) => translations[locale] || translations[defaultLocale];
 
+
+    
 
     
 
