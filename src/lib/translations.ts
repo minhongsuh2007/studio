@@ -17,7 +17,7 @@ export const translations: Translations = {
     uploadAndConfigure: 'Upload & Configure Images',
     cardDescription: "Add PNG, JPG, GIF, WEBP, or FITS files. FITS files are processed using a built-in parser. Images are aligned using star centroids or brightness. Optionally downscale large images on upload. Stacking uses processed resolution. Median or Sigma Clip methods available. DNG files may require manual pre-conversion. TIFF processing is currently disabled.",
     creditsLine1: 'AstroStacker © {year}',
-    creditsLine2Part1: 'Created by Min Hong Seo (암흑광자) with invaluable help from 천관사, Saturn, 구구, Flec, Latte, 얼음세상, 뉴비, 오르트, 지민, 모닥별, 배추빙수, 응애, and many others.',
+    creditsLine2Part1: 'Created by Min Hong Seo (암흑광자) with invaluable help from 천관사, Saturn, 구구, Flec, Latte, 얼음세상, 뉴비, 오르트, 지민, 모닥별, 배추빙수, 응애, Kangwoo, and many others.',
     switchToEnglish: 'EN',
     switchToKorean: 'KO',
     switchToChinese: 'ZH',
@@ -87,7 +87,7 @@ export const translations: Translations = {
     uploadAndConfigure: '이미지 업로드 및 설정',
     cardDescription: "PNG, JPG, GIF, WEBP, 또는 FITS 파일을 추가하세요. FITS 파일은 내장 파서를 사용하여 처리됩니다. 이미지는 별 중심 또는 밝기 중심으로 정렬됩니다. 업로드 시 큰 이미지를 선택적으로 축소할 수 있습니다. 스태킹은 처리된 해상도를 사용합니다. 중간값 또는 시그마 클립 방법을 사용할 수 있습니다. DNG 파일은 수동 사전 변환이 필요할 수 있습니다. TIFF 처리는 현재 비활성화되어 있습니다.",
     creditsLine1: '아스트로스태커 © {year}',
-    creditsLine2Part1: '천관사님, 새턴님, 구구님, Flec님, 라떼님, 얼음세상님, 늅님, 오르트님, 지민님, 모닥별님, 배추빙수님, 응애님 그리고 다른 여러 분들의 도움으로 서민홍(암흑광자) 에 의해 제작되었습니다.',
+    creditsLine2Part1: '천관사님, 새턴님, 구구님, 플렉님, 라떼님, 얼음세상님, 늅님, 오르트님, 지민님, 모닥별님, 배추빙수님, 응애님, 강우님 그리고 다른 여러 분들의 도움으로 서민홍(암흑광자) 에 의해 제작되었습니다.',
     switchToEnglish: '영',
     switchToKorean: '한',
     switchToChinese: '중',
@@ -156,7 +156,7 @@ export const translations: Translations = {
     uploadAndConfigure: '上传和配置图像',
     cardDescription: "添加 PNG, JPG, GIF, WEBP, 或 FITS 文件。FITS 文件使用内置解析器进行处理。图像使用星点质心或亮度对齐。上传时可选择缩小大图像。叠加使用处理后的分辨率。可使用中值或Sigma裁剪方法。DNG文件可能需要手动预转换。TIFF 处理当前已禁用。",
     creditsLine1: '天文图像叠加器 © {year}',
-    creditsLine2Part1: '由 Min Hong Seo (암흑광자) 在 천관사, Saturn, 구구, Flec, Latte, 얼음세상, 뉴비, 오르트, 지민, 모닥별, 배추빙수, 응애 及许多其他人的宝贵帮助下创建。',
+    creditsLine2Part1: '由 Min Hong Seo (암흑광자) 在 천관사, Saturn, 구구, Flec, Latte, 얼음세상, 뉴비, 오르트, 지민, 모닥별, 배추빙수, 응애, Kangwoo 及许多其他人的宝贵帮助下创建。',
     switchToEnglish: '英',
     switchToKorean: '韩',
     switchToChinese: '中',
@@ -225,3 +225,4 @@ export const translations: Translations = {
 export const defaultLocale: Locale = 'en';
 
 export const getTranslations = (locale: Locale) => translations[locale] || translations[defaultLocale];
+
