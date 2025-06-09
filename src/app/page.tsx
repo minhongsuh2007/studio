@@ -78,6 +78,8 @@ const BRIGHTNESS_CENTROID_FALLBACK_THRESHOLD_GRAYSCALE_EQUIVALENT = 30;
 
 const STAR_ANNOTATION_MAX_DISPLAY_WIDTH = 500;
 const STAR_CLICK_TOLERANCE_ON_DISPLAY_CANVAS_PX = 10;
+const MANUAL_STAR_CLICK_CENTROID_RADIUS = 10; // Pixels in analysis image space
+const MANUAL_STAR_CLICK_CENTROID_BRIGHTNESS_THRESHOLD = 30; // Grayscale brightness for local centroid
 
 const IS_LARGE_IMAGE_THRESHOLD_MP = 12;
 const MAX_DIMENSION_DOWNSCALED = 2048;
@@ -286,6 +288,62 @@ function calculateBrightnessCentroid(imageData: ImageData, addLog: (message: str
       y: weightedY / totalBrightness,
     };
 }
+
+function calculateLocalBrightnessCentroid(
+  fullImageData: ImageData,
+  cropRect: { x: number; y: number; width: number; height: number },
+  addLog: (message: string) => void,
+  brightnessThreshold: number = MANUAL_STAR_CLICK_CENTROID_BRIGHTNESS_THRESHOLD
+): { x: number; y: number } | null {
+  const { data: fullData, width: fullWidth, height: fullHeight } = fullImageData;
+  const { x: cropOriginX, y: cropOriginY, width: cropW, height: cropH } = cropRect;
+
+  let totalBrightnessVal = 0;
+  let weightedXSum = 0; // X relative to cropRect.x
+  let weightedYSum = 0; // Y relative to cropRect.y
+  let brightPixelCount = 0;
+
+  if (cropW <= 0 || cropH <= 0) {
+    addLog(`[LOCAL CENTROID WARN] Crop window has zero or negative dimensions (${cropW}x${cropH}). Cannot calculate centroid.`);
+    return null;
+  }
+
+  for (let yInCrop = 0; yInCrop < cropH; yInCrop++) {
+    for (let xInCrop = 0; xInCrop < cropW; xInCrop++) {
+      const currentFullImageX = cropOriginX + xInCrop;
+      const currentFullImageY = cropOriginY + yInCrop;
+
+      // Boundary checks for full image coordinates
+      if (currentFullImageX < 0 || currentFullImageX >= fullWidth || currentFullImageY < 0 || currentFullImageY >= fullHeight) {
+        continue; // Skip pixels outside the bounds of the full image data
+      }
+
+      const pixelStartIndex = (currentFullImageY * fullWidth + currentFullImageX) * 4;
+      const r = fullData[pixelStartIndex];
+      const g = fullData[pixelStartIndex + 1];
+      const b = fullData[pixelStartIndex + 2];
+      const pixelBrightness = 0.299 * r + 0.587 * g + 0.114 * b; // Grayscale brightness
+
+      if (pixelBrightness > brightnessThreshold) {
+        weightedXSum += xInCrop * pixelBrightness; // xInCrop is relative to the crop window's origin
+        weightedYSum += yInCrop * pixelBrightness; // yInCrop is relative to the crop window's origin
+        totalBrightnessVal += pixelBrightness;
+        brightPixelCount++;
+      }
+    }
+  }
+
+  if (totalBrightnessVal === 0 || brightPixelCount === 0) {
+    addLog(`[LOCAL CENTROID WARN] No bright pixels (threshold > ${brightnessThreshold}) found in local area [${cropOriginX},${cropOriginY},${cropW},${cropH}]. Failed to find local centroid.`);
+    return null;
+  }
+  
+  return {
+    x: weightedXSum / totalBrightnessVal, // Centroid X relative to the crop window's origin
+    y: weightedYSum / totalBrightnessVal, // Centroid Y relative to the crop window's origin
+  };
+}
+
 
 const getMedian = (arr: number[]): number => {
   if (!arr.length) return 0;
@@ -563,6 +621,8 @@ export default function AstroStackerPage() {
 
   const [isStarEditingMode, setIsStarEditingMode] = useState(false);
   const [currentEditingImageIndex, setCurrentEditingImageIndex] = useState<number | null>(null);
+  const [currentEditingImageData, setCurrentEditingImageData] = useState<ImageData | null>(null);
+
 
   const [showApplyStarOptionsMenu, setShowApplyStarOptionsMenu] = useState(false);
   const [sourceImageForApplyMenu, setSourceImageForApplyMenu] = useState<SourceImageForApplyMenu | null>(null);
@@ -1028,6 +1088,8 @@ export default function AstroStackerPage() {
     const currentEntry = allImageStarData[imageIndex];
     if (!currentEntry) return;
 
+    setCurrentEditingImageData(null); // Clear previous image data if any
+
     let entryForEditing = {...currentEntry};
 
     if (entryForEditing.starSelectionMode === 'auto' ||
@@ -1043,6 +1105,7 @@ export default function AstroStackerPage() {
       await yieldToEventLoop(10);
     }
 
+    // Re-fetch entry from state after potential update
     const updatedEntryForAnalysisCheck = allImageStarData.find(e => e.id === entryForEditing.id) || entryForEditing;
 
     if (!updatedEntryForAnalysisCheck.isAnalyzed && !updatedEntryForAnalysisCheck.isAnalyzing) {
@@ -1051,12 +1114,13 @@ export default function AstroStackerPage() {
       if (!analysisSuccess) {
         return;
       }
-      await yieldToEventLoop(100);
+      await yieldToEventLoop(100); // Allow state to update post-analysis
     } else if (updatedEntryForAnalysisCheck.isAnalyzing) {
       toast({title: "Analysis in Progress", description: `Still analyzing ${updatedEntryForAnalysisCheck.file.name}. Please wait.`});
       return;
     }
 
+    // Fetch the latest entry data again, especially analysisDimensions which are set by analyzeImageForStars
     const finalEntryForEditing = allImageStarData.find(e => e.id === updatedEntryForAnalysisCheck.id);
 
     if (finalEntryForEditing && finalEntryForEditing.isAnalyzed && finalEntryForEditing.analysisDimensions) {
@@ -1069,19 +1133,88 @@ export default function AstroStackerPage() {
       setAllImageStarData(prev => prev.map((e, idx) =>
           idx === imageIndex ? {...e, analysisStars: starsToEdit, starSelectionMode: 'manual' } : e
       ));
-      setCurrentEditingImageIndex(imageIndex);
-      setIsStarEditingMode(true);
-      addLog(`Opened star editor for ${finalEntryForEditing.file.name}. Mode: Manual. Initial stars for edit: ${starsToEdit.length}. Dim: ${finalEntryForEditing.analysisDimensions.width}x${finalEntryForEditing.analysisDimensions.height}`);
+      
+      // Load ImageData for local centroid calculation
+      const imgToEdit = new Image();
+      imgToEdit.onload = () => {
+          const tempCanvas = document.createElement('canvas');
+          // Use analysisDimensions as these are the dimensions the star coordinates relate to
+          tempCanvas.width = finalEntryForEditing.analysisDimensions.width;
+          tempCanvas.height = finalEntryForEditing.analysisDimensions.height;
+          const tempCtx = tempCanvas.getContext('2d', { willReadFrequently: true });
+          if (tempCtx) {
+              tempCtx.drawImage(imgToEdit, 0, 0, tempCanvas.width, tempCanvas.height);
+              setCurrentEditingImageData(tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height));
+              addLog(`Loaded ImageData (${tempCanvas.width}x${tempCanvas.height}) for ${finalEntryForEditing.file.name} for precise star editing.`);
+          } else {
+              setCurrentEditingImageData(null);
+              addLog(`[WARN] Could not get canvas context to load ImageData for ${finalEntryForEditing.file.name}. Precise click disabled.`);
+              toast({title: "Warning", description: `Could not prepare image data for ${finalEntryForEditing.file.name}. Precise click refinement disabled.`});
+          }
+          setCurrentEditingImageIndex(imageIndex);
+          setIsStarEditingMode(true);
+          addLog(`Opened star editor for ${finalEntryForEditing.file.name}. Mode: Manual. Initial stars for edit: ${starsToEdit.length}. Dim: ${finalEntryForEditing.analysisDimensions.width}x${finalEntryForEditing.analysisDimensions.height}`);
+      };
+      imgToEdit.onerror = () => {
+          setCurrentEditingImageData(null);
+          addLog(`[ERROR] Failed to load image ${finalEntryForEditing.file.name} for ImageData preparation for editor.`);
+          toast({title: "Editor Error", description: `Could not load image ${finalEntryForEditing.file.name} for editing stars.`, variant: "destructive"});
+          setIsStarEditingMode(false); // Don't open editor if image can't load
+      };
+      imgToEdit.src = finalEntryForEditing.previewUrl; // This should be the URL corresponding to analysisDimensions
+
     } else {
-       console.warn(`Cannot edit stars for ${finalEntryForEditing?.file.name || 'image'}: Analysis or dimension data incomplete or failed.`);
+       console.warn(`Cannot edit stars for ${finalEntryForEditing?.file?.name || 'image'}: Analysis data, dimension data, or preview URL might be incomplete or loading failed.`);
+       toast({title: "Error", description: `Could not prepare ${finalEntryForEditing?.file?.name || 'image'} for star editing. Analysis data may be missing.`, variant: "destructive"});
     }
   };
 
-  const handleStarAnnotationClick = (clickedX: number, clickedY: number) => {
+  const handleStarAnnotationClick = (clickedX_analysis: number, clickedY_analysis: number) => {
     if (currentEditingImageIndex === null) return;
 
     const entry = allImageStarData[currentEditingImageIndex];
-    if (!entry || !entry.analysisDimensions) return;
+    if (!entry || !entry.analysisDimensions) {
+      addLog("[STAR EDIT ERROR] No valid image entry or analysis dimensions for star annotation.");
+      return;
+    }
+
+    let finalStarX = clickedX_analysis;
+    let finalStarY = clickedY_analysis;
+
+    if (currentEditingImageData) {
+      const searchRadius = MANUAL_STAR_CLICK_CENTROID_RADIUS;
+      const cropRectX = Math.max(0, Math.round(clickedX_analysis) - searchRadius);
+      const cropRectY = Math.max(0, Math.round(clickedY_analysis) - searchRadius);
+      
+      const cropRectWidth = Math.min(
+        currentEditingImageData.width - cropRectX, 
+        searchRadius * 2
+      );
+      const cropRectHeight = Math.min(
+        currentEditingImageData.height - cropRectY, 
+        searchRadius * 2
+      );
+
+      if (cropRectWidth > 0 && cropRectHeight > 0) {
+        const localCentroid = calculateLocalBrightnessCentroid(
+          currentEditingImageData,
+          { x: cropRectX, y: cropRectY, width: cropRectWidth, height: cropRectHeight },
+          addLog
+        );
+
+        if (localCentroid) {
+          finalStarX = cropRectX + localCentroid.x;
+          finalStarY = cropRectY + localCentroid.y;
+          addLog(`Refined click from (${clickedX_analysis.toFixed(1)},${clickedY_analysis.toFixed(1)}) to local centroid (${finalStarX.toFixed(1)},${finalStarY.toFixed(1)}) in area of size ${cropRectWidth}x${cropRectHeight} around click.`);
+        } else {
+          addLog(`Local centroid not found near (${clickedX_analysis.toFixed(1)},${clickedY_analysis.toFixed(1)}). Using direct click position.`);
+        }
+      } else {
+         addLog(`Invalid crop window for local centroid (${cropRectWidth}x${cropRectHeight}). Using direct click position.`);
+      }
+    } else {
+      addLog("[STAR EDIT WARN] No ImageData available for local centroid calculation. Using direct click position.");
+    }
 
     const effectiveCanvasDisplayWidth = Math.min(STAR_ANNOTATION_MAX_DISPLAY_WIDTH, entry.analysisDimensions.width);
     const clickToleranceInAnalysisUnits = effectiveCanvasDisplayWidth > 0 ? (STAR_CLICK_TOLERANCE_ON_DISPLAY_CANVAS_PX / effectiveCanvasDisplayWidth) * entry.analysisDimensions.width : STAR_CLICK_TOLERANCE_ON_DISPLAY_CANVAS_PX;
@@ -1091,12 +1224,12 @@ export default function AstroStackerPage() {
       if (idx === currentEditingImageIndex) {
         let starFoundAndRemoved = false;
         const updatedStars = item.analysisStars.filter(star => {
-          const dx = star.x - clickedX;
-          const dy = star.y - clickedY;
+          const dx = star.x - finalStarX; // Use refined coordinates for checking
+          const dy = star.y - finalStarY;
           const distSq = dx * dx + dy * dy;
           if (distSq < dynamicClickToleranceSquared) {
             starFoundAndRemoved = true;
-            addLog(`Removed star at (${star.x.toFixed(0)}, ${star.y.toFixed(0)}) from ${item.file.name}.`);
+            addLog(`Removed star at (${star.x.toFixed(0)}, ${star.y.toFixed(0)}) from ${item.file.name} (click refined to ${finalStarX.toFixed(0)}, ${finalStarY.toFixed(0)}).`);
             return false;
           }
           return true;
@@ -1104,17 +1237,17 @@ export default function AstroStackerPage() {
 
         if (!starFoundAndRemoved) {
           const newStar: Star = {
-            x: clickedX,
-            y: clickedY,
-            brightness: DEFAULT_STAR_BRIGHTNESS_THRESHOLD_COMBINED + 1,
+            x: finalStarX, // Use refined coordinates
+            y: finalStarY,
+            brightness: DEFAULT_STAR_BRIGHTNESS_THRESHOLD_COMBINED + 1, // Default brightness for manually added
             isManuallyAdded: true,
           };
           updatedStars.push(newStar);
-          addLog(`Added manual star at (${clickedX.toFixed(0)}, ${clickedY.toFixed(0)}) to ${item.file.name}. Total stars: ${updatedStars.length}`);
+          addLog(`Added manual star at refined position (${finalStarX.toFixed(0)}, ${finalStarY.toFixed(0)}) to ${item.file.name}. Total stars: ${updatedStars.length}`);
         } else {
           addLog(`Total stars for ${item.file.name} after removal: ${updatedStars.length}`);
         }
-        return { ...item, analysisStars: updatedStars, userReviewed: false };
+        return { ...item, analysisStars: updatedStars, userReviewed: false }; // Mark as not reviewed after edit
       }
       return item;
     }));
@@ -1160,7 +1293,7 @@ export default function AstroStackerPage() {
     ));
     
     setIsStarEditingMode(false);
-    // Do not clear currentEditingImageIndex here, let the ApplyStarOptionsMenu handle it or next step
+    setCurrentEditingImageData(null); // Clear image data
     toast({title: "Stars Confirmed", description: `Star selection saved for ${currentImageName}.`});
 
     if (allImageStarData.length > 1 && confirmedEntry.analysisStars && confirmedEntry.analysisDimensions) {
@@ -1180,17 +1313,10 @@ export default function AstroStackerPage() {
     if (currentEditingImageIndex === null) return; 
 
     const hasNextImage = currentEditingImageIndex < allImageStarData.length - 1;
-    if (!hasNextImage) {
-      // Fallback to "Confirm & Close" behavior if this is the last image
-      // or if the button was somehow clicked when it should have been disabled.
-      addLog("Confirm & Next clicked on last image, behaving as Confirm & Close.");
-      handleConfirmStarsForCurrentImage();
-      return;
-    }
-
+    
     const currentImageEntry = allImageStarData[currentEditingImageIndex];
     const currentImageName = currentImageEntry?.file.name || "current image";
-    addLog(`Confirmed star selection for ${currentImageName} and moving to next. Total stars: ${currentImageEntry?.analysisStars.length}. Mode: Manual.`);
+    addLog(`Confirmed star selection for ${currentImageName} and ${hasNextImage ? 'moving to next' : 'closing (last image)'}. Total stars: ${currentImageEntry?.analysisStars.length}. Mode: Manual.`);
 
     setAllImageStarData(prev => prev.map((entry, idx) =>
       idx === currentEditingImageIndex ? { ...entry, userReviewed: true, starSelectionMode: 'manual' } : entry
@@ -1198,7 +1324,20 @@ export default function AstroStackerPage() {
     
     toast({title: "Stars Confirmed", description: `Star selection saved for ${currentImageName}.`});
 
+    if (!hasNextImage) {
+      setIsStarEditingMode(false);
+      setCurrentEditingImageData(null);
+      setCurrentEditingImageIndex(null);
+      // If "Apply Stars" dialog should show for the last image as well, uncomment below
+      // if (allImageStarData.length > 1 && currentImageEntry.analysisStars && currentImageEntry.analysisDimensions) {
+      //   setSourceImageForApplyMenu({ /* ... */ });
+      //   setShowApplyStarOptionsMenu(true);
+      // }
+      return;
+    }
+
     const nextImageIndex = currentEditingImageIndex + 1;
+    // setCurrentEditingImageData(null) will be handled by handleEditStarsRequest for the next image
     await handleEditStarsRequest(nextImageIndex); 
   };
 
@@ -1229,6 +1368,7 @@ export default function AstroStackerPage() {
     setShowApplyStarOptionsMenu(false);
     setSourceImageForApplyMenu(null);
     setCurrentEditingImageIndex(null);
+    setCurrentEditingImageData(null);
     setIsApplyingStarsFromMenu(false);
   };
   
@@ -1247,6 +1387,7 @@ export default function AstroStackerPage() {
       setShowApplyStarOptionsMenu(false);
       setSourceImageForApplyMenu(null);
       setCurrentEditingImageIndex(null);
+      setCurrentEditingImageData(null);
       return;
     }
   
@@ -1295,12 +1436,14 @@ export default function AstroStackerPage() {
     setShowApplyStarOptionsMenu(false);
     setSourceImageForApplyMenu(null);
     setCurrentEditingImageIndex(null);
+    setCurrentEditingImageData(null);
   };
 
   const handleCancelApplyStarOptionsMenu = () => {
     setShowApplyStarOptionsMenu(false);
     setSourceImageForApplyMenu(null);
-    setCurrentEditingImageIndex(null); // Ensure editor index is cleared if dialog is cancelled
+    setCurrentEditingImageIndex(null); 
+    setCurrentEditingImageData(null);
     addLog("User chose not to apply star selection to other images from the menu.");
   };
 
@@ -2283,7 +2426,7 @@ export default function AstroStackerPage() {
                           <CheckCircle className="mr-2 h-4 w-4" />
                           {t('confirmAndClose')}
                         </Button>
-                        <Button onClick={() => {setIsStarEditingMode(false); setCurrentEditingImageIndex(null);}} variant="ghost" className="w-full text-muted-foreground" disabled={isUiDisabled}>
+                        <Button onClick={() => {setIsStarEditingMode(false); setCurrentEditingImageIndex(null); setCurrentEditingImageData(null);}} variant="ghost" className="w-full text-muted-foreground" disabled={isUiDisabled}>
                             {t('cancelEditing')}
                         </Button>
                       </div>
