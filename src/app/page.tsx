@@ -59,6 +59,7 @@ const STACKING_BAND_HEIGHT = 50;
 const SIGMA_CLIP_THRESHOLD = 2.0;
 const SIGMA_CLIP_ITERATIONS = 2;
 const MIN_STARS_FOR_ALIGNMENT = 3;
+const AUTO_ALIGN_TARGET_STAR_COUNT = 25; // New constant for auto star selection
 
 const PROGRESS_INITIAL_SETUP = 5;
 const PROGRESS_CENTROID_CALCULATION_TOTAL = 30;
@@ -195,43 +196,38 @@ function detectStars(
 
 function calculateStarArrayCentroid(starsInput: Star[], addLog: (message: string) => void): { x: number; y: number } | null {
   if (starsInput.length < MIN_STARS_FOR_ALIGNMENT) {
-     const message = `Not enough stars (${starsInput.length}) detected for star-based centroid. Need at least ${MIN_STARS_FOR_ALIGNMENT}.`;
-     console.warn(message);
+     const message = `Not enough stars (${starsInput.length}) provided for star-based centroid. Need at least ${MIN_STARS_FOR_ALIGNMENT}.`;
      addLog(`[ALIGN] ${message}`);
      return null;
   }
 
-  const sortedStars = [...starsInput].sort((a, b) => b.brightness - a.brightness);
-  const brightestStarsToUse = sortedStars.slice(0, Math.min(starsInput.length, Math.max(MIN_STARS_FOR_ALIGNMENT, MIN_STARS_FOR_ALIGNMENT * 2)));
-
-  const message = `Using ${brightestStarsToUse.length} brightest stars (out of ${starsInput.length} available, min ${MIN_STARS_FOR_ALIGNMENT} required) for centroid.`;
-  console.log(message);
-  addLog(`[ALIGN] ${message}`);
+  // The starsInput are already the selected (e.g., top N brightest for auto, or manual selection)
+  // So, we use all of them for centroid calculation.
+  addLog(`[ALIGN] Calculating centroid from ${starsInput.length} provided stars.`);
 
   let totalBrightness = 0;
   let weightedX = 0;
   let weightedY = 0;
 
-  for (const star of brightestStarsToUse) {
+  for (const star of starsInput) {
     weightedX += star.x * star.brightness;
     weightedY += star.y * star.brightness;
     totalBrightness += star.brightness;
   }
 
   if (totalBrightness === 0) {
-    if (brightestStarsToUse.length > 0) {
-        const warnMsg = "Total brightness of selected brightest stars is zero. Using simple average of their positions.";
-        console.warn(warnMsg);
+    if (starsInput.length > 0) {
+        const warnMsg = "Total brightness of provided stars is zero. Using simple average of their positions.";
         addLog(`[ALIGN WARN] ${warnMsg}`);
         let sumX = 0;
         let sumY = 0;
-        for (const star of brightestStarsToUse) {
+        for (const star of starsInput) {
             sumX += star.x;
             sumY += star.y;
         }
-        return { x: sumX / brightestStarsToUse.length, y: sumY / brightestStarsToUse.length};
+        return { x: sumX / starsInput.length, y: sumY / starsInput.length};
     }
-    addLog(`[ALIGN WARN] Total brightness of selected stars is zero and no stars to average. Cannot calculate star centroid.`);
+    addLog(`[ALIGN WARN] Total brightness of provided stars is zero and no stars to average. Cannot calculate star centroid.`);
     return null;
   }
 
@@ -1299,7 +1295,7 @@ export default function AstroStackerPage() {
     addLog(`Bias Frames: ${useBiasFrames && biasFrameFiles.length > 0 ? `${biasFrameFiles.length} frame(s)` : 'Not Used'}.`);
     addLog(`Dark Frames: ${useDarkFrames && darkFrameFiles.length > 0 ? `${darkFrameFiles.length} frame(s)` : 'Not Used'}.`);
     addLog(`Flat Frames: ${useFlatFrames && flatFrameFiles.length > 0 ? `${flatFrameFiles.length} frame(s)` : 'Not Used'}.`);
-    addLog(`Star Alignment: Min Stars = ${MIN_STARS_FOR_ALIGNMENT}.`);
+    addLog(`Star Alignment: Min Stars = ${MIN_STARS_FOR_ALIGNMENT}, Auto Target Count = ${AUTO_ALIGN_TARGET_STAR_COUNT}.`);
     addLog(`Star Detection Params: Combined Brightness Threshold = ${DEFAULT_STAR_BRIGHTNESS_THRESHOLD_COMBINED}, Local Contrast Factor = ${DEFAULT_STAR_LOCAL_CONTRAST_FACTOR}.`);
     addLog(`Brightness Centroid Fallback Threshold: ${BRIGHTNESS_CENTROID_FALLBACK_THRESHOLD_GRAYSCALE_EQUIVALENT} (grayscale equivalent).`);
 
@@ -1339,10 +1335,11 @@ export default function AstroStackerPage() {
              setAllImageStarData(prev => prev.map((e) => e.id === entry.id ? {...e, isAnalyzing: false, isAnalyzed: entry.isAnalyzed } : e));
         }
 
+        // This block is refined below for auto mode star selection consistency
         if (entry.starSelectionMode === 'auto') {
             if (JSON.stringify(entry.analysisStars) !== JSON.stringify(entry.initialAutoStars)) {
                  updatedStarDataForStacking[i] = { ...entry, analysisStars: [...entry.initialAutoStars] };
-                 addLog(`For auto mode image ${entry.file.name}, ensuring analysis stars are set from initial auto-detected (${entry.initialAutoStars.length} stars).`);
+                 addLog(`For auto mode image ${entry.file.name}, ensuring analysis stars are set from initial auto-detected (${entry.initialAutoStars.length} stars) if different.`);
             }
         } else if (entry.starSelectionMode === 'manual') {
             if (!entry.userReviewed) {
@@ -1431,7 +1428,7 @@ export default function AstroStackerPage() {
                 const biasImgEl = await loadImage(biasFramePreviewUrls[i], biasFrameFiles[i].name);
                 calCtx.clearRect(0,0,targetWidth, targetHeight);
                 calCtx.drawImage(biasImgEl, 0, 0, targetWidth, targetHeight);
-                biasImageDataArrays.push(calCtx.getImageData(0,0,targetWidth, targetHeight));
+                biasImageDataArrays.push(calCtx.getImageData(0,0,targetWidth,targetHeight));
             } catch (e) {
                 addLog(`[ERROR] Failed to load/process bias frame ${biasFrameFiles[i].name}: ${e instanceof Error ? e.message : String(e)}`);
             }
@@ -1511,9 +1508,6 @@ export default function AstroStackerPage() {
               currentFlatFrameImageData = new ImageData(tempFlatData, targetWidth, targetHeight);
               if (i===0) addLog(t('logBiasSubtractedFromFlat', { flatFrameName: flatFrameFiles[i].name }));
             }
-            // Note: Typically darks specific to flats (flat-darks) are used for flats.
-            // Subtracting the master dark (from light frames) might not be ideal here if exposure times differ significantly.
-            // For simplicity, we are only subtracting bias from flats. Users should ideally provide bias-subtracted flats or use flat-darks.
             flatImageDataArrays.push(currentFlatFrameImageData);
           } catch (e) {
             addLog(`[ERROR] Failed to load/process flat frame ${flatFrameFiles[i].name}: ${e instanceof Error ? e.message : String(e)}`);
@@ -1570,6 +1564,7 @@ export default function AstroStackerPage() {
         const fileNameForLog = entryData.file.name;
         let finalScaledCentroid: { x: number; y: number } | null = null;
         let method = "unknown";
+        let starsForCentroidCalculation: Star[] = [];
 
         if (!imgEl || imgEl.naturalWidth === 0 || imgEl.naturalHeight === 0 || !entryData.analysisDimensions || !entryData.isAnalyzed) {
             const reason = !entryData.isAnalyzed ? "analysis failed or skipped" : "invalid image element or data";
@@ -1588,19 +1583,26 @@ export default function AstroStackerPage() {
         const {width: analysisWidth, height: analysisHeight} = entryData.analysisDimensions;
 
         try {
-          const starsForCentroid = entryData.analysisStars;
-          addLog(`[ALIGN] Analyzing image ${i} (${fileNameForLog}): ${analysisWidth}x${analysisHeight} using ${starsForCentroid.length} stars (Mode: ${entryData.starSelectionMode}, Reviewed: ${entryData.userReviewed}).`);
-
-          let analysisImageCentroid = calculateStarArrayCentroid(starsForCentroid, addLog);
+          if (entryData.starSelectionMode === 'auto') {
+              const sortedAutoStars = [...entryData.initialAutoStars].sort((a, b) => b.brightness - a.brightness);
+              starsForCentroidCalculation = sortedAutoStars.slice(0, AUTO_ALIGN_TARGET_STAR_COUNT);
+              addLog(`[ALIGN AUTO] Image ${i} (${fileNameForLog}): Using top ${starsForCentroidCalculation.length} (target: ${AUTO_ALIGN_TARGET_STAR_COUNT}) of ${entryData.initialAutoStars.length} auto-detected stars.`);
+          } else { // manual mode
+              starsForCentroidCalculation = entryData.analysisStars;
+              addLog(`[ALIGN MANUAL] Image ${i} (${fileNameForLog}): Using ${starsForCentroidCalculation.length} manually selected/reviewed stars.`);
+          }
+          
+          addLog(`[ALIGN] Analyzing image ${i} (${fileNameForLog}): ${analysisWidth}x${analysisHeight} with ${starsForCentroidCalculation.length} stars for centroid (Mode: ${entryData.starSelectionMode}, Reviewed: ${entryData.userReviewed}).`);
+          let analysisImageCentroid = calculateStarArrayCentroid(starsForCentroidCalculation, addLog);
 
           if (analysisImageCentroid) {
-              method = entryData.starSelectionMode === 'manual' && entryData.userReviewed ? `user-manual-star-based` : `auto-star-based (${entryData.initialAutoStars.length} initial auto)`;
-              if(entryData.starSelectionMode === 'manual' && !entryData.userReviewed && starsForCentroid.length > 0) {
-                method = `unreviewed-manual-star-based (${starsForCentroid.length} stars)`;
+              method = entryData.starSelectionMode === 'manual' && entryData.userReviewed ? `user-manual-star-based` : `auto-star-based (target ${AUTO_ALIGN_TARGET_STAR_COUNT})`;
+              if(entryData.starSelectionMode === 'manual' && !entryData.userReviewed && starsForCentroidCalculation.length > 0) {
+                method = `unreviewed-manual-star-based (${starsForCentroidCalculation.length} stars)`;
               }
               successfulStarAlignments++;
           } else {
-            const reason = starsForCentroid.length < MIN_STARS_FOR_ALIGNMENT ? `only ${starsForCentroid.length} stars (min ${MIN_STARS_FOR_ALIGNMENT} required)` : "star centroid failed";
+            const reason = starsForCentroidCalculation.length < MIN_STARS_FOR_ALIGNMENT ? `only ${starsForCentroidCalculation.length} stars (min ${MIN_STARS_FOR_ALIGNMENT} required)` : "star centroid failed";
             method = `brightness-based fallback (${reason})`;
             addLog(`[ALIGN WARN] Star-based centroid failed for ${fileNameForLog} (${reason}). Falling back to brightness-based centroid.`);
 
@@ -1714,7 +1716,6 @@ export default function AstroStackerPage() {
           if (masterFlatData) {
             const numPixelsFlat = targetWidth * targetHeight;
             let sumR = 0, sumG = 0, sumB = 0;
-            // Recalculate mean of the masterFlatData (already averaged and bias-subtracted)
             for (let p = 0; p < masterFlatData.length; p += 4) {
               sumR += masterFlatData[p]; sumG += masterFlatData[p+1]; sumB += masterFlatData[p+2];
             }
@@ -1722,10 +1723,10 @@ export default function AstroStackerPage() {
             const meanG = numPixelsFlat > 0 ? sumG / numPixelsFlat : 0;
             const meanB = numPixelsFlat > 0 ? sumB / numPixelsFlat : 0;
             
-            if (meanR > 0 && meanG > 0 && meanB > 0) { // Avoid division by zero if flat is black
+            if (meanR > 0 && meanG > 0 && meanB > 0) { 
                 for (let p = 0; p < calibratedLightData.length; p += 4) {
                 const flatR = masterFlatData[p]; const flatG = masterFlatData[p+1]; const flatB = masterFlatData[p+2];
-                const scaleR = (flatR > 1) ? meanR / flatR : 1; // Prevent division by zero or near-zero
+                const scaleR = (flatR > 1) ? meanR / flatR : 1; 
                 const scaleG = (flatG > 1) ? meanG / flatG : 1;
                 const scaleB = (flatB > 1) ? meanB / flatB : 1;
 
