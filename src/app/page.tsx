@@ -14,7 +14,7 @@ import { ImageQueueItem } from '@/components/astrostacker/ImageQueueItem';
 import { ImagePreview } from '@/components/astrostacker/ImagePreview';
 import { ImagePostProcessEditor } from '@/components/astrostacker/ImagePostProcessEditor';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Star as StarIcon, ListChecks, CheckCircle, RefreshCcw, Edit3, Loader2, Settings2, Orbit, Trash2, CopyCheck, AlertTriangle, Wand2, ShieldOff, UploadCloud, Layers, Baseline, X } from 'lucide-react';
+import { Star as StarIcon, ListChecks, CheckCircle, RefreshCcw, Edit3, Loader2, Settings2, Orbit, Trash2, CopyCheck, AlertTriangle, Wand2, ShieldOff, UploadCloud, Layers, Baseline, X, FileImage } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
@@ -24,7 +24,7 @@ import { StarAnnotationCanvas, type Star } from '@/components/astrostacker/StarA
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Switch } from '@/components/ui/switch';
-import NextImage from 'next/image'; // Aliased import
+import NextImage from 'next/image';
 
 
 interface LogEntry {
@@ -74,7 +74,7 @@ const STAR_CLICK_TOLERANCE_ON_DISPLAY_CANVAS_PX = 10;
 const IS_LARGE_IMAGE_THRESHOLD_MP = 12;
 const MAX_DIMENSION_DOWNSCALED = 2048;
 
-const FLAT_FIELD_CORRECTION_MAX_SCALE_FACTOR = 5; // Prevents extreme amplification
+const FLAT_FIELD_CORRECTION_MAX_SCALE_FACTOR = 5;
 
 const yieldToEventLoop = async (delayMs: number) => {
   await new Promise(resolve => setTimeout(resolve, delayMs));
@@ -91,7 +91,7 @@ const applyImageAdjustmentsToDataURL = async (
   if (!baseDataUrl) return baseDataUrl;
 
   return new Promise((resolve, reject) => {
-    const img = new Image(); // Uses global Image constructor
+    const img = new Image();
     img.onload = () => {
       const canvas = document.createElement('canvas');
       canvas.width = img.naturalWidth;
@@ -359,7 +359,6 @@ const processFitsFileToDataURL_custom = async (file: File, addLog: (message: str
       headerText += block;
       headerOffset = blockEnd;
       if (block.includes("END                                                                             ")) {
-        // Check for standard END card
         break;
       }
       if (headerOffset >= arrayBuffer.byteLength) {
@@ -378,9 +377,8 @@ const processFitsFileToDataURL_custom = async (file: File, addLog: (message: str
       if (parts.length > 1) {
         const key = parts[0].trim();
         const valuePart = parts.slice(1).join("=").trim();
-        headerMap[key] = valuePart.split("/")[0].trim().replace(/'/g, ""); // Remove quotes from string values
+        headerMap[key] = valuePart.split("/")[0].trim().replace(/'/g, "");
       } else {
-         // Handle comment or history cards, or cards without '=' if needed, though typically we only care for keyword=value
          if (card.trim() !== "" && !["COMMENT", "HISTORY", ""].includes(card.substring(0,8).trim())) {
             addLog(`[FITS HEADER WARN] Skipping card without '=': ${card}`);
          }
@@ -396,7 +394,6 @@ const processFitsFileToDataURL_custom = async (file: File, addLog: (message: str
 
     if (naxis >= 1) width = parseInt(headerMap["NAXIS1"]);
     if (naxis >= 2) height = parseInt(headerMap["NAXIS2"]);
-    // For NAXIS > 2 (e.g. data cubes), we'll only process the first 2D plane
     if (naxis > 2) addLog(`[FITS WARN] NAXIS is ${naxis}. Will process first 2D plane (${width}x${height}).`);
 
 
@@ -410,11 +407,9 @@ const processFitsFileToDataURL_custom = async (file: File, addLog: (message: str
 
     const bytesPerPixel = Math.abs(bitpix) / 8;
     const pixelCount = width * height;
-    const rawPixelData = new Float32Array(pixelCount); // Always store raw data as float for consistent processing
+    const rawPixelData = new Float32Array(pixelCount);
 
-    // The actual image data starts after all header blocks.
-    // Each header block is 2880 bytes. The 'offset' variable should point to the start of image data.
-    const imageDataOffset = headerOffset; // This should be the offset after the last header block
+    const imageDataOffset = headerOffset;
     addLog(`[FITS] Image data starting at offset: ${imageDataOffset}`);
 
 
@@ -426,15 +421,15 @@ const processFitsFileToDataURL_custom = async (file: File, addLog: (message: str
     for (let i = 0; i < pixelCount; i++) {
       const pixelByteOffset = imageDataOffset + i * bytesPerPixel;
       try {
-        if (bitpix === 8) { // Unsigned 8-bit integer
+        if (bitpix === 8) {
             rawPixelData[i] = dataView.getUint8(pixelByteOffset);
-        } else if (bitpix === 16) { // Signed 16-bit integer, big-endian
+        } else if (bitpix === 16) {
             rawPixelData[i] = dataView.getInt16(pixelByteOffset, false);
-        } else if (bitpix === 32) { // Signed 32-bit integer, big-endian
+        } else if (bitpix === 32) {
             rawPixelData[i] = dataView.getInt32(pixelByteOffset, false);
-        } else if (bitpix === -32) { // 32-bit float, big-endian
+        } else if (bitpix === -32) {
             rawPixelData[i] = dataView.getFloat32(pixelByteOffset, false);
-        } else if (bitpix === -64) { // 64-bit float, big-endian
+        } else if (bitpix === -64) {
             rawPixelData[i] = dataView.getFloat64(pixelByteOffset, false);
         }
          else {
@@ -457,7 +452,7 @@ const processFitsFileToDataURL_custom = async (file: File, addLog: (message: str
       if (rawPixelData[i] > maxVal) maxVal = rawPixelData[i];
     }
 
-    if (minVal === Infinity || maxVal === -Infinity ) { // All pixels might be NaN or array empty (though width/height checks prevent empty)
+    if (minVal === Infinity || maxVal === -Infinity ) {
         addLog(`[FITS WARN] Could not determine valid min/max for normalization (min: ${minVal}, max: ${maxVal}). Image might be blank or contain only NaNs. Setting to default 0-255 range.`);
         minVal = 0;
         maxVal = 255;
@@ -467,7 +462,7 @@ const processFitsFileToDataURL_custom = async (file: File, addLog: (message: str
 
     const normalizedPixels = new Uint8ClampedArray(pixelCount);
     const range = maxVal - minVal;
-    if (range === 0) { // Handle flat image (all pixels same value)
+    if (range === 0) {
       addLog(`[FITS WARN] Pixel data range is zero (all pixels are ${minVal}). Normalizing to mid-gray (128).`);
       for (let i = 0; i < pixelCount; i++) {
         normalizedPixels[i] = 128;
@@ -492,10 +487,10 @@ const processFitsFileToDataURL_custom = async (file: File, addLog: (message: str
     const imgData = ctx.createImageData(width, height);
     for (let i = 0; i < pixelCount; i++) {
       const val = normalizedPixels[i];
-      imgData.data[i * 4 + 0] = val; // R
-      imgData.data[i * 4 + 1] = val; // G
-      imgData.data[i * 4 + 2] = val; // B
-      imgData.data[i * 4 + 3] = 255; // A
+      imgData.data[i * 4 + 0] = val;
+      imgData.data[i * 4 + 1] = val;
+      imgData.data[i * 4 + 2] = val;
+      imgData.data[i * 4 + 3] = 255;
     }
     ctx.putImageData(imgData, 0, 0);
     addLog(`[FITS] Image data rendered to canvas.`);
@@ -510,6 +505,42 @@ const processFitsFileToDataURL_custom = async (file: File, addLog: (message: str
     console.error("FITS Processing Error:", error);
     return null;
   }
+};
+
+
+const averageImageDataArrays = (imageDataArrays: ImageData[], targetWidth: number, targetHeight: number, addLog: (message: string) => void): Uint8ClampedArray | null => {
+  if (!imageDataArrays || imageDataArrays.length === 0) {
+    addLog("[CAL MASTER] No image data arrays provided for averaging.");
+    return null;
+  }
+
+  const numImages = imageDataArrays.length;
+  const totalPixels = targetWidth * targetHeight;
+  const sumData = new Float32Array(totalPixels * 4); // Accumulate sums as floats
+
+  let validImagesProcessed = 0;
+  for (const imgData of imageDataArrays) {
+    if (imgData.width !== targetWidth || imgData.height !== targetHeight) {
+      addLog(`[CAL MASTER WARN] Skipping image data in average due to dimension mismatch. Expected ${targetWidth}x${targetHeight}, got ${imgData.width}x${imgData.height}. This frame will not be part of the master.`);
+      continue; 
+    }
+    for (let i = 0; i < imgData.data.length; i++) {
+      sumData[i] += imgData.data[i];
+    }
+    validImagesProcessed++;
+  }
+  
+  if (validImagesProcessed === 0) {
+    addLog("[CAL MASTER ERROR] No valid images with matching dimensions found for averaging. Cannot create master frame.");
+    return null;
+  }
+
+  const averagedData = new Uint8ClampedArray(totalPixels * 4);
+  for (let i = 0; i < sumData.length; i++) {
+    averagedData[i] = sumData[i] / validImagesProcessed; // Average and clamp due to Uint8ClampedArray
+  }
+  addLog(`[CAL MASTER] Averaged ${validImagesProcessed} image data arrays into a master frame.`);
+  return averagedData;
 };
 
 
@@ -545,24 +576,24 @@ export default function AstroStackerPage() {
   const [saturation, setSaturation] = useState(100);
   const [isApplyingAdjustments, setIsApplyingAdjustments] = useState(false);
 
-  // Calibration Frame States
-  const [darkFrameFile, setDarkFrameFile] = useState<File | null>(null);
-  const [darkFramePreviewUrl, setDarkFramePreviewUrl] = useState<string | null>(null);
-  const [useDarkFrame, setUseDarkFrame] = useState<boolean>(false);
-  const [originalDarkFrameDimensions, setOriginalDarkFrameDimensions] = useState<{ width: number; height: number } | null>(null);
-  const [isProcessingDarkFrame, setIsProcessingDarkFrame] = useState(false);
+  // Calibration Frame States (Arrays for multiple frames)
+  const [darkFrameFiles, setDarkFrameFiles] = useState<File[]>([]);
+  const [darkFramePreviewUrls, setDarkFramePreviewUrls] = useState<string[]>([]);
+  const [originalDarkFrameDimensionsList, setOriginalDarkFrameDimensionsList] = useState<Array<{ width: number; height: number } | null>>([]);
+  const [useDarkFrames, setUseDarkFrames] = useState<boolean>(false);
+  const [isProcessingDarkFrames, setIsProcessingDarkFrames] = useState(false);
 
-  const [flatFrameFile, setFlatFrameFile] = useState<File | null>(null);
-  const [flatFramePreviewUrl, setFlatFramePreviewUrl] = useState<string | null>(null);
-  const [useFlatFrame, setUseFlatFrame] = useState<boolean>(false);
-  const [originalFlatFrameDimensions, setOriginalFlatFrameDimensions] = useState<{ width: number; height: number } | null>(null);
-  const [isProcessingFlatFrame, setIsProcessingFlatFrame] = useState(false);
+  const [flatFrameFiles, setFlatFrameFiles] = useState<File[]>([]);
+  const [flatFramePreviewUrls, setFlatFramePreviewUrls] = useState<string[]>([]);
+  const [originalFlatFrameDimensionsList, setOriginalFlatFrameDimensionsList] = useState<Array<{ width: number; height: number } | null>>([]);
+  const [useFlatFrames, setUseFlatFrames] = useState<boolean>(false);
+  const [isProcessingFlatFrames, setIsProcessingFlatFrames] = useState(false);
 
-  const [biasFrameFile, setBiasFrameFile] = useState<File | null>(null);
-  const [biasFramePreviewUrl, setBiasFramePreviewUrl] = useState<string | null>(null);
-  const [useBiasFrame, setUseBiasFrame] = useState<boolean>(false);
-  const [originalBiasFrameDimensions, setOriginalBiasFrameDimensions] = useState<{ width: number; height: number } | null>(null);
-  const [isProcessingBiasFrame, setIsProcessingBiasFrame] = useState(false);
+  const [biasFrameFiles, setBiasFrameFiles] = useState<File[]>([]);
+  const [biasFramePreviewUrls, setBiasFramePreviewUrls] = useState<string[]>([]);
+  const [originalBiasFrameDimensionsList, setOriginalBiasFrameDimensionsList] = useState<Array<{ width: number; height: number } | null>>([]);
+  const [useBiasFrames, setUseBiasFrames] = useState<boolean>(false);
+  const [isProcessingBiasFrames, setIsProcessingBiasFrames] = useState(false);
 
 
   const addLog = useCallback((message: string) => {
@@ -680,7 +711,7 @@ export default function AstroStackerPage() {
 
 
         return new Promise<ImageStarEntry | null>((resolveEntry) => {
-            const img = new Image(); // Uses global Image constructor
+            const img = new Image();
             img.onload = async () => {
                 const { naturalWidth, naturalHeight } = img;
                 let processedPreviewUrl = originalPreviewUrl!;
@@ -762,91 +793,86 @@ export default function AstroStackerPage() {
     addLog(`Finished adding files. ${validNewEntries.length} new files queued. Total: ${allImageStarData.length + validNewEntries.length}.`);
   };
 
-  const handleCalibrationFrameAdded = async (
-    files: File[],
+
+ const handleCalibrationFramesAdded = async (
+    uploadedFiles: File[],
     frameType: 'dark' | 'flat' | 'bias',
-    setFileState: React.Dispatch<React.SetStateAction<File | null>>,
-    setPreviewUrlState: React.Dispatch<React.SetStateAction<string | null>>,
-    setOriginalDimensionsState: React.Dispatch<React.SetStateAction<{ width: number; height: number; } | null>>,
+    setFilesState: React.Dispatch<React.SetStateAction<File[]>>,
+    setPreviewUrlsState: React.Dispatch<React.SetStateAction<string[]>>,
+    setOriginalDimensionsListState: React.Dispatch<React.SetStateAction<Array<{ width: number; height: number } | null>>>,
     setIsProcessingState: React.Dispatch<React.SetStateAction<boolean>>
   ) => {
-    if (files.length === 0) return;
-    const file = files[0];
+    if (uploadedFiles.length === 0) return;
     const frameTypeName = frameType.charAt(0).toUpperCase() + frameType.slice(1);
-    addLog(`Processing ${frameType} frame: ${file.name}`);
-
+    addLog(`Processing ${uploadedFiles.length} ${frameType} frame(s)...`);
     setIsProcessingState(true);
-    setFileState(null);
-    setPreviewUrlState(null);
-    setOriginalDimensionsState(null);
 
-    try {
-      const fileType = file.type.toLowerCase();
-      const fileName = file.name.toLowerCase();
-      const acceptedWebTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
-      
-      let previewUrl : string | null = null;
+    const newFiles: File[] = [];
+    const newPreviewUrls: string[] = [];
+    const newOriginalDimensions: Array<{ width: number; height: number } | null> = [];
 
-      if (fileName.endsWith(".fits") || fileName.endsWith(".fit")) {
-        addLog(`[FITS] Detected FITS ${frameTypeName} frame: ${file.name}. Processing with custom parser...`);
-        previewUrl = await processFitsFileToDataURL_custom(file, addLog);
-        if (!previewUrl) {
-            toast({
-                title: `FITS ${frameTypeName} Processing Failed`,
-                description: `Could not process FITS file ${file.name}. Check logs.`,
-                variant: "destructive",
-                duration: 8000,
-            });
-            setIsProcessingState(false);
-            return;
+    for (const file of uploadedFiles) {
+      addLog(`[CAL] Processing ${frameType} frame: ${file.name}`);
+      try {
+        const fileType = file.type.toLowerCase();
+        const fileName = file.name.toLowerCase();
+        const acceptedWebTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+        let previewUrl: string | null = null;
+
+        if (fileName.endsWith(".fits") || fileName.endsWith(".fit")) {
+          addLog(`[FITS] Detected FITS ${frameTypeName} frame: ${file.name}. Custom parsing...`);
+          previewUrl = await processFitsFileToDataURL_custom(file, addLog);
+          if (!previewUrl) {
+            toast({ title: `FITS ${frameTypeName} Fail`, description: `Could not process FITS ${file.name}. Logs have details.`, variant: "destructive" });
+            continue;
+          }
+        } else if (!acceptedWebTypes.includes(fileType)) {
+          addLog(`[ERROR] Unsupported ${frameTypeName} frame ${file.name}. Use JPG, PNG, GIF, WEBP, or FITS.`);
+          toast({ title: `Unsupported ${frameTypeName} Frame`, description: `${file.name} is unsupported.`, variant: "destructive" });
+          continue;
+        } else {
+          previewUrl = await fileToDataURL(file);
         }
-        addLog(`[FITS] Successfully generated preview for ${frameTypeName} frame ${file.name}.`);
-      } else if (!acceptedWebTypes.includes(fileType)) {
-        const unsupportedMsg = `${frameTypeName} frame ${file.name} is unsupported. Use JPG, PNG, GIF, WEBP, or FITS.`;
-        addLog(`[ERROR] ${unsupportedMsg}`);
-        toast({ title: `Unsupported ${frameTypeName} Frame`, description: unsupportedMsg, variant: "destructive" });
-        setIsProcessingState(false);
-        return;
-      } else {
-         previewUrl = await fileToDataURL(file);
+
+        if (!previewUrl) {
+          addLog(`[ERROR] Could not generate preview for ${frameType} frame ${file.name}.`);
+          continue;
+        }
+        
+        const img = new Image();
+        const dimensions = await new Promise<{width: number, height: number} | null>((resolveDim) => {
+            img.onload = () => resolveDim({ width: img.naturalWidth, height: img.naturalHeight });
+            img.onerror = () => {
+                addLog(`[ERROR] Could not load ${frameType} frame ${file.name} to get dimensions.`);
+                toast({ title: `Error Loading ${frameTypeName}`, description: `Could not load ${file.name}.`, variant: "destructive" });
+                resolveDim(null);
+            };
+            img.src = previewUrl!;
+        });
+
+        if (dimensions) {
+            newFiles.push(file);
+            newPreviewUrls.push(previewUrl);
+            newOriginalDimensions.push(dimensions);
+            addLog(t(`log${frameTypeName}FrameLoaded` as any, { fileName: file.name, width: dimensions.width, height: dimensions.height }));
+        }
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        addLog(`[ERROR] Processing ${frameType} frame ${file.name}: ${errorMessage}`);
+        toast({ title: `Error Processing ${frameTypeName}`, description: errorMessage, variant: "destructive" });
       }
-      
-      if (!previewUrl) {
-        addLog(`[ERROR] Could not generate preview for ${frameType} frame ${file.name}.`);
-        setIsProcessingState(false);
-        return;
-      }
-
-      setPreviewUrlState(previewUrl);
-      setFileState(file);
-
-      const img = new Image(); // Uses global Image constructor
-      img.onload = () => {
-        setOriginalDimensionsState({ width: img.naturalWidth, height: img.naturalHeight });
-        addLog(t(`log${frameTypeName}FrameLoaded` as any, { fileName: file.name, width: img.naturalWidth, height: img.naturalHeight }));
-        setIsProcessingState(false);
-      };
-      img.onerror = () => {
-        addLog(`[ERROR] Could not load ${frameType} frame ${file.name} to get dimensions.`);
-        toast({ title: `Error Loading ${frameTypeName} Frame`, description: `Could not load ${file.name}.`, variant: "destructive" });
-        setPreviewUrlState(null);
-        setFileState(null);
-        setIsProcessingState(false);
-      };
-      img.src = previewUrl;
-
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      addLog(`[ERROR] Processing ${frameType} frame ${file.name}: ${errorMessage}`);
-      toast({ title: `Error Processing ${frameTypeName} Frame`, description: errorMessage, variant: "destructive" });
-      setIsProcessingState(false);
     }
+
+    setFilesState(prev => [...prev, ...newFiles]);
+    setPreviewUrlsState(prev => [...prev, ...newPreviewUrls]);
+    setOriginalDimensionsListState(prev => [...prev, ...newOriginalDimensions]);
+    setIsProcessingState(false);
+    addLog(`Finished adding ${newFiles.length} ${frameType} frames.`);
   };
 
-  const handleDarkFrameFileAdded = (files: File[]) => handleCalibrationFrameAdded(files, 'dark', setDarkFrameFile, setDarkFramePreviewUrl, setOriginalDarkFrameDimensions, setIsProcessingDarkFrame);
-  const handleFlatFrameFileAdded = (files: File[]) => handleCalibrationFrameAdded(files, 'flat', setFlatFrameFile, setFlatFramePreviewUrl, setOriginalFlatFrameDimensions, setIsProcessingFlatFrame);
-  const handleBiasFrameFileAdded = (files: File[]) => handleCalibrationFrameAdded(files, 'bias', setBiasFrameFile, setBiasFramePreviewUrl, setOriginalBiasFrameDimensions, setIsProcessingBiasFrame);
-
+  const handleDarkFramesAdded = (files: File[]) => handleCalibrationFramesAdded(files, 'dark', setDarkFrameFiles, setDarkFramePreviewUrls, setOriginalDarkFrameDimensionsList, setIsProcessingDarkFrames);
+  const handleFlatFramesAdded = (files: File[]) => handleCalibrationFramesAdded(files, 'flat', setFlatFrameFiles, setFlatFramePreviewUrls, setOriginalFlatFrameDimensionsList, setIsProcessingFlatFrames);
+  const handleBiasFramesAdded = (files: File[]) => handleCalibrationFramesAdded(files, 'bias', setBiasFrameFiles, setBiasFramePreviewUrls, setOriginalBiasFrameDimensionsList, setIsProcessingBiasFrames);
 
   const handleRemoveImage = (idToRemove: string) => {
     const entry = allImageStarData.find(entry => entry.id === idToRemove);
@@ -854,36 +880,33 @@ export default function AstroStackerPage() {
     setAllImageStarData(prev => prev.filter(item => item.id !== idToRemove));
     addLog(`Removed ${fileName} from queue.`);
   };
-
-  const handleRemoveDarkFrame = () => {
-    addLog(`Removing dark frame: ${darkFrameFile?.name || 'current dark frame'}`);
-    setDarkFrameFile(null);
-    setDarkFramePreviewUrl(null);
-    setOriginalDarkFrameDimensions(null);
-    setUseDarkFrame(false);
+  
+  const handleRemoveCalibrationFrame = (
+    indexToRemove: number,
+    frameType: 'dark' | 'flat' | 'bias',
+    setFilesState: React.Dispatch<React.SetStateAction<File[]>>,
+    setPreviewUrlsState: React.Dispatch<React.SetStateAction<string[]>>,
+    setOriginalDimensionsListState: React.Dispatch<React.SetStateAction<Array<{ width: number; height: number } | null>>>
+  ) => {
+    const fileName = setFilesState(prev => {
+        const file = prev[indexToRemove];
+        return file ? file.name : `frame at index ${indexToRemove}`;
+    });
+    addLog(`Removing ${frameType} frame: ${fileName} at index ${indexToRemove}`);
+    setFilesState(prev => prev.filter((_, index) => index !== indexToRemove));
+    setPreviewUrlsState(prev => prev.filter((_, index) => index !== indexToRemove));
+    setOriginalDimensionsListState(prev => prev.filter((_, index) => index !== indexToRemove));
   };
 
-  const handleRemoveFlatFrame = () => {
-    addLog(`Removing flat frame: ${flatFrameFile?.name || 'current flat frame'}`);
-    setFlatFrameFile(null);
-    setFlatFramePreviewUrl(null);
-    setOriginalFlatFrameDimensions(null);
-    setUseFlatFrame(false);
-  };
-
-  const handleRemoveBiasFrame = () => {
-    addLog(`Removing bias frame: ${biasFrameFile?.name || 'current bias frame'}`);
-    setBiasFrameFile(null);
-    setBiasFramePreviewUrl(null);
-    setOriginalBiasFrameDimensions(null);
-    setUseBiasFrame(false);
-  };
+  const handleRemoveDarkFrame = (index: number) => handleRemoveCalibrationFrame(index, 'dark', setDarkFrameFiles, setDarkFramePreviewUrls, setOriginalDarkFrameDimensionsList);
+  const handleRemoveFlatFrame = (index: number) => handleRemoveCalibrationFrame(index, 'flat', setFlatFrameFiles, setFlatFramePreviewUrls, setOriginalFlatFrameDimensionsList);
+  const handleRemoveBiasFrame = (index: number) => handleRemoveCalibrationFrame(index, 'bias', setBiasFrameFiles, setBiasFramePreviewUrls, setOriginalBiasFrameDimensionsList);
 
 
   const loadImage = (dataUrl: string, imageNameForLog: string): Promise<HTMLImageElement> => {
     addLog(`Loading image data into memory for: ${imageNameForLog}`);
     return new Promise((resolve, reject) => {
-      const img = new Image(); // Uses global Image constructor
+      const img = new Image();
       img.onload = () => {
         if (img.naturalWidth === 0 || img.naturalHeight === 0) {
           addLog(`[ERROR] Image ${imageNameForLog} loaded with 0x0 dimensions from data URL.`);
@@ -1272,10 +1295,10 @@ export default function AstroStackerPage() {
     setEditedPreviewUrl(null);
 
 
-    addLog(`Starting image stacking. Mode: ${stackingMode}. Output: ${outputFormat.toUpperCase()}. Files: ${allImageStarData.length}.`);
-    addLog(`Dark Frame: ${useDarkFrame && darkFrameFile ? darkFrameFile.name : 'Not Used'}.`);
-    addLog(`Flat Frame: ${useFlatFrame && flatFrameFile ? flatFrameFile.name : 'Not Used'}.`);
-    addLog(`Bias Frame: ${useBiasFrame && biasFrameFile ? biasFrameFile.name : 'Not Used'}.`);
+    addLog(`Starting image stacking. Mode: ${stackingMode}. Output: ${outputFormat.toUpperCase()}. Light Files: ${allImageStarData.length}.`);
+    addLog(`Bias Frames: ${useBiasFrames && biasFrameFiles.length > 0 ? `${biasFrameFiles.length} frame(s)` : 'Not Used'}.`);
+    addLog(`Dark Frames: ${useDarkFrames && darkFrameFiles.length > 0 ? `${darkFrameFiles.length} frame(s)` : 'Not Used'}.`);
+    addLog(`Flat Frames: ${useFlatFrames && flatFrameFiles.length > 0 ? `${flatFrameFiles.length} frame(s)` : 'Not Used'}.`);
     addLog(`Star Alignment: Min Stars = ${MIN_STARS_FOR_ALIGNMENT}.`);
     addLog(`Star Detection Params: Combined Brightness Threshold = ${DEFAULT_STAR_BRIGHTNESS_THRESHOLD_COMBINED}, Local Contrast Factor = ${DEFAULT_STAR_LOCAL_CONTRAST_FACTOR}.`);
     addLog(`Brightness Centroid Fallback Threshold: ${BRIGHTNESS_CENTROID_FALLBACK_THRESHOLD_GRAYSCALE_EQUIVALENT} (grayscale equivalent).`);
@@ -1398,99 +1421,117 @@ export default function AstroStackerPage() {
       const calCtx = calibrationCanvas.getContext('2d', { willReadFrequently: true });
       if (!calCtx) throw new Error("Could not get calibration canvas context.");
 
-      // --- Load and Prepare Calibration Frames ---
+
       let masterBiasData: Uint8ClampedArray | null = null;
+      if (useBiasFrames && biasFramePreviewUrls.length > 0) {
+        addLog(t('logLoadingBiasFrames', { count: biasFramePreviewUrls.length }));
+        const biasImageDataArrays: ImageData[] = [];
+        for (let i = 0; i < biasFramePreviewUrls.length; i++) {
+            try {
+                const biasImgEl = await loadImage(biasFramePreviewUrls[i], biasFrameFiles[i].name);
+                calCtx.clearRect(0,0,targetWidth, targetHeight);
+                calCtx.drawImage(biasImgEl, 0, 0, targetWidth, targetHeight);
+                biasImageDataArrays.push(calCtx.getImageData(0,0,targetWidth, targetHeight));
+            } catch (e) {
+                addLog(`[ERROR] Failed to load/process bias frame ${biasFrameFiles[i].name}: ${e instanceof Error ? e.message : String(e)}`);
+            }
+        }
+        if (biasImageDataArrays.length > 0) {
+            masterBiasData = averageImageDataArrays(biasImageDataArrays, targetWidth, targetHeight, addLog);
+            if (masterBiasData) addLog(t('logMasterBiasCreated', { count: biasImageDataArrays.length }));
+            else addLog(t('logMasterBiasFailed'));
+        } else {
+            addLog(t('biasFramesMissing'));
+            toast({ title: t('biasFramesMissingTitle'), description: t('biasFramesMissing'), variant: "default" });
+        }
+      } else if (useBiasFrames) {
+         addLog(t('biasFramesMissing'));
+         toast({ title: t('biasFramesMissingTitle'), description: t('biasFramesMissing'), variant: "default" });
+      }
+
+
       let masterDarkData: Uint8ClampedArray | null = null;
+      if (useDarkFrames && darkFramePreviewUrls.length > 0) {
+        addLog(t('logLoadingDarkFrames', { count: darkFramePreviewUrls.length }));
+        const darkImageDataArrays: ImageData[] = [];
+        for (let i = 0; i < darkFramePreviewUrls.length; i++) {
+          try {
+            const darkImgEl = await loadImage(darkFramePreviewUrls[i], darkFrameFiles[i].name);
+            calCtx.clearRect(0, 0, targetWidth, targetHeight);
+            calCtx.drawImage(darkImgEl, 0, 0, targetWidth, targetHeight);
+            let currentDarkFrameImageData = calCtx.getImageData(0, 0, targetWidth, targetHeight);
+
+            if (masterBiasData) {
+              const tempDarkData = new Uint8ClampedArray(currentDarkFrameImageData.data);
+              for (let p = 0; p < tempDarkData.length; p += 4) {
+                tempDarkData[p] = Math.max(0, tempDarkData[p] - masterBiasData[p]);
+                tempDarkData[p+1] = Math.max(0, tempDarkData[p+1] - masterBiasData[p+1]);
+                tempDarkData[p+2] = Math.max(0, tempDarkData[p+2] - masterBiasData[p+2]);
+              }
+              currentDarkFrameImageData = new ImageData(tempDarkData, targetWidth, targetHeight);
+              if (i === 0) addLog(t('logBiasSubtractedFromDark', { darkFrameName: darkFrameFiles[i].name }));
+            }
+            darkImageDataArrays.push(currentDarkFrameImageData);
+          } catch (e) {
+            addLog(`[ERROR] Failed to load/process dark frame ${darkFrameFiles[i].name}: ${e instanceof Error ? e.message : String(e)}`);
+          }
+        }
+        if (darkImageDataArrays.length > 0) {
+            masterDarkData = averageImageDataArrays(darkImageDataArrays, targetWidth, targetHeight, addLog);
+            if (masterDarkData) addLog(t('logMasterDarkCreated', { count: darkImageDataArrays.length }));
+            else addLog(t('logMasterDarkFailed'));
+        } else {
+            addLog(t('darkFramesMissing'));
+            toast({ title: t('darkFramesMissingTitle'), description: t('darkFramesMissing'), variant: "default" });
+        }
+      } else if (useDarkFrames) {
+        addLog(t('darkFramesMissing'));
+        toast({ title: t('darkFramesMissingTitle'), description: t('darkFramesMissing'), variant: "default" });
+      }
+
+
       let masterFlatData: Uint8ClampedArray | null = null;
+      if (useFlatFrames && flatFramePreviewUrls.length > 0) {
+        addLog(t('logLoadingFlatFrames', { count: flatFramePreviewUrls.length }));
+        const flatImageDataArrays: ImageData[] = [];
+        for (let i = 0; i < flatFramePreviewUrls.length; i++) {
+          try {
+            const flatImgEl = await loadImage(flatFramePreviewUrls[i], flatFrameFiles[i].name);
+            calCtx.clearRect(0, 0, targetWidth, targetHeight);
+            calCtx.drawImage(flatImgEl, 0, 0, targetWidth, targetHeight);
+            let currentFlatFrameImageData = calCtx.getImageData(0, 0, targetWidth, targetHeight);
 
-      // 1. Load Bias Frame (if used)
-      if (useBiasFrame && biasFrameFile && biasFramePreviewUrl) {
-        addLog(t('logLoadingBiasFrame', { fileName: biasFrameFile.name }));
-        try {
-          const biasImgEl = await loadImage(biasFramePreviewUrl, biasFrameFile.name);
-          calCtx.clearRect(0, 0, targetWidth, targetHeight);
-          calCtx.drawImage(biasImgEl, 0, 0, targetWidth, targetHeight);
-          masterBiasData = calCtx.getImageData(0, 0, targetWidth, targetHeight).data;
-          if (originalBiasFrameDimensions && (originalBiasFrameDimensions.width !== targetWidth || originalBiasFrameDimensions.height !== targetHeight)) {
-             addLog(t('biasFrameDimensionMismatchWarn', { dfWidth: originalBiasFrameDimensions.width, dfHeight: originalBiasFrameDimensions.height, targetWidth, targetHeight }));
-          }
-          addLog(t('logBiasFrameProcessed', { fileName: biasFrameFile.name }));
-        } catch (e) {
-          addLog(`[ERROR] Failed to load/process Bias Frame: ${e instanceof Error ? e.message : String(e)}. Stacking without it.`);
-          toast({ title: t('biasFrameErrorTitle'), description: t('biasFrameErrorDescription', { error: e instanceof Error ? e.message : String(e) }), variant: "destructive"});
-          masterBiasData = null;
-        }
-      } else if (useBiasFrame) {
-        addLog(t('biasFrameMissing'));
-        toast({ title: t('biasFrameMissingTitle'), description: t('biasFrameMissing'), variant: "default" });
-      }
-
-      // 2. Load Dark Frame (if used) & Subtract Bias
-      if (useDarkFrame && darkFrameFile && darkFramePreviewUrl) {
-        addLog(t('logLoadingDarkFrame', { fileName: darkFrameFile.name }));
-        try {
-          const darkImgEl = await loadImage(darkFramePreviewUrl, darkFrameFile.name);
-          calCtx.clearRect(0, 0, targetWidth, targetHeight);
-          calCtx.drawImage(darkImgEl, 0, 0, targetWidth, targetHeight);
-          const tempDarkImageData = calCtx.getImageData(0, 0, targetWidth, targetHeight);
-          let tempDarkData = tempDarkImageData.data;
-
-          if (masterBiasData) {
-            addLog(t('logSubtractingBiasFromDark', { darkFrameName: darkFrameFile.name }));
-            for (let p = 0; p < tempDarkData.length; p += 4) {
-              tempDarkData[p] = Math.max(0, tempDarkData[p] - masterBiasData[p]);
-              tempDarkData[p+1] = Math.max(0, tempDarkData[p+1] - masterBiasData[p+1]);
-              tempDarkData[p+2] = Math.max(0, tempDarkData[p+2] - masterBiasData[p+2]);
+            if (masterBiasData) {
+              const tempFlatData = new Uint8ClampedArray(currentFlatFrameImageData.data);
+              for (let p = 0; p < tempFlatData.length; p += 4) {
+                tempFlatData[p] = Math.max(0, tempFlatData[p] - masterBiasData[p]);
+                tempFlatData[p+1] = Math.max(0, tempFlatData[p+1] - masterBiasData[p+1]);
+                tempFlatData[p+2] = Math.max(0, tempFlatData[p+2] - masterBiasData[p+2]);
+              }
+              currentFlatFrameImageData = new ImageData(tempFlatData, targetWidth, targetHeight);
+              if (i===0) addLog(t('logBiasSubtractedFromFlat', { flatFrameName: flatFrameFiles[i].name }));
             }
+            // Note: Typically darks specific to flats (flat-darks) are used for flats.
+            // Subtracting the master dark (from light frames) might not be ideal here if exposure times differ significantly.
+            // For simplicity, we are only subtracting bias from flats. Users should ideally provide bias-subtracted flats or use flat-darks.
+            flatImageDataArrays.push(currentFlatFrameImageData);
+          } catch (e) {
+            addLog(`[ERROR] Failed to load/process flat frame ${flatFrameFiles[i].name}: ${e instanceof Error ? e.message : String(e)}`);
           }
-          masterDarkData = tempDarkData;
-          if (originalDarkFrameDimensions && (originalDarkFrameDimensions.width !== targetWidth || originalDarkFrameDimensions.height !== targetHeight)) {
-             addLog(t('darkFrameDimensionMismatchWarn', { dfWidth: originalDarkFrameDimensions.width, dfHeight: originalDarkFrameDimensions.height, targetWidth, targetHeight }));
-          }
-          addLog(t('logDarkFrameProcessed', { fileName: darkFrameFile.name }));
-        } catch (e) {
-          addLog(`[ERROR] Failed to load/process Dark Frame: ${e instanceof Error ? e.message : String(e)}. Stacking without it.`);
-          toast({ title: t('darkFrameErrorTitle'), description: t('darkFrameErrorDescription', { error: e instanceof Error ? e.message : String(e) }), variant: "destructive"});
-          masterDarkData = null;
         }
-      } else if (useDarkFrame) {
-         addLog(t('darkFrameMissing'));
-         toast({ title: t('darkFrameMissingTitle'), description: t('darkFrameMissing'), variant: "default" });
-      }
-
-      // 3. Load Flat Frame (if used) & Subtract Bias
-      if (useFlatFrame && flatFrameFile && flatFramePreviewUrl) {
-        addLog(t('logLoadingFlatFrame', { fileName: flatFrameFile.name }));
-        try {
-          const flatImgEl = await loadImage(flatFramePreviewUrl, flatFrameFile.name);
-          calCtx.clearRect(0, 0, targetWidth, targetHeight);
-          calCtx.drawImage(flatImgEl, 0, 0, targetWidth, targetHeight);
-          const tempFlatImageData = calCtx.getImageData(0, 0, targetWidth, targetHeight);
-          let tempFlatData = tempFlatImageData.data;
-
-          if (masterBiasData) {
-            addLog(t('logSubtractingBiasFromFlat', { flatFrameName: flatFrameFile.name }));
-            for (let p = 0; p < tempFlatData.length; p += 4) {
-              tempFlatData[p] = Math.max(0, tempFlatData[p] - masterBiasData[p]);
-              tempFlatData[p+1] = Math.max(0, tempFlatData[p+1] - masterBiasData[p+1]);
-              tempFlatData[p+2] = Math.max(0, tempFlatData[p+2] - masterBiasData[p+2]);
-            }
-          }
-          masterFlatData = tempFlatData;
-           if (originalFlatFrameDimensions && (originalFlatFrameDimensions.width !== targetWidth || originalFlatFrameDimensions.height !== targetHeight)) {
-             addLog(t('flatFrameDimensionMismatchWarn', { dfWidth: originalFlatFrameDimensions.width, dfHeight: originalFlatFrameDimensions.height, targetWidth, targetHeight }));
-          }
-          addLog(t('logFlatFrameProcessed', { fileName: flatFrameFile.name }));
-        } catch (e) {
-          addLog(`[ERROR] Failed to load/process Flat Frame: ${e instanceof Error ? e.message : String(e)}. Stacking without it.`);
-          toast({ title: t('flatFrameErrorTitle'), description: t('flatFrameErrorDescription', { error: e instanceof Error ? e.message : String(e) }), variant: "destructive"});
-          masterFlatData = null;
+        if (flatImageDataArrays.length > 0) {
+            masterFlatData = averageImageDataArrays(flatImageDataArrays, targetWidth, targetHeight, addLog);
+            if (masterFlatData) addLog(t('logMasterFlatCreated', { count: flatImageDataArrays.length }));
+            else addLog(t('logMasterFlatFailed'));
+        } else {
+            addLog(t('flatFramesMissing'));
+            toast({ title: t('flatFramesMissingTitle'), description: t('flatFramesMissing'), variant: "default" });
         }
-      } else if (useFlatFrame) {
-         addLog(t('flatFrameMissing'));
-         toast({ title: t('flatFrameMissingTitle'), description: t('flatFrameMissing'), variant: "default" });
+      } else if (useFlatFrames) {
+        addLog(t('flatFramesMissing'));
+        toast({ title: t('flatFramesMissingTitle'), description: t('flatFramesMissing'), variant: "default" });
       }
-      // --- End Calibration Frame Loading ---
+      addLog("Master calibration frame creation phase complete.");
 
 
       const numImages = imageElements.length;
@@ -1645,15 +1686,13 @@ export default function AstroStackerPage() {
             addLog(`[STACK WARN] Image ${i} (${allImageStarData[i]?.file?.name}) had no centroid for offset calculation. Using 0,0 offset.`);
           }
 
-          // Draw original light frame to calibration canvas to get its full ImageData
           calCtx.clearRect(0,0, targetWidth, targetHeight);
-          calCtx.drawImage(img, 0,0, targetWidth, targetHeight); // Draw light frame at original scale for calibration
+          calCtx.drawImage(img, 0,0, targetWidth, targetHeight);
           let lightFrameImageData = calCtx.getImageData(0,0, targetWidth, targetHeight);
-          let calibratedLightData = new Uint8ClampedArray(lightFrameImageData.data); // Work on a copy
+          let calibratedLightData = new Uint8ClampedArray(lightFrameImageData.data);
 
           let logCalibrationMsg = "";
 
-          // 1. Bias Subtraction from Light
           if (masterBiasData) {
             for (let p = 0; p < calibratedLightData.length; p += 4) {
               calibratedLightData[p]   = Math.max(0, calibratedLightData[p]   - masterBiasData[p]);
@@ -1663,7 +1702,6 @@ export default function AstroStackerPage() {
             logCalibrationMsg += "Bias subtracted. ";
           }
 
-          // 2. Dark Subtraction from Light
           if (masterDarkData) {
             for (let p = 0; p < calibratedLightData.length; p += 4) {
               calibratedLightData[p]   = Math.max(0, calibratedLightData[p]   - masterDarkData[p]);
@@ -1673,36 +1711,39 @@ export default function AstroStackerPage() {
              logCalibrationMsg += "Dark subtracted. ";
           }
 
-          // 3. Flat Field Correction
           if (masterFlatData) {
             const numPixelsFlat = targetWidth * targetHeight;
             let sumR = 0, sumG = 0, sumB = 0;
+            // Recalculate mean of the masterFlatData (already averaged and bias-subtracted)
             for (let p = 0; p < masterFlatData.length; p += 4) {
               sumR += masterFlatData[p]; sumG += masterFlatData[p+1]; sumB += masterFlatData[p+2];
             }
             const meanR = numPixelsFlat > 0 ? sumR / numPixelsFlat : 0;
             const meanG = numPixelsFlat > 0 ? sumG / numPixelsFlat : 0;
             const meanB = numPixelsFlat > 0 ? sumB / numPixelsFlat : 0;
+            
+            if (meanR > 0 && meanG > 0 && meanB > 0) { // Avoid division by zero if flat is black
+                for (let p = 0; p < calibratedLightData.length; p += 4) {
+                const flatR = masterFlatData[p]; const flatG = masterFlatData[p+1]; const flatB = masterFlatData[p+2];
+                const scaleR = (flatR > 1) ? meanR / flatR : 1; // Prevent division by zero or near-zero
+                const scaleG = (flatG > 1) ? meanG / flatG : 1;
+                const scaleB = (flatB > 1) ? meanB / flatB : 1;
 
-            for (let p = 0; p < calibratedLightData.length; p += 4) {
-              const flatR = masterFlatData[p]; const flatG = masterFlatData[p+1]; const flatB = masterFlatData[p+2];
-              const scaleR = (flatR > 1) ? meanR / flatR : 1;
-              const scaleG = (flatG > 1) ? meanG / flatG : 1;
-              const scaleB = (flatB > 1) ? meanB / flatB : 1;
-
-              calibratedLightData[p]   = Math.min(255, Math.max(0, calibratedLightData[p]   * Math.min(scaleR, FLAT_FIELD_CORRECTION_MAX_SCALE_FACTOR) ));
-              calibratedLightData[p+1] = Math.min(255, Math.max(0, calibratedLightData[p+1] * Math.min(scaleG, FLAT_FIELD_CORRECTION_MAX_SCALE_FACTOR) ));
-              calibratedLightData[p+2] = Math.min(255, Math.max(0, calibratedLightData[p+2] * Math.min(scaleB, FLAT_FIELD_CORRECTION_MAX_SCALE_FACTOR) ));
+                calibratedLightData[p]   = Math.min(255, Math.max(0, calibratedLightData[p]   * Math.min(scaleR, FLAT_FIELD_CORRECTION_MAX_SCALE_FACTOR) ));
+                calibratedLightData[p+1] = Math.min(255, Math.max(0, calibratedLightData[p+1] * Math.min(scaleG, FLAT_FIELD_CORRECTION_MAX_SCALE_FACTOR) ));
+                calibratedLightData[p+2] = Math.min(255, Math.max(0, calibratedLightData[p+2] * Math.min(scaleB, FLAT_FIELD_CORRECTION_MAX_SCALE_FACTOR) ));
+                }
+                logCalibrationMsg += `Flat corrected (Master Flat Mean R:${meanR.toFixed(1)}, G:${meanG.toFixed(1)}, B:${meanB.toFixed(1)}).`;
+            } else {
+                logCalibrationMsg += `Flat correction skipped (Master Flat mean is zero or near-zero).`;
             }
-             logCalibrationMsg += `Flat corrected (Mean R:${meanR.toFixed(1)}, G:${meanG.toFixed(1)}, B:${meanB.toFixed(1)}).`;
           }
           if (logCalibrationMsg && i === 0) addLog(`[CALIBRATE] Image 0 (${allImageStarData[0]?.file?.name}): ${logCalibrationMsg}`);
 
 
-          // Put calibrated data onto the main offscreenCanvas, shifted by dx, dy
           ctx.clearRect(0, 0, targetWidth, targetHeight);
           const calibratedImageDataForDraw = new ImageData(calibratedLightData, targetWidth, targetHeight);
-          ctx.putImageData(calibratedImageDataForDraw, dx, dy); // dx, dy are offsets for alignment
+          ctx.putImageData(calibratedImageDataForDraw, dx, dy);
 
           try {
             const bandFrameImageData = ctx.getImageData(0, yBandStart, targetWidth, currentBandHeight);
@@ -1808,9 +1849,9 @@ export default function AstroStackerPage() {
           : `All images aligned using brightness-based centroids or geometric centers.`;
 
         let calibrationSummary = "";
-        if (useBiasFrame && masterBiasData) calibrationSummary += "Bias subtracted. ";
-        if (useDarkFrame && masterDarkData) calibrationSummary += "Dark subtracted. ";
-        if (useFlatFrame && masterFlatData) calibrationSummary += "Flat corrected. ";
+        if (useBiasFrames && masterBiasData) calibrationSummary += `Bias (master from ${biasFrameFiles.length} frames) subtracted. `;
+        if (useDarkFrames && masterDarkData) calibrationSummary += `Dark (master from ${darkFrameFiles.length} frames) subtracted. `;
+        if (useFlatFrames && masterFlatData) calibrationSummary += `Flat (master from ${flatFrameFiles.length} frames) corrected. `;
         if (calibrationSummary === "") calibrationSummary = "No calibration frames applied. ";
 
 
@@ -1867,7 +1908,7 @@ export default function AstroStackerPage() {
 
 
   const canStartStacking = allImageStarData.length >= 2 && !isApplyingAdvancedStars;
-  const isUiDisabled = isProcessingStack || isProcessingDarkFrame || isProcessingFlatFrame || isProcessingBiasFrame || (currentEditingImageIndex !== null && allImageStarData[currentEditingImageIndex]?.isAnalyzing);
+  const isUiDisabled = isProcessingStack || isProcessingDarkFrames || isProcessingFlatFrames || isProcessingBiasFrames || (currentEditingImageIndex !== null && allImageStarData[currentEditingImageIndex]?.isAnalyzing);
 
   const currentImageForEditing = currentEditingImageIndex !== null ? allImageStarData[currentEditingImageIndex] : null;
   const sourceImageForDialog = allImageStarData.find(img => img.id === sourceImageIdForApplyToAll);
@@ -1930,112 +1971,127 @@ export default function AstroStackerPage() {
                       </>
                     )}
 
-                    {/* Bias Frame Section */}
+                    {/* Bias Frames Section */}
                     <Card className="mt-4 shadow-md">
                         <CardHeader className="pb-3 pt-4">
                             <CardTitle className="flex items-center text-lg">
                                 <Baseline className="mr-2 h-5 w-5 text-accent" />
-                                {t('biasFrameUploadTitle')}
+                                {t('biasFramesUploadTitle')}
                             </CardTitle>
-                            <CardDescription className="text-xs">{t('biasFrameUploadDescription')}</CardDescription>
+                            <CardDescription className="text-xs">{t('biasFramesUploadDescription')}</CardDescription>
                         </CardHeader>
                         <CardContent className="space-y-3 pb-4">
-                            <ImageUploadArea onFilesAdded={handleBiasFrameFileAdded} isProcessing={isUiDisabled || isProcessingBiasFrame} multiple={false} />
-                            {isProcessingBiasFrame && <Loader2 className="mx-auto my-2 h-6 w-6 animate-spin text-accent" />}
-                            {biasFramePreviewUrl && (
+                            <ImageUploadArea onFilesAdded={handleBiasFramesAdded} isProcessing={isUiDisabled || isProcessingBiasFrames} multiple={true} />
+                            {isProcessingBiasFrames && <Loader2 className="mx-auto my-2 h-6 w-6 animate-spin text-accent" />}
+                            {biasFramePreviewUrls.length > 0 && (
                                 <div className="mt-2 space-y-2">
-                                    <Label className="text-sm font-semibold">{t('biasFramePreviewTitle')}</Label>
-                                    <div className="relative aspect-video w-full rounded border overflow-hidden">
-                                        <NextImage src={biasFramePreviewUrl} alt="Bias Frame Preview" layout="fill" objectFit="contain" data-ai-hint="noise pattern sensor" />
-                                        <Button variant="destructive" size="icon" onClick={handleRemoveBiasFrame} className="absolute top-1 right-1 h-6 w-6 z-10" disabled={isUiDisabled}>
-                                            <X className="h-3 w-3" />
-                                        </Button>
-                                    </div>
-                                    {originalBiasFrameDimensions && (
-                                      <p className="text-xs text-muted-foreground">
-                                        {biasFrameFile?.name} ({originalBiasFrameDimensions.width}x{originalBiasFrameDimensions.height})
-                                      </p>
-                                    )}
+                                    <Label className="text-sm font-semibold">{t('biasFramesPreviewTitle', { count: biasFramePreviewUrls.length })}</Label>
+                                    <ScrollArea className="h-36 border rounded-md p-2 bg-muted/10">
+                                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                                        {biasFramePreviewUrls.map((url, index) => (
+                                          <div key={`bias-${index}-${biasFrameFiles[index]?.name || index}`} className="relative group border rounded overflow-hidden">
+                                            <NextImage src={url} alt={`Bias Frame ${index + 1}`} width={100} height={75} className="object-cover w-full h-20" data-ai-hint="noise pattern" />
+                                            <Button variant="destructive" size="icon" onClick={() => handleRemoveBiasFrame(index)} className="absolute top-1 right-1 h-5 w-5 z-10 opacity-0 group-hover:opacity-100 transition-opacity" disabled={isUiDisabled}>
+                                                <X className="h-3 w-3" />
+                                            </Button>
+                                            <div className="p-1 text-xs bg-background/70 truncate text-muted-foreground">
+                                                {biasFrameFiles[index]?.name}
+                                                {originalBiasFrameDimensionsList[index] && ` (${originalBiasFrameDimensionsList[index]!.width}x${originalBiasFrameDimensionsList[index]!.height})`}
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </ScrollArea>
                                 </div>
                             )}
-                            {biasFrameFile && (
+                            {biasFrameFiles.length > 0 && (
                                 <div className="flex items-center space-x-2 pt-2">
-                                    <Switch id="use-bias-frame" checked={useBiasFrame} onCheckedChange={setUseBiasFrame} disabled={isUiDisabled || !biasFrameFile} />
-                                    <Label htmlFor="use-bias-frame" className="text-sm cursor-pointer">{t('useBiasFrameLabel')}</Label>
+                                    <Switch id="use-bias-frames" checked={useBiasFrames} onCheckedChange={setUseBiasFrames} disabled={isUiDisabled || biasFrameFiles.length === 0} />
+                                    <Label htmlFor="use-bias-frames" className="text-sm cursor-pointer">{t('useBiasFramesLabel')}</Label>
                                 </div>
                             )}
                         </CardContent>
                     </Card>
 
-                    {/* Dark Frame Section */}
+                    {/* Dark Frames Section */}
                     <Card className="mt-4 shadow-md">
                         <CardHeader className="pb-3 pt-4">
                             <CardTitle className="flex items-center text-lg">
                                 <ShieldOff className="mr-2 h-5 w-5 text-accent" />
-                                {t('darkFrameUploadTitle')}
+                                {t('darkFramesUploadTitle')}
                             </CardTitle>
-                            <CardDescription className="text-xs">{t('darkFrameUploadDescription')}</CardDescription>
+                            <CardDescription className="text-xs">{t('darkFramesUploadDescription')}</CardDescription>
                         </CardHeader>
                         <CardContent className="space-y-3 pb-4">
-                            <ImageUploadArea onFilesAdded={handleDarkFrameFileAdded} isProcessing={isUiDisabled || isProcessingDarkFrame} multiple={false} />
-                            {isProcessingDarkFrame && <Loader2 className="mx-auto my-2 h-6 w-6 animate-spin text-accent" />}
-                            {darkFramePreviewUrl && (
+                            <ImageUploadArea onFilesAdded={handleDarkFramesAdded} isProcessing={isUiDisabled || isProcessingDarkFrames} multiple={true} />
+                            {isProcessingDarkFrames && <Loader2 className="mx-auto my-2 h-6 w-6 animate-spin text-accent" />}
+                             {darkFramePreviewUrls.length > 0 && (
                                 <div className="mt-2 space-y-2">
-                                    <Label className="text-sm font-semibold">{t('darkFramePreviewTitle')}</Label>
-                                    <div className="relative aspect-video w-full rounded border overflow-hidden">
-                                        <NextImage src={darkFramePreviewUrl} alt="Dark Frame Preview" layout="fill" objectFit="contain" data-ai-hint="dark frame sensor" />
-                                        <Button variant="destructive" size="icon" onClick={handleRemoveDarkFrame} className="absolute top-1 right-1 h-6 w-6 z-10" disabled={isUiDisabled}>
-                                            <X className="h-3 w-3" />
-                                        </Button>
-                                    </div>
-                                    {originalDarkFrameDimensions && (
-                                      <p className="text-xs text-muted-foreground">
-                                        {darkFrameFile?.name} ({originalDarkFrameDimensions.width}x{originalDarkFrameDimensions.height})
-                                      </p>
-                                    )}
+                                    <Label className="text-sm font-semibold">{t('darkFramesPreviewTitle', { count: darkFramePreviewUrls.length })}</Label>
+                                    <ScrollArea className="h-36 border rounded-md p-2 bg-muted/10">
+                                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                                        {darkFramePreviewUrls.map((url, index) => (
+                                          <div key={`dark-${index}-${darkFrameFiles[index]?.name || index}`} className="relative group border rounded overflow-hidden">
+                                            <NextImage src={url} alt={`Dark Frame ${index + 1}`} width={100} height={75} className="object-cover w-full h-20" data-ai-hint="dark frame" />
+                                            <Button variant="destructive" size="icon" onClick={() => handleRemoveDarkFrame(index)} className="absolute top-1 right-1 h-5 w-5 z-10 opacity-0 group-hover:opacity-100 transition-opacity" disabled={isUiDisabled}>
+                                                <X className="h-3 w-3" />
+                                            </Button>
+                                             <div className="p-1 text-xs bg-background/70 truncate text-muted-foreground">
+                                                {darkFrameFiles[index]?.name}
+                                                {originalDarkFrameDimensionsList[index] && ` (${originalDarkFrameDimensionsList[index]!.width}x${originalDarkFrameDimensionsList[index]!.height})`}
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </ScrollArea>
                                 </div>
                             )}
-                            {darkFrameFile && (
+                            {darkFrameFiles.length > 0 && (
                                 <div className="flex items-center space-x-2 pt-2">
-                                    <Switch id="use-dark-frame" checked={useDarkFrame} onCheckedChange={setUseDarkFrame} disabled={isUiDisabled || !darkFrameFile} />
-                                    <Label htmlFor="use-dark-frame" className="text-sm cursor-pointer">{t('useDarkFrameLabel')}</Label>
+                                    <Switch id="use-dark-frames" checked={useDarkFrames} onCheckedChange={setUseDarkFrames} disabled={isUiDisabled || darkFrameFiles.length === 0} />
+                                    <Label htmlFor="use-dark-frames" className="text-sm cursor-pointer">{t('useDarkFramesLabel')}</Label>
                                 </div>
                             )}
                         </CardContent>
                     </Card>
 
-                    {/* Flat Frame Section */}
+                    {/* Flat Frames Section */}
                     <Card className="mt-4 shadow-md">
                         <CardHeader className="pb-3 pt-4">
                             <CardTitle className="flex items-center text-lg">
                                 <Layers className="mr-2 h-5 w-5 text-accent" />
-                                {t('flatFrameUploadTitle')}
+                                {t('flatFramesUploadTitle')}
                             </CardTitle>
-                            <CardDescription className="text-xs">{t('flatFrameUploadDescription')}</CardDescription>
+                            <CardDescription className="text-xs">{t('flatFramesUploadDescription')}</CardDescription>
                         </CardHeader>
                         <CardContent className="space-y-3 pb-4">
-                            <ImageUploadArea onFilesAdded={handleFlatFrameFileAdded} isProcessing={isUiDisabled || isProcessingFlatFrame} multiple={false} />
-                            {isProcessingFlatFrame && <Loader2 className="mx-auto my-2 h-6 w-6 animate-spin text-accent" />}
-                            {flatFramePreviewUrl && (
+                            <ImageUploadArea onFilesAdded={handleFlatFramesAdded} isProcessing={isUiDisabled || isProcessingFlatFrames} multiple={true} />
+                            {isProcessingFlatFrames && <Loader2 className="mx-auto my-2 h-6 w-6 animate-spin text-accent" />}
+                             {flatFramePreviewUrls.length > 0 && (
                                 <div className="mt-2 space-y-2">
-                                    <Label className="text-sm font-semibold">{t('flatFramePreviewTitle')}</Label>
-                                    <div className="relative aspect-video w-full rounded border overflow-hidden">
-                                        <NextImage src={flatFramePreviewUrl} alt="Flat Frame Preview" layout="fill" objectFit="contain" data-ai-hint="uniform light sensor" />
-                                        <Button variant="destructive" size="icon" onClick={handleRemoveFlatFrame} className="absolute top-1 right-1 h-6 w-6 z-10" disabled={isUiDisabled}>
-                                            <X className="h-3 w-3" />
-                                        </Button>
-                                    </div>
-                                    {originalFlatFrameDimensions && (
-                                      <p className="text-xs text-muted-foreground">
-                                        {flatFrameFile?.name} ({originalFlatFrameDimensions.width}x{originalFlatFrameDimensions.height})
-                                      </p>
-                                    )}
+                                    <Label className="text-sm font-semibold">{t('flatFramesPreviewTitle', { count: flatFramePreviewUrls.length })}</Label>
+                                   <ScrollArea className="h-36 border rounded-md p-2 bg-muted/10">
+                                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                                        {flatFramePreviewUrls.map((url, index) => (
+                                          <div key={`flat-${index}-${flatFrameFiles[index]?.name || index}`} className="relative group border rounded overflow-hidden">
+                                            <NextImage src={url} alt={`Flat Frame ${index + 1}`} width={100} height={75} className="object-cover w-full h-20" data-ai-hint="uniform light" />
+                                            <Button variant="destructive" size="icon" onClick={() => handleRemoveFlatFrame(index)} className="absolute top-1 right-1 h-5 w-5 z-10 opacity-0 group-hover:opacity-100 transition-opacity" disabled={isUiDisabled}>
+                                                <X className="h-3 w-3" />
+                                            </Button>
+                                            <div className="p-1 text-xs bg-background/70 truncate text-muted-foreground">
+                                                {flatFrameFiles[index]?.name}
+                                                {originalFlatFrameDimensionsList[index] && ` (${originalFlatFrameDimensionsList[index]!.width}x${originalFlatFrameDimensionsList[index]!.height})`}
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </ScrollArea>
                                 </div>
                             )}
-                            {flatFrameFile && (
+                            {flatFrameFiles.length > 0 && (
                                 <div className="flex items-center space-x-2 pt-2">
-                                    <Switch id="use-flat-frame" checked={useFlatFrame} onCheckedChange={setUseFlatFrame} disabled={isUiDisabled || !flatFrameFile} />
-                                    <Label htmlFor="use-flat-frame" className="text-sm cursor-pointer">{t('useFlatFrameLabel')}</Label>
+                                    <Switch id="use-flat-frames" checked={useFlatFrames} onCheckedChange={setUseFlatFrames} disabled={isUiDisabled || flatFrameFiles.length === 0} />
+                                    <Label htmlFor="use-flat-frames" className="text-sm cursor-pointer">{t('useFlatFramesLabel')}</Label>
                                 </div>
                             )}
                         </CardContent>
@@ -2044,7 +2100,6 @@ export default function AstroStackerPage() {
 
                     {allImageStarData.length > 0 && (
                         <>
-                        {/* Stacking Options */}
                         <div className="space-y-2 pt-2">
                           <Label className="text-base font-semibold text-foreground">{t('stackingMode')}</Label>
                           <RadioGroup
@@ -2132,7 +2187,6 @@ export default function AstroStackerPage() {
                     )}
                   </>
                 ) : (
-                  // Star Editing Mode
                   currentImageForEditing && currentImageForEditing.analysisDimensions && (
                     <div className="space-y-4">
                       <Alert>
@@ -2178,7 +2232,6 @@ export default function AstroStackerPage() {
                   )
                 )}
 
-                {/* Logs Section */}
                 {logs.length > 0 && (
                   <Card className="mt-4">
                     <CardHeader className="p-3 border-b">
@@ -2203,7 +2256,6 @@ export default function AstroStackerPage() {
             </Card>
           </div>
 
-          {/* Right Column: Image Preview */}
           <div className="w-full lg:w-3/5 xl:w-2/3 flex flex-col space-y-6">
             <ImagePreview
               imageUrl={showPostProcessEditor ? editedPreviewUrl : stackedImage}
@@ -2230,7 +2282,6 @@ export default function AstroStackerPage() {
         </div>
       </footer>
 
-      {/* Apply Stars to All Dialog */}
       {showApplyToAllDialog && sourceImageForDialog && (
         <AlertDialog open={showApplyToAllDialog} onOpenChange={setShowApplyToAllDialog}>
             <AlertDialogContent>
@@ -2263,7 +2314,6 @@ export default function AstroStackerPage() {
         </AlertDialog>
       )}
 
-    {/* Post-Processing Editor Dialog */}
     {showPostProcessEditor && imageForPostProcessing && (
         <ImagePostProcessEditor
           isOpen={showPostProcessEditor}
