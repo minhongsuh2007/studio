@@ -38,10 +38,20 @@ export const translations: Translations = {
     confirmAndClose: 'Confirm & Close',
     cancelEditing: 'Cancel Editing',
     processingLogs: 'Processing Logs',
-    applyStarsToOther: 'Apply Star Selection to Other Images?',
-    applyStarsDescription: "You've manually set {starCount} stars for '{fileName}' ({width}x{height}px). Apply this star selection to all {otherImageCount} other images in the queue that have matching dimensions? This will set them to Manual mode and mark them as reviewed.",
-    noKeepIndividual: 'No, Keep Individual',
-    yesApplyToAll: 'Yes, Apply to All Matching',
+    
+    applyStarOptionsMenuTitle: 'Apply Star Selection to Others',
+    applyStarOptionsMenuDesc: "You've set {starCount} stars for '{fileName}' ({width}x{height}px). How would you like to apply this selection to other images in the queue?",
+    applyToMatchingDimensionsBtn: 'To {count} images with matching dimensions',
+    applyProportionallyBtn: 'Proportionally to {count} images with similar aspect ratio',
+    dontApplyToOthersBtn: "Don't Apply to Others",
+    
+    toastStarsAppliedMatchingDimTitle: "Stars Applied (Matching Dimensions)",
+    toastStarsAppliedMatchingDimDesc: "The selected stars have been applied to other images with matching dimensions.",
+    toastProportionalApplySkippedTitle: "Proportional Apply Skipped",
+    toastProportionalApplySkippedDesc: "Source image '{fileName}' has no stars selected. Proportional application skipped.",
+    toastProportionalApplyDoneTitle: "Stars Applied (Proportionally)",
+    toastProportionalApplyDoneDesc: "Stars proportionally applied to images with matching aspect ratios.",
+
     downscalePrompt: "Image '{fileName}' ({width}x{height}px) is large. Downscaling it to max {maxSize}px (maintaining aspect ratio) can improve stability and speed. Downscale it?",
     stackingProgress: 'Stacking: {progressPercent}%',
 
@@ -77,7 +87,6 @@ export const translations: Translations = {
     logMasterBiasCreated: "Master Bias Frame created from {count} frames.",
     logMasterBiasFailed: "Failed to create Master Bias Frame (no valid biases processed).",
 
-    // Shared for single frame processing (kept for reference, may be less used now)
     logDarkFrameLoaded: "Dark frame {fileName} loaded ({width}x{height}).",
     logFlatFrameLoaded: "Flat frame {fileName} loaded ({width}x{height}).",
     logBiasFrameLoaded: "Bias frame {fileName} loaded ({width}x{height}).",
@@ -108,10 +117,20 @@ export const translations: Translations = {
     confirmAndClose: '확인 및 닫기',
     cancelEditing: '편집 취소',
     processingLogs: '처리 로그',
-    applyStarsToOther: '다른 이미지에도 이 별 선택을 적용할까요?',
-    applyStarsDescription: "'{fileName}'({width}x{height}px)에 대해 {starCount}개의 별을 수동으로 설정했습니다. 동일한 크기를 가진 대기열의 다른 {otherImageCount}개 이미지에도 이 별 선택을 적용하시겠습니까? 해당 이미지들은 수동 모드로 설정되고 검토된 것으로 표시됩니다.",
-    noKeepIndividual: '아니요, 개별 유지',
-    yesApplyToAll: '예, 일치하는 모든 항목에 적용',
+
+    applyStarOptionsMenuTitle: '다른 이미지에 별 선택 적용',
+    applyStarOptionsMenuDesc: "'{fileName}'({width}x{height}px)에 대해 {starCount}개의 별을 설정했습니다. 이 선택을 대기열의 다른 이미지에 어떻게 적용하시겠습니까?",
+    applyToMatchingDimensionsBtn: '동일 크기 이미지 {count}개에 적용',
+    applyProportionallyBtn: '유사 종횡비 이미지 {count}개에 비례 적용',
+    dontApplyToOthersBtn: '다른 이미지에 적용 안 함',
+
+    toastStarsAppliedMatchingDimTitle: "별 적용됨 (동일 크기)",
+    toastStarsAppliedMatchingDimDesc: "선택한 별들이 동일한 크기의 다른 이미지들에 적용되었습니다.",
+    toastProportionalApplySkippedTitle: "비례 적용 건너뜀",
+    toastProportionalApplySkippedDesc: "원본 이미지 '{fileName}'에 선택된 별이 없습니다. 비례 적용을 건너<0xEB><0x9B><0x88>습니다.",
+    toastProportionalApplyDoneTitle: "별 적용됨 (비례)",
+    toastProportionalApplyDoneDesc: "별들이 유사한 종횡비의 다른 이미지들에 비례하여 적용되었습니다.",
+
     downscalePrompt: "이미지 '{fileName}' ({width}x{height}px)이(가) 큽니다. 최대 크기를 {maxSize}px로 축소(종횡비 유지)하면 안정성과 처리 속도를 향상시킬 수 있습니다. 축소하시겠습니까?",
     stackingProgress: '스태킹 진행률: {progressPercent}%',
 
@@ -177,10 +196,20 @@ export const translations: Translations = {
     confirmAndClose: '确认并关闭',
     cancelEditing: '取消编辑',
     processingLogs: '处理日志',
-    applyStarsToOther: '将星点选择应用于其他图像?',
-    applyStarsDescription: "您已为 '{fileName}' ({width}x{height}px) 手动设置了 {starCount} 颗星。是否将此星点选择应用于队列中具有匹配尺寸的所有其他 {otherImageCount} 张图像？这将把它们设置为手动模式并标记为已审查。",
-    noKeepIndividual: '不，保持独立',
-    yesApplyToAll: '是，应用于所有匹配项',
+
+    applyStarOptionsMenuTitle: '将星点选择应用于其他图像',
+    applyStarOptionsMenuDesc: "您已为“{fileName}”({width}x{height}px) 设置了 {starCount} 颗星点。您希望如何将此选择应用于队列中的其他图像？",
+    applyToMatchingDimensionsBtn: '应用于 {count} 张尺寸相同的图像',
+    applyProportionallyBtn: '按比例应用于 {count} 张长宽比相似的图像',
+    dontApplyToOthersBtn: '不应用于其他图像',
+
+    toastStarsAppliedMatchingDimTitle: "星点已应用 (匹配尺寸)",
+    toastStarsAppliedMatchingDimDesc: "所选星点已应用于其他具有匹配尺寸的图像。",
+    toastProportionalApplySkippedTitle: "按比例应用已跳过",
+    toastProportionalApplySkippedDesc: "源图像“{fileName}”未选择任何星点。按比例应用已跳过。",
+    toastProportionalApplyDoneTitle: "星点已应用 (按比例)",
+    toastProportionalApplyDoneDesc: "星点已按比例应用于具有相似长宽比的其他图像。",
+    
     downscalePrompt: "图像 '{fileName}' ({width}x{height}px) 尺寸较大。将其缩小至最大 {maxSize}px (保持纵横比) 可以提高稳定性和速度。是否缩小？",
     stackingProgress: '叠加进度: {progressPercent}%',
 
@@ -226,3 +255,5 @@ export const defaultLocale: Locale = 'en';
 
 export const getTranslations = (locale: Locale) => translations[locale] || translations[defaultLocale];
 
+
+    

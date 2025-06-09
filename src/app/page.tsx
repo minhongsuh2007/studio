@@ -14,7 +14,7 @@ import { ImageQueueItem } from '@/components/astrostacker/ImageQueueItem';
 import { ImagePreview } from '@/components/astrostacker/ImagePreview';
 import { ImagePostProcessEditor } from '@/components/astrostacker/ImagePostProcessEditor';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Star as StarIcon, ListChecks, CheckCircle, RefreshCcw, Edit3, Loader2, Settings2, Orbit, Trash2, CopyCheck, AlertTriangle, Wand2, ShieldOff, UploadCloud, Layers, Baseline, X, FileImage } from 'lucide-react';
+import { Star as StarIcon, ListChecks, CheckCircle, RefreshCcw, Edit3, Loader2, Orbit, Trash2, CopyCheck, AlertTriangle, Wand2, ShieldOff, UploadCloud, Layers, Baseline, X, FileImage, ChevronRight } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
@@ -48,6 +48,13 @@ export interface ImageStarEntry {
   starSelectionMode: StarSelectionMode;
 }
 
+interface SourceImageForApplyMenu {
+  id: string;
+  fileName: string;
+  stars: Star[];
+  dimensions: { width: number; height: number };
+}
+
 
 type StackingMode = 'median' | 'sigmaClip';
 type PreviewFitMode = 'contain' | 'cover';
@@ -59,7 +66,7 @@ const STACKING_BAND_HEIGHT = 50;
 const SIGMA_CLIP_THRESHOLD = 2.0;
 const SIGMA_CLIP_ITERATIONS = 2;
 const MIN_STARS_FOR_ALIGNMENT = 3;
-const AUTO_ALIGN_TARGET_STAR_COUNT = 25; // New constant for auto star selection
+const AUTO_ALIGN_TARGET_STAR_COUNT = 25;
 
 const PROGRESS_INITIAL_SETUP = 5;
 const PROGRESS_CENTROID_CALCULATION_TOTAL = 30;
@@ -76,6 +83,7 @@ const IS_LARGE_IMAGE_THRESHOLD_MP = 12;
 const MAX_DIMENSION_DOWNSCALED = 2048;
 
 const FLAT_FIELD_CORRECTION_MAX_SCALE_FACTOR = 5;
+const ASPECT_RATIO_TOLERANCE = 0.01;
 
 const yieldToEventLoop = async (delayMs: number) => {
   await new Promise(resolve => setTimeout(resolve, delayMs));
@@ -201,8 +209,6 @@ function calculateStarArrayCentroid(starsInput: Star[], addLog: (message: string
      return null;
   }
 
-  // The starsInput are already the selected (e.g., top N brightest for auto, or manual selection)
-  // So, we use all of them for centroid calculation.
   addLog(`[ALIGN] Calculating centroid from ${starsInput.length} provided stars.`);
 
   let totalBrightness = 0;
@@ -512,7 +518,7 @@ const averageImageDataArrays = (imageDataArrays: ImageData[], targetWidth: numbe
 
   const numImages = imageDataArrays.length;
   const totalPixels = targetWidth * targetHeight;
-  const sumData = new Float32Array(totalPixels * 4); // Accumulate sums as floats
+  const sumData = new Float32Array(totalPixels * 4); 
 
   let validImagesProcessed = 0;
   for (const imgData of imageDataArrays) {
@@ -533,7 +539,7 @@ const averageImageDataArrays = (imageDataArrays: ImageData[], targetWidth: numbe
 
   const averagedData = new Uint8ClampedArray(totalPixels * 4);
   for (let i = 0; i < sumData.length; i++) {
-    averagedData[i] = sumData[i] / validImagesProcessed; // Average and clamp due to Uint8ClampedArray
+    averagedData[i] = sumData[i] / validImagesProcessed; 
   }
   addLog(`[CAL MASTER] Averaged ${validImagesProcessed} image data arrays into a master frame.`);
   return averagedData;
@@ -558,21 +564,20 @@ export default function AstroStackerPage() {
   const [isStarEditingMode, setIsStarEditingMode] = useState(false);
   const [currentEditingImageIndex, setCurrentEditingImageIndex] = useState<number | null>(null);
 
-  const [showApplyToAllDialog, setShowApplyToAllDialog] = useState(false);
-  const [starsToApplyToAll, setStarsToApplyToAll] = useState<Star[] | null>(null);
-  const [sourceImageIdForApplyToAll, setSourceImageIdForApplyToAll] = useState<string | null>(null);
-  const [analysisDimensionsToApplyToAll, setAnalysisDimensionsToApplyToAll] = useState<{width: number, height: number} | null>(null);
+  const [showApplyStarOptionsMenu, setShowApplyStarOptionsMenu] = useState(false);
+  const [sourceImageForApplyMenu, setSourceImageForApplyMenu] = useState<SourceImageForApplyMenu | null>(null);
+  const [isApplyingStarsFromMenu, setIsApplyingStarsFromMenu] = useState(false);
+
 
   const [showPostProcessEditor, setShowPostProcessEditor] = useState(false);
   const [imageForPostProcessing, setImageForPostProcessing] = useState<string | null>(null);
   const [editedPreviewUrl, setEditedPreviewUrl] = useState<string | null>(null);
-  const [isApplyingAdvancedStars, setIsApplyingAdvancedStars] = useState(false);
+
   const [brightness, setBrightness] = useState(100);
   const [exposure, setExposure] = useState(0);
   const [saturation, setSaturation] = useState(100);
   const [isApplyingAdjustments, setIsApplyingAdjustments] = useState(false);
 
-  // Calibration Frame States (Arrays for multiple frames)
   const [darkFrameFiles, setDarkFrameFiles] = useState<File[]>([]);
   const [darkFramePreviewUrls, setDarkFramePreviewUrls] = useState<string[]>([]);
   const [originalDarkFrameDimensionsList, setOriginalDarkFrameDimensionsList] = useState<Array<{ width: number; height: number } | null>>([]);
@@ -1153,121 +1158,122 @@ export default function AstroStackerPage() {
     setAllImageStarData(prev => prev.map((entry, idx) =>
       idx === currentEditingImageIndex ? { ...entry, userReviewed: true, starSelectionMode: 'manual' } : entry
     ));
+    
     setIsStarEditingMode(false);
+    const editingIndex = currentEditingImageIndex; // Store before clearing
     setCurrentEditingImageIndex(null);
     toast({title: "Stars Confirmed", description: `Star selection saved for ${currentImageName}.`});
 
     if (allImageStarData.length > 1 && confirmedEntry.analysisStars && confirmedEntry.analysisDimensions) {
-      setStarsToApplyToAll([...confirmedEntry.analysisStars]);
-      setAnalysisDimensionsToApplyToAll({...confirmedEntry.analysisDimensions});
-      setSourceImageIdForApplyToAll(confirmedEntry.id);
-      setShowApplyToAllDialog(true);
+        setSourceImageForApplyMenu({
+            id: confirmedEntry.id,
+            fileName: confirmedEntry.file.name,
+            stars: [...confirmedEntry.analysisStars],
+            dimensions: { ...confirmedEntry.analysisDimensions },
+        });
+        setShowApplyStarOptionsMenu(true);
     }
   };
 
-  const handleApplyStarsToAllImages = () => {
-    if (!starsToApplyToAll || !sourceImageIdForApplyToAll || !analysisDimensionsToApplyToAll) return;
+  const handleApplyStarsToMatchingDimensions = async () => {
+    if (!sourceImageForApplyMenu) return;
+    setIsApplyingStarsFromMenu(true);
 
-    addLog(`Applying star selection from image ID ${sourceImageIdForApplyToAll} to all other images.`);
+    const { id: sourceId, stars: starsToApply, dimensions: sourceDimensions } = sourceImageForApplyMenu;
+
+    addLog(`Applying star selection from image ${sourceImageForApplyMenu.fileName} to all other images with matching dimensions (${sourceDimensions.width}x${sourceDimensions.height}).`);
     setAllImageStarData(prev => prev.map(entry => {
-      if (entry.id !== sourceImageIdForApplyToAll &&
-          entry.analysisDimensions.width === analysisDimensionsToApplyToAll.width &&
-          entry.analysisDimensions.height === analysisDimensionsToApplyToAll.height) {
+      if (entry.id !== sourceId &&
+          entry.analysisDimensions.width === sourceDimensions.width &&
+          entry.analysisDimensions.height === sourceDimensions.height) {
+        addLog(`Applied ${starsToApply.length} stars to ${entry.file.name} (matching dimensions).`);
         return {
           ...entry,
-          analysisStars: [...starsToApplyToAll],
+          analysisStars: [...starsToApply],
           starSelectionMode: 'manual' as StarSelectionMode,
           userReviewed: true,
-          isAnalyzed: true,
+          isAnalyzed: true, // Mark as analyzed since stars are applied
         };
-      } else if (entry.id !== sourceImageIdForApplyToAll) {
-        addLog(`[WARN] Skipped applying stars to ${entry.file.name} due to dimension mismatch. Source: ${analysisDimensionsToApplyToAll.width}x${analysisDimensionsToApplyToAll.height}, Target: ${entry.analysisDimensions.width}x${entry.analysisDimensions.height}`);
+      } else if (entry.id !== sourceId) {
+        // This log could be verbose if many non-matching images exist.
+        // addLog(`[INFO] Skipped applying stars to ${entry.file.name} due to dimension mismatch for 'matching dimensions' apply.`);
       }
       return entry;
     }));
 
-    toast({title: "Stars Applied", description: "The selected stars have been applied to other images with matching dimensions."});
-    setShowApplyToAllDialog(false);
-    setStarsToApplyToAll(null);
-    setAnalysisDimensionsToApplyToAll(null);
-    setSourceImageIdForApplyToAll(null);
+    toast({title: t('toastStarsAppliedMatchingDimTitle'), description: t('toastStarsAppliedMatchingDimDesc')});
+    setShowApplyStarOptionsMenu(false);
+    setSourceImageForApplyMenu(null);
+    setIsApplyingStarsFromMenu(false);
   };
-
-  const handleCancelApplyToAll = () => {
-    setShowApplyToAllDialog(false);
-    setStarsToApplyToAll(null);
-    setAnalysisDimensionsToApplyToAll(null);
-    setSourceImageIdForApplyToAll(null);
-    addLog("User chose not to apply star selection to all other images.");
-  };
-
-  const handleAdvancedApplyStars = async () => {
-    if (currentEditingImageIndex === null) return;
-
-    setIsApplyingAdvancedStars(true);
-    addLog("Starting advanced star application...");
-
-    const sourceEntry = allImageStarData[currentEditingImageIndex];
-    if (!sourceEntry || !sourceEntry.analysisDimensions) {
-      addLog("[ERROR] Advanced apply failed: Could not get source image data.");
-      toast({ title: "Advanced Apply Failed", description: "Could not get source image data.", variant: "destructive" });
-      setIsApplyingAdvancedStars(false);
+  
+  const handleApplyStarsProportionally = async () => {
+    if (!sourceImageForApplyMenu) return;
+    setIsApplyingStarsFromMenu(true);
+  
+    const { id: sourceId, stars: sourceStars, dimensions: sourceDimensions, fileName: sourceFileName } = sourceImageForApplyMenu;
+    const { width: sourceWidth, height: sourceHeight } = sourceDimensions;
+    const sourceAspectRatio = sourceWidth / sourceHeight;
+  
+    if (sourceStars.length === 0) {
+      addLog("[WARN] Proportional apply skipped: Source image has no stars selected.");
+      toast({ title: t('toastProportionalApplySkippedTitle'), description: t('toastProportionalApplySkippedDesc', {fileName: sourceFileName}), variant: "default" });
+      setIsApplyingStarsFromMenu(false);
+      setShowApplyStarOptionsMenu(false);
+      setSourceImageForApplyMenu(null);
       return;
     }
-
-    const sourceStars = sourceEntry.analysisStars;
-    const { width: sourceWidth, height: sourceHeight } = sourceEntry.analysisDimensions;
-    const sourceAspectRatio = sourceWidth / sourceHeight;
-
-    if (sourceStars.length === 0) {
-        addLog("[WARN] Advanced apply skipped: Source image has no stars selected.");
-        toast({ title: "Advanced Apply", description: "Source image has no stars selected to apply.", variant: "default" });
-         setIsApplyingAdvancedStars(false);
-        return;
-    }
-
-    const updatedImageStarData = await Promise.all(allImageStarData.map(async (targetEntry, index) => {
-      if (targetEntry.id === sourceEntry.id) {
+  
+    addLog(`Applying stars proportionally from ${sourceFileName} to other images with similar aspect ratio...`);
+  
+    const updatedImageStarData = await Promise.all(allImageStarData.map(async (targetEntry) => {
+      if (targetEntry.id === sourceId) {
         return targetEntry;
       }
-
-      if (!targetEntry.analysisDimensions) {
-         addLog(`[WARN] Skipping advanced apply for ${targetEntry.file.name}: Dimension data not available.`);
-         return targetEntry;
+  
+      if (!targetEntry.analysisDimensions || targetEntry.analysisDimensions.width === 0 || targetEntry.analysisDimensions.height === 0) {
+        addLog(`[WARN] Skipping proportional apply for ${targetEntry.file.name}: Dimension data not available or invalid.`);
+        return targetEntry;
       }
-
+  
       const { width: targetWidth, height: targetHeight } = targetEntry.analysisDimensions;
       const targetAspectRatio = targetWidth / targetHeight;
-
-      const aspectRatioTolerance = 0.01;
-
-      if (Math.abs(sourceAspectRatio - targetAspectRatio) < aspectRatioTolerance) {
-        addLog(`Applying stars to ${targetEntry.file.name} (Matching aspect ratio)...`);
+  
+      if (Math.abs(sourceAspectRatio - targetAspectRatio) < ASPECT_RATIO_TOLERANCE) {
+        addLog(`Applying stars proportionally to ${targetEntry.file.name} (Matching aspect ratio: Source ${sourceAspectRatio.toFixed(2)}, Target ${targetAspectRatio.toFixed(2)})...`);
         const transformedStars = sourceStars.map(star => ({
           x: (star.x / sourceWidth) * targetWidth,
           y: (star.y / sourceHeight) * targetHeight,
           brightness: star.brightness,
-          isManuallyAdded: true,
+          isManuallyAdded: true, 
         }));
-
-        addLog(`Successfully applied ${transformedStars.length} stars to ${targetEntry.file.name}.`);
+  
+        addLog(`Successfully applied ${transformedStars.length} stars proportionally to ${targetEntry.file.name}.`);
         return {
           ...targetEntry,
           analysisStars: transformedStars,
           starSelectionMode: 'manual' as StarSelectionMode,
           userReviewed: true,
-          isAnalyzed: targetEntry.isAnalyzed || true,
+          isAnalyzed: targetEntry.isAnalyzed || true, 
         };
       } else {
-        addLog(`[WARN] Skipping advanced apply for ${targetEntry.file.name}: Aspect ratio mismatch. Source ${sourceWidth}x${sourceHeight}, Target ${targetWidth}x${targetHeight}.`);
+        addLog(`[INFO] Skipped proportional apply for ${targetEntry.file.name}: Aspect ratio mismatch. Source ${sourceAspectRatio.toFixed(2)} (${sourceWidth}x${sourceHeight}), Target ${targetAspectRatio.toFixed(2)} (${targetWidth}x${targetHeight}).`);
         return targetEntry;
       }
     }));
-
+  
     setAllImageStarData(updatedImageStarData);
-    addLog("Advanced star application process finished.");
-    toast({ title: "Advanced Apply Complete", description: "Stars proportionally applied to images with matching aspect ratios."});
-    setIsApplyingAdvancedStars(false);
+    addLog("Proportional star application process finished.");
+    toast({ title: t('toastProportionalApplyDoneTitle'), description: t('toastProportionalApplyDoneDesc')});
+    setIsApplyingStarsFromMenu(false);
+    setShowApplyStarOptionsMenu(false);
+    setSourceImageForApplyMenu(null);
+  };
+
+  const handleCancelApplyStarOptionsMenu = () => {
+    setShowApplyStarOptionsMenu(false);
+    setSourceImageForApplyMenu(null);
+    addLog("User chose not to apply star selection to other images from the menu.");
   };
 
 
@@ -1335,7 +1341,6 @@ export default function AstroStackerPage() {
              setAllImageStarData(prev => prev.map((e) => e.id === entry.id ? {...e, isAnalyzing: false, isAnalyzed: entry.isAnalyzed } : e));
         }
 
-        // This block is refined below for auto mode star selection consistency
         if (entry.starSelectionMode === 'auto') {
             if (JSON.stringify(entry.analysisStars) !== JSON.stringify(entry.initialAutoStars)) {
                  updatedStarDataForStacking[i] = { ...entry, analysisStars: [...entry.initialAutoStars] };
@@ -1587,7 +1592,7 @@ export default function AstroStackerPage() {
               const sortedAutoStars = [...entryData.initialAutoStars].sort((a, b) => b.brightness - a.brightness);
               starsForCentroidCalculation = sortedAutoStars.slice(0, AUTO_ALIGN_TARGET_STAR_COUNT);
               addLog(`[ALIGN AUTO] Image ${i} (${fileNameForLog}): Using top ${starsForCentroidCalculation.length} (target: ${AUTO_ALIGN_TARGET_STAR_COUNT}) of ${entryData.initialAutoStars.length} auto-detected stars.`);
-          } else { // manual mode
+          } else { 
               starsForCentroidCalculation = entryData.analysisStars;
               addLog(`[ALIGN MANUAL] Image ${i} (${fileNameForLog}): Using ${starsForCentroidCalculation.length} manually selected/reviewed stars.`);
           }
@@ -1907,12 +1912,32 @@ export default function AstroStackerPage() {
     }
   };
 
+  const countImagesWithMatchingDimensions = useCallback(() => {
+    if (!sourceImageForApplyMenu) return 0;
+    return allImageStarData.filter(img =>
+      img.id !== sourceImageForApplyMenu.id &&
+      img.analysisDimensions.width === sourceImageForApplyMenu.dimensions.width &&
+      img.analysisDimensions.height === sourceImageForApplyMenu.dimensions.height
+    ).length;
+  }, [allImageStarData, sourceImageForApplyMenu]);
 
-  const canStartStacking = allImageStarData.length >= 2 && !isApplyingAdvancedStars;
-  const isUiDisabled = isProcessingStack || isProcessingDarkFrames || isProcessingFlatFrames || isProcessingBiasFrames || (currentEditingImageIndex !== null && allImageStarData[currentEditingImageIndex]?.isAnalyzing);
+  const countImagesWithMatchingAspectRatio = useCallback(() => {
+    if (!sourceImageForApplyMenu) return 0;
+    const sourceAspectRatio = sourceImageForApplyMenu.dimensions.width / sourceImageForApplyMenu.dimensions.height;
+    return allImageStarData.filter(img => {
+      if (img.id === sourceImageForApplyMenu.id || !img.analysisDimensions || img.analysisDimensions.width === 0 || img.analysisDimensions.height === 0) {
+        return false;
+      }
+      const targetAspectRatio = img.analysisDimensions.width / img.analysisDimensions.height;
+      return Math.abs(sourceAspectRatio - targetAspectRatio) < ASPECT_RATIO_TOLERANCE;
+    }).length;
+  }, [allImageStarData, sourceImageForApplyMenu]);
+
+
+  const canStartStacking = allImageStarData.length >= 2;
+  const isUiDisabled = isProcessingStack || isProcessingDarkFrames || isProcessingFlatFrames || isProcessingBiasFrames || (currentEditingImageIndex !== null && allImageStarData[currentEditingImageIndex]?.isAnalyzing) || isApplyingStarsFromMenu;
 
   const currentImageForEditing = currentEditingImageIndex !== null ? allImageStarData[currentEditingImageIndex] : null;
-  const sourceImageForDialog = allImageStarData.find(img => img.id === sourceImageIdForApplyToAll);
 
   const currentYear = new Date().getFullYear();
 
@@ -1921,7 +1946,6 @@ export default function AstroStackerPage() {
       <AppHeader />
       <main className="flex-grow container mx-auto py-6 px-2 sm:px-4 md:px-6">
         <div className="flex flex-col lg:flex-row gap-6">
-          {/* Left Column: Controls and Queue */}
           <div className="w-full lg:w-2/5 xl:w-1/3 space-y-6">
             <Card className="shadow-lg">
               <CardHeader>
@@ -1972,7 +1996,6 @@ export default function AstroStackerPage() {
                       </>
                     )}
 
-                    {/* Bias Frames Section */}
                     <Card className="mt-4 shadow-md">
                         <CardHeader className="pb-3 pt-4">
                             <CardTitle className="flex items-center text-lg">
@@ -2014,7 +2037,6 @@ export default function AstroStackerPage() {
                         </CardContent>
                     </Card>
 
-                    {/* Dark Frames Section */}
                     <Card className="mt-4 shadow-md">
                         <CardHeader className="pb-3 pt-4">
                             <CardTitle className="flex items-center text-lg">
@@ -2056,7 +2078,6 @@ export default function AstroStackerPage() {
                         </CardContent>
                     </Card>
 
-                    {/* Flat Frames Section */}
                     <Card className="mt-4 shadow-md">
                         <CardHeader className="pb-3 pt-4">
                             <CardTitle className="flex items-center text-lg">
@@ -2205,24 +2226,19 @@ export default function AstroStackerPage() {
                         onCanvasClick={handleStarAnnotationClick}
                         canvasDisplayWidth={STAR_ANNOTATION_MAX_DISPLAY_WIDTH}
                       />
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-2">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2">
                         <Button onClick={handleResetStars} variant="outline" className="w-full" disabled={isUiDisabled}>
                           <RefreshCcw className="mr-2 h-4 w-4" /> {t('resetToAuto')}
                         </Button>
                         <Button onClick={handleWipeAllStarsForCurrentImage} variant="destructive" className="w-full" disabled={isUiDisabled}>
                           <Trash2 className="mr-2 h-4 w-4" /> {t('wipeAllStars')}
                         </Button>
-                         <Button onClick={handleAdvancedApplyStars} variant="outline" className="w-full sm:col-span-3 lg:col-span-1" disabled={isUiDisabled || isApplyingAdvancedStars}>
-                          {isApplyingAdvancedStars ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Settings2 className="mr-2 h-4 w-4" /> }
-                           Advanced Apply
-                        </Button>
-                        <Button
+                         <Button
                           onClick={handleConfirmStarsForCurrentImage}
-                          className="w-full bg-green-600 hover:bg-green-700 text-white sm:col-span-3 lg:col-span-1"
+                          className="w-full bg-green-600 hover:bg-green-700 text-white sm:col-span-2"
                           disabled={isUiDisabled}
                         >
                           <CheckCircle className="mr-2 h-4 w-4" />
-
                           {t('confirmAndClose')}
                         </Button>
                       </div>
@@ -2283,33 +2299,47 @@ export default function AstroStackerPage() {
         </div>
       </footer>
 
-      {showApplyToAllDialog && sourceImageForDialog && (
-        <AlertDialog open={showApplyToAllDialog} onOpenChange={setShowApplyToAllDialog}>
-            <AlertDialogContent>
+      {showApplyStarOptionsMenu && sourceImageForApplyMenu && (
+        <AlertDialog open={showApplyStarOptionsMenu} onOpenChange={(open) => { if (!open) handleCancelApplyStarOptionsMenu(); }}>
+            <AlertDialogContent className="max-w-md">
                 <AlertDialogHeader>
                     <AlertDialogTitle className="flex items-center">
                         <CopyCheck className="mr-2 h-5 w-5 text-accent" />
-                        {t('applyStarsToOther')}
+                        {t('applyStarOptionsMenuTitle')}
                     </AlertDialogTitle>
                     <AlertDialogDescription>
-                      {t('applyStarsDescription', {
-                        fileName: sourceImageForDialog.file.name,
-                        starCount: starsToApplyToAll?.length || 0,
-                        width: analysisDimensionsToApplyToAll?.width,
-                        height: analysisDimensionsToApplyToAll?.height,
-                        otherImageCount: allImageStarData.filter(img =>
-                            img.id !== sourceImageIdForApplyToAll &&
-                            img.analysisDimensions.width === analysisDimensionsToApplyToAll?.width &&
-                            img.analysisDimensions.height === analysisDimensionsToApplyToAll?.height
-                        ).length
+                      {t('applyStarOptionsMenuDesc', {
+                        starCount: sourceImageForApplyMenu.stars.length,
+                        fileName: sourceImageForApplyMenu.fileName,
+                        width: sourceImageForApplyMenu.dimensions.width,
+                        height: sourceImageForApplyMenu.dimensions.height,
                       })}
                     </AlertDialogDescription>
                 </AlertDialogHeader>
+                <div className="space-y-3 py-2">
+                    <Button
+                        onClick={handleApplyStarsToMatchingDimensions}
+                        className="w-full justify-start"
+                        variant="outline"
+                        disabled={isApplyingStarsFromMenu || countImagesWithMatchingDimensions() === 0}
+                    >
+                        {isApplyingStarsFromMenu ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Layers className="mr-2 h-4 w-4" />}
+                        {t('applyToMatchingDimensionsBtn', { count: countImagesWithMatchingDimensions() })}
+                    </Button>
+                     <Button
+                        onClick={handleApplyStarsProportionally}
+                        className="w-full justify-start"
+                        variant="outline"
+                        disabled={isApplyingStarsFromMenu || countImagesWithMatchingAspectRatio() === 0}
+                    >
+                        {isApplyingStarsFromMenu ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ChevronRight className="mr-2 h-4 w-4" />} {/* Using ChevronRight as a placeholder for proportional */}
+                        {t('applyProportionallyBtn', { count: countImagesWithMatchingAspectRatio() })}
+                    </Button>
+                </div>
                 <AlertDialogFooter>
-                    <AlertDialogCancel onClick={handleCancelApplyToAll}>{t('noKeepIndividual')}</AlertDialogCancel>
-                    <AlertDialogAction onClick={handleApplyStarsToAllImages} className="bg-accent hover:bg-accent/90 text-accent-foreground">
-                        {t('yesApplyToAll')}
-                    </AlertDialogAction>
+                    <AlertDialogCancel onClick={handleCancelApplyStarOptionsMenu} disabled={isApplyingStarsFromMenu}>
+                        {t('dontApplyToOthersBtn')}
+                    </AlertDialogCancel>
                 </AlertDialogFooter>
             </AlertDialogContent>
         </AlertDialog>
@@ -2337,3 +2367,5 @@ export default function AstroStackerPage() {
     </div>
   );
 }
+
+    
