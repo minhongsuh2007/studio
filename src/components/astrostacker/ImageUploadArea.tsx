@@ -31,9 +31,8 @@ export function ImageUploadArea({ onFilesAdded, isProcessing, multiple = true }:
       'image/webp': ['.webp'],
       'image/x-adobe-dng': ['.dng'],
       'image/x-raw': ['.dng'],
-      // FITS types removed
     },
-    multiple: multiple, // Use prop here
+    multiple: multiple, 
     disabled: isProcessing,
     onDragEnter: () => setIsDragging(true),
     onDragLeave: () => setIsDragging(false),
@@ -67,11 +66,13 @@ export function ImageUploadArea({ onFilesAdded, isProcessing, multiple = true }:
             className="mt-2"
             disabled={isProcessing}
             onClick={(e) => {
+              // Attempt to find the hidden input and click it programmatically.
+              // This is a common pattern for custom file upload UIs.
               const inputElement = document.querySelector('input[type="file"][style*="display: none"]');
-              if (inputElement) {
+              if (inputElement && typeof (inputElement as HTMLInputElement).click === 'function') {
                 (inputElement as HTMLInputElement).click();
               }
-              e.stopPropagation();
+              e.stopPropagation(); // Prevent dropzone's own click handling if not needed
             }}
           >
           <ImageIcon className="mr-2 h-4 w-4" />

@@ -342,6 +342,13 @@ const applySigmaClip = (
   return calculateMean(currentValues);
 };
 
+// FITS processing function removed as 'jsfits' could not be installed.
+// const processFitsFileToDataURL = async (file: File, addLog: (message: string) => void): Promise<string | null> => {
+//   // ... FITS processing logic would go here ...
+//   addLog(`[FITS WARN] FITS processing is currently disabled due to library issues: ${file.name}`);
+//   return null; 
+// };
+
 
 export default function AstroStackerPage() {
   const { t } = useLanguage();
@@ -463,8 +470,20 @@ export default function AstroStackerPage() {
         addLog(`Processing file: ${file.name} (Type: ${fileType || 'unknown'})`);
 
         const acceptedWebTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+        
+        let originalPreviewUrl: string | null = null;
 
-        if (fileType === 'image/x-adobe-dng' || fileName.endsWith('.dng')) {
+        if (fileName.endsWith(".fits") || fileName.endsWith(".fit")) {
+            const fitsMessage = `FITS file (${file.name}) processing is currently disabled due to library issues. Please convert to JPG/PNG.`;
+            addLog(`[WARN] ${fitsMessage}`);
+            toast({
+                title: "FITS Not Supported",
+                description: fitsMessage,
+                variant: "default",
+                duration: 8000,
+            });
+            return null;
+        } else if (fileType === 'image/x-adobe-dng' || fileName.endsWith('.dng')) {
           const dngMsg = `${file.name} is a DNG. Manual conversion to JPG/PNG is recommended.`;
           addLog(`[WARN] ${dngMsg}`);
           toast({
@@ -473,26 +492,10 @@ export default function AstroStackerPage() {
             variant: "default",
             duration: 8000,
           });
-        }
-        
-        let originalPreviewUrl: string | null = null;
+          // Continue processing DNG as a regular image for preview purposes if browser supports it,
+          // but the warning remains crucial.
+          originalPreviewUrl = await fileToDataURL(file);
 
-        if (fileName.endsWith(".fits") || fileName.endsWith(".fit")) {
-            addLog(`[WARN] FITS file (${file.name}) processing is currently disabled due to library issues. Please use other formats.`);
-            toast({
-              title: "FITS Processing Disabled",
-              description: `FITS file (${file.name}) handling is currently unavailable. Please try other image formats like JPG, PNG.`,
-              variant: "default",
-            });
-            return null;
-        } else if (fileName.endsWith(".tif") || fileName.endsWith(".tiff")) {
-           addLog(`[WARN] TIFF file (${file.name}) processing is currently disabled. Please use other formats.`);
-            toast({
-              title: "TIFF Processing Disabled",
-              description: `TIFF file (${file.name}) handling is currently unavailable. Please try other image formats like JPG, PNG.`,
-              variant: "default",
-            });
-            return null;
         } else if (acceptedWebTypes.includes(fileType)) {
             originalPreviewUrl = await fileToDataURL(file);
         } else {
@@ -566,7 +569,7 @@ export default function AstroStackerPage() {
                 });
             };
             img.onerror = () => {
-                const errorMessage = `Could not load generated preview image ${file.name} to check dimensions.`;
+                const errorMessage = `Could not load generated preview image ${file.name} to check dimensions. This can happen if the data URL is invalid or too large.`;
                 addLog(`[ERROR] ${errorMessage}`);
                 toast({ title: "Error Reading Preview", description: errorMessage, variant: "destructive" });
                 resolveEntry(null);
@@ -621,11 +624,13 @@ export default function AstroStackerPage() {
       let previewUrl : string | null = null;
 
       if (fileName.endsWith(".fits") || fileName.endsWith(".fit")) {
-        addLog(`[WARN] FITS file (${file.name}) processing for calibration frames is currently disabled. Please use other formats.`);
+        const fitsMessage = `FITS file (${file.name}) processing is currently disabled for ${frameTypeName} frames due to library issues. Please convert to JPG/PNG.`;
+        addLog(`[WARN] ${fitsMessage}`);
         toast({
-          title: "FITS Processing Disabled",
-          description: `FITS file (${file.name}) handling is currently unavailable for calibration frames. Please try other image formats like JPG, PNG.`,
-          variant: "default",
+            title: `FITS Not Supported for ${frameTypeName}`,
+            description: fitsMessage,
+            variant: "default",
+            duration: 8000,
         });
         setIsProcessingState(false);
         return;
