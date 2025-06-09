@@ -28,7 +28,7 @@ export function ImageUploadArea({ onFilesAdded, isProcessing }: ImageUploadAreaP
       'image/png': ['.png'],
       'image/gif': ['.gif'],
       'image/webp': ['.webp'],
-      'image/tiff': ['.tiff', '.tif'],
+      // TIFF support removed: 'image/tiff': ['.tiff', '.tif'],
       'image/x-adobe-dng': ['.dng'], // Common MIME type for DNG
       'image/x-raw': ['.dng'], // Another possible for DNG
     },
@@ -55,7 +55,7 @@ export function ImageUploadArea({ onFilesAdded, isProcessing }: ImageUploadAreaP
           or click to select files (JPG, PNG, WEBP preferred).
         </p>
         <p className="text-xs text-muted-foreground mt-1">
-          TIFF/DNG files require manual pre-conversion to JPG/PNG for stacking.
+          DNG files may require manual pre-conversion to JPG/PNG for stacking.
         </p>
         <Button
             type="button"

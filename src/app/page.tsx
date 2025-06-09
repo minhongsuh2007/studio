@@ -24,8 +24,7 @@ import { StarAnnotationCanvas, type Star } from '@/components/astrostacker/StarA
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 
-// import { FitsParser } from "fitsjs"; // FITS processing removed
-// import TIFF from "tiff.js"; // Removed static import, will be dynamically imported
+// FITS processing and TIFF processing removed
 
 
 interface LogEntry {
@@ -455,123 +454,29 @@ export default function AstroStackerPage() {
         }
 
         let originalPreviewUrl: string | null = null;
-        let rawWidth = 0;
-        let rawHeight = 0;
+        // let rawWidth = 0; // Not used without FITS/TIFF
+        // let rawHeight = 0; // Not used without FITS/TIFF
 
         if (fileName.endsWith(".fits")) {
             addLog(`[WARN] FITS file (${file.name}) processing is currently disabled. Please use other formats.`);
             toast({
               title: "FITS Processing Disabled",
-              description: `FITS file (${file.name}) handling is currently unavailable. Please try other image formats like JPG, PNG, or TIFF.`,
+              description: `FITS file (${file.name}) handling is currently unavailable. Please try other image formats like JPG, PNG.`,
               variant: "default",
             });
-            return null; 
-            // const buffer = await file.arrayBuffer();
-            // const parser = new FitsParser(); // Usage of FitsParser
-            // parser.parse(buffer); // Usage of FitsParser
-            // const hdu = parser.getHDU(0); 
-            // if (!hdu || !hdu.data || !hdu.data.data) throw new Error("Invalid FITS data structure.");
-
-            // const dataUnit = hdu.data;
-            // rawWidth = dataUnit.width;
-            // rawHeight = dataUnit.height;
-            // const floatData = Float32Array.from(dataUnit.data);
-
-            // const canvas = document.createElement('canvas');
-            // canvas.width = rawWidth;
-            // canvas.height = rawHeight;
-            // const ctx = canvas.getContext('2d');
-            // if (!ctx) throw new Error('Could not get canvas context for FITS.');
-            // const imageData = ctx.createImageData(rawWidth, rawHeight);
-
-            // let min = floatData[0], max = floatData[0];
-            // for (let k = 1; k < floatData.length; k++) {
-            //     if (floatData[k] < min) min = floatData[k];
-            //     if (floatData[k] > max) max = floatData[k];
-            // }
-            // const range = max - min === 0 ? 1 : max - min;
-
-            // for (let k = 0; k < floatData.length; k++) {
-            //     const norm = ((floatData[k] - min) / range) * 255;
-            //     imageData.data[k * 4 + 0] = norm;
-            //     imageData.data[k * 4 + 1] = norm;
-            //     imageData.data[k * 4 + 2] = norm;
-            //     imageData.data[k * 4 + 3] = 255;
-            // }
-            // ctx.putImageData(imageData, 0, 0);
-            // originalPreviewUrl = canvas.toDataURL('image/png');
-            // addLog(`FITS file ${file.name} processed to 8-bit PNG preview (${rawWidth}x${rawHeight}).`);
-
+            return null;
         } else if (fileName.endsWith(".tif") || fileName.endsWith(".tiff")) {
-            addLog(`Processing TIFF file: ${file.name}`);
-            const buffer = await file.arrayBuffer();
-            const TIFFModule = (await import('tiff.js')).default;
-            const tiff = new TIFFModule({ buffer });
-            rawWidth = tiff.width();
-            rawHeight = tiff.height();
-
-            let floatData: Float32Array;
-
-            if (tiff.isGrayscale()) {
-                const samples = tiff.readSamples();
-                if (samples && samples.length > 0 && samples[0]) {
-                    const sampleData = samples[0];
-                     if (sampleData instanceof Float32Array || sampleData instanceof Float64Array) {
-                        floatData = Float32Array.from(sampleData);
-                    } else {
-                        floatData = new Float32Array(sampleData.length);
-                        let maxVal = 0;
-                        if (sampleData instanceof Uint16Array) maxVal = 65535;
-                        else if (sampleData instanceof Uint32Array) maxVal = 4294967295;
-                        else maxVal = 255;
-
-                        for(let k=0; k < sampleData.length; k++) {
-                           floatData[k] = sampleData[k] / maxVal;
-                        }
-                    }
-                } else {
-                    throw new Error("Could not read grayscale samples from TIFF.");
-                }
-            } else {
-                const rgba = tiff.readRGBAImage();
-                floatData = new Float32Array(rawWidth * rawHeight);
-                for (let k = 0; k < floatData.length; k++) {
-                    const r = rgba[k * 4 + 0];
-                    const g = rgba[k * 4 + 1];
-                    const b = rgba[k * 4 + 2];
-                    floatData[k] = (0.299 * r + 0.587 * g + 0.114 * b) / 255.0;
-                }
-            }
-
-            const canvas = document.createElement('canvas');
-            canvas.width = rawWidth;
-            canvas.height = rawHeight;
-            const ctx = canvas.getContext('2d');
-            if (!ctx) throw new Error('Could not get canvas context for TIFF.');
-            const imageData = ctx.createImageData(rawWidth, rawHeight);
-
-            let min = floatData[0], max = floatData[0];
-            for (let k = 1; k < floatData.length; k++) {
-                if (floatData[k] < min) min = floatData[k];
-                if (floatData[k] > max) max = floatData[k];
-            }
-            const range = max - min === 0 ? 1 : max - min;
-
-            for (let k = 0; k < floatData.length; k++) {
-                const norm = ((floatData[k] - min) / range) * 255;
-                imageData.data[k * 4 + 0] = norm;
-                imageData.data[k * 4 + 1] = norm;
-                imageData.data[k * 4 + 2] = norm;
-                imageData.data[k * 4 + 3] = 255;
-            }
-            ctx.putImageData(imageData, 0, 0);
-            originalPreviewUrl = canvas.toDataURL('image/png');
-            addLog(`TIFF file ${file.name} processed to 8-bit PNG preview (${rawWidth}x${rawHeight}).`);
-
+            addLog(`[WARN] TIFF file (${file.name}) processing is currently disabled. Please use other formats.`);
+            toast({
+              title: "TIFF Processing Disabled",
+              description: `TIFF file (${file.name}) handling is currently unavailable. Please try other image formats like JPG, PNG.`,
+              variant: "default",
+            });
+            return null;
         } else if (acceptedWebTypes.includes(fileType)) {
             originalPreviewUrl = await fileToDataURL(file);
         } else {
-            const unsupportedMsg = `${file.name} is unsupported. Use JPG, PNG, GIF, WEBP, FITS, or TIFF.`;
+            const unsupportedMsg = `${file.name} is unsupported. Use JPG, PNG, GIF, or WEBP.`;
             addLog(`[ERROR] ${unsupportedMsg}`);
             toast({
                 title: "Unsupported File Type",
@@ -770,7 +675,7 @@ export default function AstroStackerPage() {
         const updatedEntry: ImageStarEntry = {
           ...entry,
           starSelectionMode: newMode,
-          userReviewed: false 
+          userReviewed: false
         };
 
         if (newMode === 'auto') {
@@ -785,15 +690,17 @@ export default function AstroStackerPage() {
       return entry;
     }));
     
+    // Use a callback with setAllImageStarData to ensure we are working with the latest state
+    // This is important because analyzeImageForStars might be called, which also updates state
     setAllImageStarData(currentData => {
         if (imageIndex !== -1) {
-            const entryToCheck = currentData.find((e, i) => i === imageIndex);
+            const entryToCheck = currentData.find((e, i) => i === imageIndex); // Find by index for safety
             if (entryToCheck && entryToCheck.starSelectionMode === 'manual' && !entryToCheck.isAnalyzed && !entryToCheck.isAnalyzing) {
                 addLog(`Image ${entryToCheck.file.name} switched to manual mode, and needs analysis. Analyzing now...`);
                 analyzeImageForStars(imageIndex); 
             }
         }
-        return currentData;
+        return currentData; // Always return the (potentially updated) currentData
     });
   };
 
@@ -1174,7 +1081,7 @@ export default function AstroStackerPage() {
       const firstImageEntry = allImageStarData[0]; 
 
       if (!firstImage || firstImage.naturalWidth === 0 || firstImage.naturalHeight === 0 || !firstImageEntry?.analysisDimensions) {
-        const invalidRefMsg = `The first image (${firstImageEntry?.file.name || 'unknown'}) is invalid or its dimensions are missing. Cannot proceed.`;
+        const invalidRefMsg = `The first image (${firstImageEntry?.file?.name || 'unknown'}) is invalid or its dimensions are missing. Cannot proceed.`;
         addLog(`[ERROR] ${invalidRefMsg}`);
         toast({ title: "Invalid Reference Image", description: invalidRefMsg, variant: "destructive" });
         setIsProcessingStack(false);

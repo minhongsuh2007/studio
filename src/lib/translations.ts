@@ -15,7 +15,7 @@ export const translations: Translations = {
   en: {
     appTitle: 'AstroStacker',
     uploadAndConfigure: 'Upload & Configure Images',
-    cardDescription: "Add PNG, JPG, GIF, WEBP, FITS, or TIFF. Images are aligned using star centroids or brightness. Optionally downscale large images on upload. Stacking uses processed resolution. Median or Sigma Clip methods available. DNG files may require manual pre-conversion.",
+    cardDescription: "Add PNG, JPG, GIF, WEBP, or FITS. Images are aligned using star centroids or brightness. Optionally downscale large images on upload. Stacking uses processed resolution. Median or Sigma Clip methods available. DNG files may require manual pre-conversion.",
     creditsLine1: 'AstroStacker © {year}',
     creditsLine2Part1: 'Created by Min Hong Seo (암흑광자) with invaluable help from 천관사, Saturn, 구구, Plex, Latte, 얼음세상, 뉴비, 오르트, 지민, and many others.',
     switchToEnglish: 'EN',
@@ -48,7 +48,7 @@ export const translations: Translations = {
   ko: {
     appTitle: '아스트로스태커',
     uploadAndConfigure: '이미지 업로드 및 설정',
-    cardDescription: "PNG, JPG, GIF, WEBP, FITS, 또는 TIFF 파일을 추가하세요. 이미지는 별 중심 또는 밝기 중심으로 정렬됩니다. 업로드 시 큰 이미지를 선택적으로 축소할 수 있습니다. 스태킹은 처리된 해상도를 사용합니다. 중간값 또는 시그마 클립 방법을 사용할 수 있습니다. DNG 파일은 수동 사전 변환이 필요할 수 있습니다.",
+    cardDescription: "PNG, JPG, GIF, WEBP, 또는 FITS 파일을 추가하세요. 이미지는 별 중심 또는 밝기 중심으로 정렬됩니다. 업로드 시 큰 이미지를 선택적으로 축소할 수 있습니다. 스태킹은 처리된 해상도를 사용합니다. 중간값 또는 시그마 클립 방법을 사용할 수 있습니다. DNG 파일은 수동 사전 변환이 필요할 수 있습니다.",
     creditsLine1: '아스트로스태커 © {year}',
     creditsLine2Part1: '천관사님, 새턴님, 구구님, 플렉님, 라떼님, 얼음세상님, 늅님, 오르트님, 지민님, 그리고 다른 여러 분들의 도움으로 서민홍(암흑광자) 에 의해 제작되었습니다.',
     switchToEnglish: '영',
@@ -81,7 +81,7 @@ export const translations: Translations = {
   zh: {
     appTitle: '天文图像叠加器 (AstroStacker)',
     uploadAndConfigure: '上传和配置图像',
-    cardDescription: "添加 PNG, JPG, GIF, WEBP, FITS 或 TIFF 文件。图像使用星点质心或亮度对齐。上传时可选择缩小大图像。叠加使用处理后的分辨率。可使用中值或Sigma裁剪方法。DNG文件可能需要手动预转换。",
+    cardDescription: "添加 PNG, JPG, GIF, WEBP 或 FITS 文件。图像使用星点质心或亮度对齐。上传时可选择缩小大图像。叠加使用处理后的分辨率。可使用中值或Sigma裁剪方法。DNG文件可能需要手动预转换。",
     creditsLine1: '天文图像叠加器 © {year}',
     creditsLine2Part1: '由 Min Hong Seo (암흑광자) 在 천관사, Saturn, 구구, Plex, Latte, 얼음세상, 뉴비, 오르트, 지민 及许多其他人的宝贵帮助下创建。',
     switchToEnglish: '英',
@@ -117,4 +117,3 @@ export const defaultLocale: Locale = 'en';
 
 // Helper function to get translations, can be used in server components if needed
 export const getTranslations = (locale: Locale) => translations[locale] || translations[defaultLocale];
-
