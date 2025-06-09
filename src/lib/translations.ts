@@ -15,7 +15,7 @@ export const translations: Translations = {
   en: {
     appTitle: 'AstroStacker',
     uploadAndConfigure: 'Upload & Configure Images',
-    cardDescription: "Add PNG, JPG, GIF, or WEBP. Images are aligned using star centroids or brightness. Optionally downscale large images on upload. Stacking uses processed resolution. Median or Sigma Clip methods available. DNG files may require manual pre-conversion. FITS/TIFF processing is currently disabled.",
+    cardDescription: "Add PNG, JPG, GIF, or WEBP. Images are aligned using star centroids or brightness. Optionally downscale large images on upload. Stacking uses processed resolution. Median or Sigma Clip methods available. DNG files may require manual pre-conversion. TIFF and FITS processing are currently disabled.",
     creditsLine1: 'AstroStacker © {year}',
     creditsLine2Part1: 'Created by Min Hong Seo (암흑광자) with invaluable help from 천관사, Saturn, 구구, Plex, Latte, 얼음세상, 뉴비, 오르트, 지민, and many others.',
     switchToEnglish: 'EN',
@@ -44,7 +44,7 @@ export const translations: Translations = {
     yesApplyToAll: 'Yes, Apply to All Matching',
     downscalePrompt: "Image '{fileName}' ({width}x{height}px) is large. Downscaling it to max {maxSize}px (maintaining aspect ratio) can improve stability and speed. Downscale it?",
     stackingProgress: 'Stacking: {progressPercent}%',
-    
+
     // Dark Frame
     darkFrameUploadTitle: 'Dark Frame (Optional)',
     darkFrameUploadDescription: 'Upload a single dark frame (JPG/PNG). It will be subtracted from each light frame before stacking to reduce thermal noise. Ensure it has similar dimensions to your light frames for best results.',
@@ -76,7 +76,7 @@ export const translations: Translations = {
     logFlatFrameProcessed: "Flat frame {fileName} processed, bias-subtracted (if applicable) and scaled to target dimensions.",
     logSubtractingBiasFromFlat: "Subtracting Bias from Flat Frame: {flatFrameName}",
     logApplyingFlatCorrection: "Applying flat field correction to light frame: {lightFrameName}. Mean Flat (R:{meanR},G:{meanG},B:{meanB})",
-    
+
     // Bias Frame
     biasFrameUploadTitle: 'Bias Frame (Optional)',
     biasFrameUploadDescription: 'Upload a single bias frame (JPG/PNG). Represents the camera read-out noise, subtracted from Light, Dark, and Flat frames if used. Ensure similar dimensions.',
@@ -95,7 +95,7 @@ export const translations: Translations = {
   ko: {
     appTitle: '아스트로스태커',
     uploadAndConfigure: '이미지 업로드 및 설정',
-    cardDescription: "PNG, JPG, GIF, 또는 WEBP 파일을 추가하세요. 이미지는 별 중심 또는 밝기 중심으로 정렬됩니다. 업로드 시 큰 이미지를 선택적으로 축소할 수 있습니다. 스태킹은 처리된 해상도를 사용합니다. 중간값 또는 시그마 클립 방법을 사용할 수 있습니다. DNG 파일은 수동 사전 변환이 필요할 수 있습니다. FITS/TIFF 처리는 현재 비활성화되어 있습니다.",
+    cardDescription: "PNG, JPG, GIF, 또는 WEBP 파일을 추가하세요. 이미지는 별 중심 또는 밝기 중심으로 정렬됩니다. 업로드 시 큰 이미지를 선택적으로 축소할 수 있습니다. 스태킹은 처리된 해상도를 사용합니다. 중간값 또는 시그마 클립 방법을 사용할 수 있습니다. DNG 파일은 수동 사전 변환이 필요할 수 있습니다. TIFF 및 FITS 처리는 현재 비활성화되어 있습니다.",
     creditsLine1: '아스트로스태커 © {year}',
     creditsLine2Part1: '천관사님, 새턴님, 구구님, 플렉님, 라떼님, 얼음세상님, 늅님, 오르트님, 지민님, 그리고 다른 여러 분들의 도움으로 서민홍(암흑광자) 에 의해 제작되었습니다.',
     switchToEnglish: '영',
@@ -175,7 +175,7 @@ export const translations: Translations = {
   zh: {
     appTitle: '天文图像叠加器 (AstroStacker)',
     uploadAndConfigure: '上传和配置图像',
-    cardDescription: "添加 PNG, JPG, GIF, 或 WEBP 文件。图像使用星点质心或亮度对齐。上传时可选择缩小大图像。叠加使用处理后的分辨率。可使用中值或Sigma裁剪方法。DNG文件可能需要手动预转换。FITS/TIFF 处理当前已禁用。",
+    cardDescription: "添加 PNG, JPG, GIF, 或 WEBP 文件。图像使用星点质心或亮度对齐。上传时可选择缩小大图像。叠加使用处理后的分辨率。可使用中值或Sigma裁剪方法。DNG文件可能需要手动预转换。TIFF 和 FITS 处理当前已禁用。",
     creditsLine1: '天文图像叠加器 © {year}',
     creditsLine2Part1: '由 Min Hong Seo (암흑광자) 在 천관사, Saturn, 구구, Plex, Latte, 얼음세상, 뉴비, 오르트, 지민 及许多其他人的宝贵帮助下创建。',
     switchToEnglish: '英',
@@ -220,7 +220,7 @@ export const translations: Translations = {
     logDarkFrameProcessed: "暗场 {fileName} 已处理并缩放至目标尺寸。",
     logSubtractingBiasFromDark: "正在从暗场中减去偏置场: {darkFrameName}",
     logApplyingDarkFrame: "正在对亮场应用暗场扣除: {lightFrameName}",
-    
+
     // Flat Frame
     flatFrameUploadTitle: '平场 (可选)',
     flatFrameUploadDescription: '上传单个平场文件 (JPG/PNG)。用于校正传感器灰尘、渐晕和不均匀照明。确保尺寸与亮场相似。',

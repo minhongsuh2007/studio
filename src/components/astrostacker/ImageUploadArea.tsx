@@ -24,13 +24,14 @@ export function ImageUploadArea({ onFilesAdded, isProcessing, multiple = true }:
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
-    accept: { 
+    accept: {
       'image/jpeg': ['.jpeg', '.jpg'],
       'image/png': ['.png'],
       'image/gif': ['.gif'],
       'image/webp': ['.webp'],
-      'image/x-adobe-dng': ['.dng'], 
-      'image/x-raw': ['.dng'], 
+      'image/x-adobe-dng': ['.dng'],
+      'image/x-raw': ['.dng'],
+      // FITS types removed
     },
     multiple: multiple, // Use prop here
     disabled: isProcessing,
@@ -56,7 +57,7 @@ export function ImageUploadArea({ onFilesAdded, isProcessing, multiple = true }:
         </p>
         {multiple && (
           <p className="text-xs text-muted-foreground mt-1">
-            DNG files may require manual pre-conversion to JPG/PNG for stacking.
+            DNG files may require manual pre-conversion to JPG/PNG for stacking. FITS and TIFF are not currently supported.
           </p>
         )}
         <Button
@@ -70,7 +71,7 @@ export function ImageUploadArea({ onFilesAdded, isProcessing, multiple = true }:
               if (inputElement) {
                 (inputElement as HTMLInputElement).click();
               }
-              e.stopPropagation(); 
+              e.stopPropagation();
             }}
           >
           <ImageIcon className="mr-2 h-4 w-4" />
