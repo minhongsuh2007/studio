@@ -11,9 +11,10 @@ import { Input } from '@/components/ui/input'; // Keep for fallback or explicit 
 interface ImageUploadAreaProps {
   onFilesAdded: (files: File[]) => void;
   isProcessing: boolean;
+  multiple?: boolean; // Added prop
 }
 
-export function ImageUploadArea({ onFilesAdded, isProcessing }: ImageUploadAreaProps) {
+export function ImageUploadArea({ onFilesAdded, isProcessing, multiple = true }: ImageUploadAreaProps) {
   const [isDragging, setIsDragging] = useState(false);
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
@@ -28,11 +29,10 @@ export function ImageUploadArea({ onFilesAdded, isProcessing }: ImageUploadAreaP
       'image/png': ['.png'],
       'image/gif': ['.gif'],
       'image/webp': ['.webp'],
-      // TIFF support removed: 'image/tiff': ['.tiff', '.tif'],
-      'image/x-adobe-dng': ['.dng'], // Common MIME type for DNG
-      'image/x-raw': ['.dng'], // Another possible for DNG
+      'image/x-adobe-dng': ['.dng'], 
+      'image/x-raw': ['.dng'], 
     },
-    multiple: true,
+    multiple: multiple, // Use prop here
     disabled: isProcessing,
     onDragEnter: () => setIsDragging(true),
     onDragLeave: () => setIsDragging(false),
@@ -49,14 +49,16 @@ export function ImageUploadArea({ onFilesAdded, isProcessing }: ImageUploadAreaP
       <div className="flex flex-col items-center justify-center space-y-3 text-center">
         <UploadCloud className={`w-12 h-12 ${isDragActive || isDragging ? 'text-accent' : 'text-muted-foreground'}`} />
         <p className={`text-lg font-medium ${isDragActive || isDragging ? 'text-accent' : 'text-foreground'}`}>
-          Drag & drop images here
+          {multiple ? "Drag & drop images here" : "Drag & drop a single image here"}
         </p>
         <p className="text-sm text-muted-foreground">
-          or click to select files (JPG, PNG, WEBP preferred).
+          or click to select {multiple ? "files" : "a file"} (JPG, PNG, WEBP preferred).
         </p>
-        <p className="text-xs text-muted-foreground mt-1">
-          DNG files may require manual pre-conversion to JPG/PNG for stacking.
-        </p>
+        {multiple && (
+          <p className="text-xs text-muted-foreground mt-1">
+            DNG files may require manual pre-conversion to JPG/PNG for stacking.
+          </p>
+        )}
         <Button
             type="button"
             variant="outline"
@@ -64,16 +66,15 @@ export function ImageUploadArea({ onFilesAdded, isProcessing }: ImageUploadAreaP
             className="mt-2"
             disabled={isProcessing}
             onClick={(e) => {
-              // Manually trigger file input click
               const inputElement = document.querySelector('input[type="file"][style*="display: none"]');
               if (inputElement) {
                 (inputElement as HTMLInputElement).click();
               }
-              e.stopPropagation(); // Prevent dropzone activation if button is inside
+              e.stopPropagation(); 
             }}
           >
           <ImageIcon className="mr-2 h-4 w-4" />
-          Browse Files
+          Browse {multiple ? "Files" : "File"}
         </Button>
       </div>
     </div>

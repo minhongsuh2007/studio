@@ -14,7 +14,7 @@ import { ImageQueueItem } from '@/components/astrostacker/ImageQueueItem';
 import { ImagePreview } from '@/components/astrostacker/ImagePreview';
 import { ImagePostProcessEditor } from '@/components/astrostacker/ImagePostProcessEditor';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Star as StarIcon, ListChecks, CheckCircle, RefreshCcw, Edit3, Loader2, Settings2, Orbit, Trash2, CopyCheck, AlertTriangle, Wand2 } from 'lucide-react';
+import { Star as StarIcon, ListChecks, CheckCircle, RefreshCcw, Edit3, Loader2, Settings2, Orbit, Trash2, CopyCheck, AlertTriangle, Wand2, ShieldOff, UploadCloud } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
@@ -23,9 +23,8 @@ import { Slider } from "@/components/ui/slider";
 import { StarAnnotationCanvas, type Star } from '@/components/astrostacker/StarAnnotationCanvas';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-
-// FITS processing and TIFF processing removed
-
+import { Switch } from '@/components/ui/switch'; // Added for dark frame toggle
+import Image from 'next/image'; // For dark frame preview
 
 interface LogEntry {
   id: number;
@@ -373,6 +372,14 @@ export default function AstroStackerPage() {
   const [saturation, setSaturation] = useState(100);
   const [isApplyingAdjustments, setIsApplyingAdjustments] = useState(false);
 
+  // Dark Frame State
+  const [darkFrameFile, setDarkFrameFile] = useState<File | null>(null);
+  const [darkFramePreviewUrl, setDarkFramePreviewUrl] = useState<string | null>(null);
+  const [useDarkFrame, setUseDarkFrame] = useState<boolean>(false);
+  const [originalDarkFrameDimensions, setOriginalDarkFrameDimensions] = useState<{ width: number; height: number } | null>(null);
+  const [isProcessingDarkFrame, setIsProcessingDarkFrame] = useState(false);
+
+
   const addLog = useCallback((message: string) => {
     setLogs(prevLogs => {
       const newLog = {
@@ -454,8 +461,6 @@ export default function AstroStackerPage() {
         }
 
         let originalPreviewUrl: string | null = null;
-        // let rawWidth = 0; // Not used without FITS/TIFF
-        // let rawHeight = 0; // Not used without FITS/TIFF
 
         if (fileName.endsWith(".fits")) {
             addLog(`[WARN] FITS file (${file.name}) processing is currently disabled. Please use other formats.`);
@@ -466,7 +471,7 @@ export default function AstroStackerPage() {
             });
             return null;
         } else if (fileName.endsWith(".tif") || fileName.endsWith(".tiff")) {
-            addLog(`[WARN] TIFF file (${file.name}) processing is currently disabled. Please use other formats.`);
+           addLog(`[WARN] TIFF file (${file.name}) processing is currently disabled. Please use other formats.`);
             toast({
               title: "TIFF Processing Disabled",
               description: `TIFF file (${file.name}) handling is currently unavailable. Please try other image formats like JPG, PNG.`,
@@ -575,11 +580,77 @@ export default function AstroStackerPage() {
     addLog(`Finished adding files. ${validNewEntries.length} new files queued. Total: ${allImageStarData.length + validNewEntries.length}.`);
   };
 
+  const handleDarkFrameFileAdded = async (files: File[]) => {
+    if (files.length === 0) return;
+    const file = files[0];
+    addLog(`Processing dark frame: ${file.name}`);
+    setIsProcessingDarkFrame(true);
+    setDarkFrameFile(null);
+    setDarkFramePreviewUrl(null);
+    setOriginalDarkFrameDimensions(null);
+
+    try {
+      const fileType = file.type.toLowerCase();
+      const acceptedWebTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+
+      if (!acceptedWebTypes.includes(fileType) && !(file.name.toLowerCase().endsWith('.fits') || file.name.toLowerCase().endsWith('.tif') || file.name.toLowerCase().endsWith('.tiff'))) {
+          const unsupportedMsg = `Dark frame ${file.name} is unsupported. Use JPG, PNG, GIF, WEBP. FITS/TIFF also currently not supported for dark frames.`;
+          addLog(`[ERROR] ${unsupportedMsg}`);
+          toast({ title: "Unsupported Dark Frame", description: unsupportedMsg, variant: "destructive" });
+          setIsProcessingDarkFrame(false);
+          return;
+      }
+      // For now, block FITS/TIFF for dark frames as well until full processing is in place for them.
+      if (file.name.toLowerCase().endsWith('.fits') || file.name.toLowerCase().endsWith('.tif') || file.name.toLowerCase().endsWith('.tiff')) {
+        const unsupportedFormatMsg = `FITS/TIFF files are not currently supported as dark frames. Please use JPG or PNG.`;
+        addLog(`[ERROR] ${unsupportedFormatMsg}`);
+        toast({ title: "Unsupported Dark Frame Format", description: unsupportedFormatMsg, variant: "destructive" });
+        setIsProcessingDarkFrame(false);
+        return;
+      }
+
+
+      const previewUrl = await fileToDataURL(file);
+      setDarkFramePreviewUrl(previewUrl);
+      setDarkFrameFile(file);
+
+      const img = new Image();
+      img.onload = () => {
+        setOriginalDarkFrameDimensions({ width: img.naturalWidth, height: img.naturalHeight });
+        addLog(t('logDarkFrameLoaded', { fileName: file.name, width: img.naturalWidth, height: img.naturalHeight }));
+        setIsProcessingDarkFrame(false);
+      };
+      img.onerror = () => {
+        addLog(`[ERROR] Could not load dark frame ${file.name} to get dimensions.`);
+        toast({ title: "Error Loading Dark Frame", description: `Could not load ${file.name}.`, variant: "destructive" });
+        setDarkFramePreviewUrl(null);
+        setDarkFrameFile(null);
+        setIsProcessingDarkFrame(false);
+      };
+      img.src = previewUrl;
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      addLog(`[ERROR] Processing dark frame ${file.name}: ${errorMessage}`);
+      toast({ title: `Error Processing Dark Frame`, description: errorMessage, variant: "destructive" });
+      setIsProcessingDarkFrame(false);
+    }
+  };
+
+
   const handleRemoveImage = (idToRemove: string) => {
     const entry = allImageStarData.find(entry => entry.id === idToRemove);
     const fileName = entry?.file?.name || `image with id ${idToRemove}`;
     setAllImageStarData(prev => prev.filter(item => item.id !== idToRemove));
     addLog(`Removed ${fileName} from queue.`);
+  };
+
+  const handleRemoveDarkFrame = () => {
+    addLog(`Removing dark frame: ${darkFrameFile?.name || 'current dark frame'}`);
+    setDarkFrameFile(null);
+    setDarkFramePreviewUrl(null);
+    setOriginalDarkFrameDimensions(null);
+    setUseDarkFrame(false); // Also disable usage if removed
   };
 
   const loadImage = (dataUrl: string, imageNameForLog: string): Promise<HTMLImageElement> => {
@@ -675,32 +746,33 @@ export default function AstroStackerPage() {
         const updatedEntry: ImageStarEntry = {
           ...entry,
           starSelectionMode: newMode,
-          userReviewed: false
+          userReviewed: false, // Always set to false when mode changes or stars are edited non-auto
         };
-
+        
+        // If switching to 'auto', revert to initial auto stars
         if (newMode === 'auto') {
           updatedEntry.analysisStars = [...entry.initialAutoStars];
-        } else { 
-          if ((!entry.analysisStars || entry.analysisStars.length === 0) && entry.initialAutoStars.length > 0) {
-             updatedEntry.analysisStars = [...entry.initialAutoStars];
-          }
+        } else { // Switching to 'manual'
+            // If manual mode had no stars, but auto-detected did, populate with auto as a base
+            if ((!entry.analysisStars || entry.analysisStars.length === 0) && entry.initialAutoStars.length > 0) {
+               updatedEntry.analysisStars = [...entry.initialAutoStars];
+            }
+            // Otherwise, keep existing manual stars if any (or empty if none were there and no auto fallback)
         }
         return updatedEntry;
       }
       return entry;
     }));
     
-    // Use a callback with setAllImageStarData to ensure we are working with the latest state
-    // This is important because analyzeImageForStars might be called, which also updates state
     setAllImageStarData(currentData => {
         if (imageIndex !== -1) {
-            const entryToCheck = currentData.find((e, i) => i === imageIndex); // Find by index for safety
+            const entryToCheck = currentData.find((e, i) => i === imageIndex);
             if (entryToCheck && entryToCheck.starSelectionMode === 'manual' && !entryToCheck.isAnalyzed && !entryToCheck.isAnalyzing) {
                 addLog(`Image ${entryToCheck.file.name} switched to manual mode, and needs analysis. Analyzing now...`);
                 analyzeImageForStars(imageIndex); 
             }
         }
-        return currentData; // Always return the (potentially updated) currentData
+        return currentData; 
     });
   };
 
@@ -976,7 +1048,7 @@ export default function AstroStackerPage() {
     setEditedPreviewUrl(null);
 
 
-    addLog(`Starting image stacking. Mode: ${stackingMode}. Output: ${outputFormat.toUpperCase()}. Files: ${allImageStarData.length}.`);
+    addLog(`Starting image stacking. Mode: ${stackingMode}. Output: ${outputFormat.toUpperCase()}. Files: ${allImageStarData.length}. Dark Frame: ${useDarkFrame && darkFrameFile ? darkFrameFile.name : 'Not Used'}.`);
     addLog(`Star Alignment: Min Stars = ${MIN_STARS_FOR_ALIGNMENT}.`);
     addLog(`Star Detection Params: Combined Brightness Threshold = ${DEFAULT_STAR_BRIGHTNESS_THRESHOLD_COMBINED}, Local Contrast Factor = ${DEFAULT_STAR_LOCAL_CONTRAST_FACTOR}.`);
     addLog(`Brightness Centroid Fallback Threshold: ${BRIGHTNESS_CENTROID_FALLBACK_THRESHOLD_GRAYSCALE_EQUIVALENT} (grayscale equivalent).`);
@@ -1102,6 +1174,44 @@ export default function AstroStackerPage() {
         setProgressPercent(0);
         return;
       }
+
+      // Dark Frame Processing
+      let darkFrameFullImageData: ImageData | null = null;
+      if (useDarkFrame && darkFrameFile) {
+        addLog(`Processing dark frame: ${darkFrameFile.name}`);
+        try {
+          const darkFrameImgEl = await loadImage(darkFramePreviewUrl!, darkFrameFile.name); // Use previewUrl as it's already a data URL
+          const dfCanvas = document.createElement('canvas');
+          dfCanvas.width = targetWidth;
+          dfCanvas.height = targetHeight;
+          const dfCtx = dfCanvas.getContext('2d', { willReadFrequently: true });
+          if (!dfCtx) throw new Error("Could not get dark frame canvas context.");
+          
+          dfCtx.drawImage(darkFrameImgEl, 0, 0, targetWidth, targetHeight);
+          darkFrameFullImageData = dfCtx.getImageData(0, 0, targetWidth, targetHeight);
+          
+          if (originalDarkFrameDimensions && (originalDarkFrameDimensions.width !== targetWidth || originalDarkFrameDimensions.height !== targetHeight)) {
+            const resizeMsg = t('darkFrameDimensionMismatchWarn', {
+              dfWidth: originalDarkFrameDimensions.width,
+              dfHeight: originalDarkFrameDimensions.height,
+              targetWidth: targetWidth,
+              targetHeight: targetHeight
+            });
+            addLog(`[WARN] ${resizeMsg}`);
+            toast({ title: "Dark Frame Resized", description: resizeMsg, variant: "default" });
+          }
+          addLog(`Dark frame processed and scaled to ${targetWidth}x${targetHeight}.`);
+        } catch (dfError) {
+          const dfErrorMsg = dfError instanceof Error ? dfError.message : String(dfError);
+          addLog(`[ERROR] Failed to process dark frame: ${dfErrorMsg}. Proceeding without dark frame subtraction.`);
+          toast({ title: "Dark Frame Error", description: `Could not process dark frame: ${dfErrorMsg}. Stacking without it.`, variant: "destructive"});
+          darkFrameFullImageData = null; // Ensure it's null if processing failed
+        }
+      } else if (useDarkFrame && !darkFrameFile) {
+        addLog(`[WARN] ${t('darkFrameMissing')}`);
+        toast({ title: "Dark Frame Missing", description: t('darkFrameMissing'), variant: "default" });
+      }
+
 
       const numImages = imageElements.length;
       const totalPixels = targetWidth * targetHeight;
@@ -1259,8 +1369,30 @@ export default function AstroStackerPage() {
           ctx.drawImage(img, dx, dy, targetWidth, targetHeight); 
 
           try {
+            // Get full aligned light frame data
+            const alignedLightFullImageData = ctx.getImageData(0, 0, targetWidth, targetHeight);
+            
+            // Apply dark frame subtraction if enabled and dark frame data is available
+            if (useDarkFrame && darkFrameFullImageData) {
+                const lightData = alignedLightFullImageData.data;
+                const darkData = darkFrameFullImageData.data;
+                for (let p = 0; p < lightData.length; p += 4) {
+                    lightData[p] = Math.max(0, lightData[p] - darkData[p]);         // R
+                    lightData[p + 1] = Math.max(0, lightData[p + 1] - darkData[p + 1]); // G
+                    lightData[p + 2] = Math.max(0, lightData[p + 2] - darkData[p + 2]); // B
+                    // Alpha (lightData[p + 3]) remains unchanged
+                }
+                // Put subtracted data back to canvas to extract the band
+                ctx.putImageData(alignedLightFullImageData, 0, 0);
+                if (yBandStart === 0 && i === 0) { // Log only once per stack for brevity
+                     addLog(t('logApplyingDarkFrame', { lightFrameName: allImageStarData[i]?.file?.name || `Image ${i}` }));
+                }
+            }
+            
+            // Extract the current band's data from the (potentially dark-subtracted) image on the canvas
             const bandFrameImageData = ctx.getImageData(0, yBandStart, targetWidth, currentBandHeight);
             const bandData = bandFrameImageData.data;
+
 
             for (let j = 0; j < bandData.length; j += 4) {
               const bandPixelIndex = j / 4; 
@@ -1360,9 +1492,11 @@ export default function AstroStackerPage() {
         const alignmentMessage = successfulStarAlignments > 0
           ? `${successfulStarAlignments}/${imageElements.length} images primarily aligned using star-based centroids.`
           : `All images aligned using brightness-based centroids or geometric centers.`;
+        
+        const darkFrameMessage = useDarkFrame && darkFrameFullImageData ? "Dark frame subtraction applied." : "No dark frame subtraction.";
 
         const stackingMethodUsed = stackingMode === 'median' ? 'Median' : 'Sigma Clip';
-        const successToastMsg = `${alignmentMessage} ${validImagesStackedCount} image(s) (out of ${imageElements.length} processed) stacked. Dim: ${targetWidth}x${targetHeight}. Ready for post-processing.`;
+        const successToastMsg = `${alignmentMessage} ${darkFrameMessage} ${validImagesStackedCount} image(s) (out of ${imageElements.length} processed) stacked. Dim: ${targetWidth}x${targetHeight}. Ready for post-processing.`;
         addLog(`Stacking complete. ${successToastMsg}`);
         toast({
           title: `${stackingMethodUsed} Stacking Complete (${outputFormat.toUpperCase()})`,
@@ -1414,7 +1548,7 @@ export default function AstroStackerPage() {
 
 
   const canStartStacking = allImageStarData.length >= 2 && !isApplyingAdvancedStars;
-  const isUiDisabled = isProcessingStack || (currentEditingImageIndex !== null && allImageStarData[currentEditingImageIndex]?.isAnalyzing);
+  const isUiDisabled = isProcessingStack || isProcessingDarkFrame || (currentEditingImageIndex !== null && allImageStarData[currentEditingImageIndex]?.isAnalyzing);
 
   const currentImageForEditing = currentEditingImageIndex !== null ? allImageStarData[currentEditingImageIndex] : null;
   const sourceImageForDialog = allImageStarData.find(img => img.id === sourceImageIdForApplyToAll);
@@ -1441,7 +1575,7 @@ export default function AstroStackerPage() {
               <CardContent className="space-y-4">
                 {!isStarEditingMode ? (
                   <>
-                    <ImageUploadArea onFilesAdded={handleFilesAdded} isProcessing={isUiDisabled} />
+                    <ImageUploadArea onFilesAdded={handleFilesAdded} isProcessing={isUiDisabled} multiple={true} />
 
                     {isProcessingStack && progressPercent > 0 && (
                       <div className="space-y-2 my-4">
@@ -1474,7 +1608,48 @@ export default function AstroStackerPage() {
                             ))}
                           </div>
                         </ScrollArea>
+                      </>
+                    )}
+                    
+                    {/* Dark Frame Section */}
+                    <Card className="mt-4 shadow-md">
+                        <CardHeader className="pb-3 pt-4">
+                            <CardTitle className="flex items-center text-lg">
+                                <ShieldOff className="mr-2 h-5 w-5 text-accent" />
+                                {t('darkFrameUploadTitle')}
+                            </CardTitle>
+                            <CardDescription className="text-xs">{t('darkFrameUploadDescription')}</CardDescription>
+                        </CardHeader>
+                        <CardContent className="space-y-3 pb-4">
+                            <ImageUploadArea onFilesAdded={handleDarkFrameFileAdded} isProcessing={isUiDisabled} multiple={false} />
+                            {isProcessingDarkFrame && <Loader2 className="mx-auto my-2 h-6 w-6 animate-spin text-accent" />}
+                            {darkFramePreviewUrl && (
+                                <div className="mt-2 space-y-2">
+                                    <Label className="text-sm font-semibold">{t('darkFramePreviewTitle')}</Label>
+                                    <div className="relative aspect-video w-full rounded border overflow-hidden">
+                                        <Image src={darkFramePreviewUrl} alt="Dark Frame Preview" layout="fill" objectFit="contain" data-ai-hint="dark frame sensor" />
+                                        <Button variant="destructive" size="icon" onClick={handleRemoveDarkFrame} className="absolute top-1 right-1 h-6 w-6 z-10" disabled={isUiDisabled}>
+                                            <X className="h-3 w-3" />
+                                        </Button>
+                                    </div>
+                                    {originalDarkFrameDimensions && (
+                                      <p className="text-xs text-muted-foreground">
+                                        {darkFrameFile?.name} ({originalDarkFrameDimensions.width}x{originalDarkFrameDimensions.height})
+                                      </p>
+                                    )}
+                                </div>
+                            )}
+                            {darkFrameFile && (
+                                <div className="flex items-center space-x-2 pt-2">
+                                    <Switch id="use-dark-frame" checked={useDarkFrame} onCheckedChange={setUseDarkFrame} disabled={isUiDisabled || !darkFrameFile} />
+                                    <Label htmlFor="use-dark-frame" className="text-sm cursor-pointer">{t('useDarkFrameLabel')}</Label>
+                                </div>
+                            )}
+                        </CardContent>
+                    </Card>
 
+                    {allImageStarData.length > 0 && (
+                        <>
                         {/* Stacking Options */}
                         <div className="space-y-2 pt-2">
                           <Label className="text-base font-semibold text-foreground">{t('stackingMode')}</Label>
