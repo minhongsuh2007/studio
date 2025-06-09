@@ -342,12 +342,175 @@ const applySigmaClip = (
   return calculateMean(currentValues);
 };
 
-// FITS processing function removed as 'jsfits' could not be installed.
-// const processFitsFileToDataURL = async (file: File, addLog: (message: string) => void): Promise<string | null> => {
-//   // ... FITS processing logic would go here ...
-//   addLog(`[FITS WARN] FITS processing is currently disabled due to library issues: ${file.name}`);
-//   return null; 
-// };
+const processFitsFileToDataURL_custom = async (file: File, addLog: (message: string) => void): Promise<string | null> => {
+  addLog(`[FITS] Starting custom FITS processing for: ${file.name}`);
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const dataView = new DataView(arrayBuffer);
+
+    let headerText = "";
+    let headerOffset = 0;
+    const blockSize = 2880;
+
+    addLog(`[FITS] Reading header blocks...`);
+    while (headerOffset < arrayBuffer.byteLength) {
+      const blockEnd = Math.min(headerOffset + blockSize, arrayBuffer.byteLength);
+      const block = new TextDecoder().decode(arrayBuffer.slice(headerOffset, blockEnd));
+      headerText += block;
+      headerOffset = blockEnd;
+      if (block.includes("END                                                                             ")) {
+        // Check for standard END card
+        break;
+      }
+      if (headerOffset >= arrayBuffer.byteLength) {
+         addLog(`[FITS WARN] Reached end of file while reading header, END card not found precisely. Last block: ${block.substring(0,100)}...`);
+         break;
+      }
+    }
+    addLog(`[FITS] Header reading complete. Total header size: ${headerOffset} bytes.`);
+
+
+    const cards = headerText.match(/.{1,80}/g) || [];
+    const headerMap: Record<string, string> = {};
+    for (const card of cards) {
+      if (card.trim() === "END") break;
+      const parts = card.split("=");
+      if (parts.length > 1) {
+        const key = parts[0].trim();
+        const valuePart = parts.slice(1).join("=").trim();
+        headerMap[key] = valuePart.split("/")[0].trim().replace(/'/g, ""); // Remove quotes from string values
+      } else {
+         // Handle comment or history cards, or cards without '=' if needed, though typically we only care for keyword=value
+         if (card.trim() !== "" && !["COMMENT", "HISTORY", ""].includes(card.substring(0,8).trim())) {
+            addLog(`[FITS HEADER WARN] Skipping card without '=': ${card}`);
+         }
+      }
+    }
+    addLog(`[FITS] Parsed ${Object.keys(headerMap).length} header cards.`);
+
+
+    const bitpix = parseInt(headerMap["BITPIX"]);
+    const naxis = parseInt(headerMap["NAXIS"]);
+    let width = 0;
+    let height = 0;
+
+    if (naxis >= 1) width = parseInt(headerMap["NAXIS1"]);
+    if (naxis >= 2) height = parseInt(headerMap["NAXIS2"]);
+    // For NAXIS > 2 (e.g. data cubes), we'll only process the first 2D plane
+    if (naxis > 2) addLog(`[FITS WARN] NAXIS is ${naxis}. Will process first 2D plane (${width}x${height}).`);
+
+
+    if (isNaN(bitpix) || isNaN(naxis) || isNaN(width) || isNaN(height) || width <= 0 || height <= 0) {
+      addLog(`[FITS ERROR] Invalid or missing FITS header keywords: BITPIX=${bitpix}, NAXIS=${naxis}, NAXIS1=${width}, NAXIS2=${height}. Cannot process.`);
+      console.error("Invalid FITS header data:", headerMap);
+      return null;
+    }
+    addLog(`[FITS] Dimensions: ${width}x${height}, BITPIX: ${bitpix}`);
+
+
+    const bytesPerPixel = Math.abs(bitpix) / 8;
+    const pixelCount = width * height;
+    const rawPixelData = new Float32Array(pixelCount); // Always store raw data as float for consistent processing
+
+    // The actual image data starts after all header blocks.
+    // Each header block is 2880 bytes. The 'offset' variable should point to the start of image data.
+    const imageDataOffset = headerOffset; // This should be the offset after the last header block
+    addLog(`[FITS] Image data starting at offset: ${imageDataOffset}`);
+
+
+    if (imageDataOffset + pixelCount * bytesPerPixel > arrayBuffer.byteLength) {
+      addLog(`[FITS ERROR] Calculated image data size (${pixelCount * bytesPerPixel} bytes at offset ${imageDataOffset}) exceeds file size (${arrayBuffer.byteLength} bytes). Header might be malformed or file truncated.`);
+      return null;
+    }
+
+    for (let i = 0; i < pixelCount; i++) {
+      const pixelByteOffset = imageDataOffset + i * bytesPerPixel;
+      try {
+        if (bitpix === 8) { // Unsigned 8-bit integer
+            rawPixelData[i] = dataView.getUint8(pixelByteOffset);
+        } else if (bitpix === 16) { // Signed 16-bit integer, big-endian
+            rawPixelData[i] = dataView.getInt16(pixelByteOffset, false);
+        } else if (bitpix === 32) { // Signed 32-bit integer, big-endian
+            rawPixelData[i] = dataView.getInt32(pixelByteOffset, false);
+        } else if (bitpix === -32) { // 32-bit float, big-endian
+            rawPixelData[i] = dataView.getFloat32(pixelByteOffset, false);
+        } else if (bitpix === -64) { // 64-bit float, big-endian
+            rawPixelData[i] = dataView.getFloat64(pixelByteOffset, false);
+        }
+         else {
+          addLog(`[FITS ERROR] Unsupported BITPIX value: ${bitpix}. Cannot read pixel data. Reading first pixel and stopping.`);
+          console.error("Unsupported BITPIX:", bitpix);
+          return null;
+        }
+      } catch (e) {
+        addLog(`[FITS ERROR] Error reading pixel data at index ${i} (offset ${pixelByteOffset}): ${e instanceof Error ? e.message : String(e)}. File might be corrupted or BITPIX incorrect.`);
+        return null;
+      }
+    }
+    addLog(`[FITS] Raw pixel data read successfully.`);
+
+
+    let minVal = Infinity;
+    let maxVal = -Infinity;
+    for (let i = 0; i < pixelCount; i++) {
+      if (rawPixelData[i] < minVal) minVal = rawPixelData[i];
+      if (rawPixelData[i] > maxVal) maxVal = rawPixelData[i];
+    }
+
+    if (minVal === Infinity || maxVal === -Infinity ) { // All pixels might be NaN or array empty (though width/height checks prevent empty)
+        addLog(`[FITS WARN] Could not determine valid min/max for normalization (min: ${minVal}, max: ${maxVal}). Image might be blank or contain only NaNs. Setting to default 0-255 range.`);
+        minVal = 0;
+        maxVal = 255;
+    }
+    addLog(`[FITS] Normalization range: min=${minVal}, max=${maxVal}`);
+
+
+    const normalizedPixels = new Uint8ClampedArray(pixelCount);
+    const range = maxVal - minVal;
+    if (range === 0) { // Handle flat image (all pixels same value)
+      addLog(`[FITS WARN] Pixel data range is zero (all pixels are ${minVal}). Normalizing to mid-gray (128).`);
+      for (let i = 0; i < pixelCount; i++) {
+        normalizedPixels[i] = 128;
+      }
+    } else {
+      for (let i = 0; i < pixelCount; i++) {
+        normalizedPixels[i] = ((rawPixelData[i] - minVal) / range) * 255;
+      }
+    }
+    addLog(`[FITS] Pixel data normalized to 0-255 range.`);
+
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+
+    if (!ctx) {
+      addLog("[FITS ERROR] Could not get 2D context from canvas for FITS rendering.");
+      return null;
+    }
+
+    const imgData = ctx.createImageData(width, height);
+    for (let i = 0; i < pixelCount; i++) {
+      const val = normalizedPixels[i];
+      imgData.data[i * 4 + 0] = val; // R
+      imgData.data[i * 4 + 1] = val; // G
+      imgData.data[i * 4 + 2] = val; // B
+      imgData.data[i * 4 + 3] = 255; // A
+    }
+    ctx.putImageData(imgData, 0, 0);
+    addLog(`[FITS] Image data rendered to canvas.`);
+
+    const dataURL = canvas.toDataURL("image/png");
+    addLog(`[FITS] Successfully converted ${file.name} to PNG data URL.`);
+    return dataURL;
+
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    addLog(`[FITS ERROR] Failed to process FITS file ${file.name}: ${errorMessage}`);
+    console.error("FITS Processing Error:", error);
+    return null;
+  }
+};
 
 
 export default function AstroStackerPage() {
@@ -474,15 +637,18 @@ export default function AstroStackerPage() {
         let originalPreviewUrl: string | null = null;
 
         if (fileName.endsWith(".fits") || fileName.endsWith(".fit")) {
-            const fitsMessage = `FITS file (${file.name}) processing is currently disabled due to library issues. Please convert to JPG/PNG.`;
-            addLog(`[WARN] ${fitsMessage}`);
-            toast({
-                title: "FITS Not Supported",
-                description: fitsMessage,
-                variant: "default",
-                duration: 8000,
-            });
-            return null;
+            addLog(`[FITS] Detected FITS file: ${file.name}. Processing with custom parser...`);
+            originalPreviewUrl = await processFitsFileToDataURL_custom(file, addLog);
+            if (!originalPreviewUrl) {
+                toast({
+                    title: "FITS Processing Failed",
+                    description: `Could not process FITS file ${file.name}. Please check logs.`,
+                    variant: "destructive",
+                    duration: 8000,
+                });
+                return null;
+            }
+             addLog(`[FITS] Successfully generated preview for ${file.name}.`);
         } else if (fileType === 'image/x-adobe-dng' || fileName.endsWith('.dng')) {
           const dngMsg = `${file.name} is a DNG. Manual conversion to JPG/PNG is recommended.`;
           addLog(`[WARN] ${dngMsg}`);
@@ -492,14 +658,12 @@ export default function AstroStackerPage() {
             variant: "default",
             duration: 8000,
           });
-          // Continue processing DNG as a regular image for preview purposes if browser supports it,
-          // but the warning remains crucial.
           originalPreviewUrl = await fileToDataURL(file);
 
         } else if (acceptedWebTypes.includes(fileType)) {
             originalPreviewUrl = await fileToDataURL(file);
         } else {
-            const unsupportedMsg = `${file.name} is unsupported. Use JPG, PNG, GIF, or WEBP.`;
+            const unsupportedMsg = `${file.name} is unsupported. Use JPG, PNG, GIF, WEBP or FITS.`;
             addLog(`[ERROR] ${unsupportedMsg}`);
             toast({
                 title: "Unsupported File Type",
@@ -569,7 +733,7 @@ export default function AstroStackerPage() {
                 });
             };
             img.onerror = () => {
-                const errorMessage = `Could not load generated preview image ${file.name} to check dimensions. This can happen if the data URL is invalid or too large.`;
+                const errorMessage = `Could not load generated preview image ${file.name} to check dimensions. This can happen if the data URL is invalid or too large. FITS files may produce large data URLs.`;
                 addLog(`[ERROR] ${errorMessage}`);
                 toast({ title: "Error Reading Preview", description: errorMessage, variant: "destructive" });
                 resolveEntry(null);
@@ -624,18 +788,21 @@ export default function AstroStackerPage() {
       let previewUrl : string | null = null;
 
       if (fileName.endsWith(".fits") || fileName.endsWith(".fit")) {
-        const fitsMessage = `FITS file (${file.name}) processing is currently disabled for ${frameTypeName} frames due to library issues. Please convert to JPG/PNG.`;
-        addLog(`[WARN] ${fitsMessage}`);
-        toast({
-            title: `FITS Not Supported for ${frameTypeName}`,
-            description: fitsMessage,
-            variant: "default",
-            duration: 8000,
-        });
-        setIsProcessingState(false);
-        return;
+        addLog(`[FITS] Detected FITS ${frameTypeName} frame: ${file.name}. Processing with custom parser...`);
+        previewUrl = await processFitsFileToDataURL_custom(file, addLog);
+        if (!previewUrl) {
+            toast({
+                title: `FITS ${frameTypeName} Processing Failed`,
+                description: `Could not process FITS file ${file.name}. Check logs.`,
+                variant: "destructive",
+                duration: 8000,
+            });
+            setIsProcessingState(false);
+            return;
+        }
+        addLog(`[FITS] Successfully generated preview for ${frameTypeName} frame ${file.name}.`);
       } else if (!acceptedWebTypes.includes(fileType)) {
-        const unsupportedMsg = `${frameTypeName} frame ${file.name} is unsupported. Use JPG, PNG, GIF, or WEBP.`;
+        const unsupportedMsg = `${frameTypeName} frame ${file.name} is unsupported. Use JPG, PNG, GIF, WEBP, or FITS.`;
         addLog(`[ERROR] ${unsupportedMsg}`);
         toast({ title: `Unsupported ${frameTypeName} Frame`, description: unsupportedMsg, variant: "destructive" });
         setIsProcessingState(false);
@@ -2120,3 +2287,5 @@ export default function AstroStackerPage() {
   );
 }
 
+
+    

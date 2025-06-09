@@ -15,7 +15,7 @@ export const translations: Translations = {
   en: {
     appTitle: 'AstroStacker',
     uploadAndConfigure: 'Upload & Configure Images',
-    cardDescription: "Add PNG, JPG, GIF, or WEBP. Images are aligned using star centroids or brightness. Optionally downscale large images on upload. Stacking uses processed resolution. Median or Sigma Clip methods available. DNG files may require manual pre-conversion. FITS and TIFF processing are currently disabled due to library issues.",
+    cardDescription: "Add PNG, JPG, GIF, WEBP, or FITS files. FITS files are processed using a built-in parser. Images are aligned using star centroids or brightness. Optionally downscale large images on upload. Stacking uses processed resolution. Median or Sigma Clip methods available. DNG files may require manual pre-conversion. TIFF processing is currently disabled.",
     creditsLine1: 'AstroStacker © {year}',
     creditsLine2Part1: 'Created by Min Hong Seo (암흑광자) with invaluable help from 천관사, Saturn, 구구, Plex, Latte, 얼음세상, 뉴비, 오르트, 지민, and many others.',
     switchToEnglish: 'EN',
@@ -47,7 +47,7 @@ export const translations: Translations = {
 
     // Dark Frame
     darkFrameUploadTitle: 'Dark Frame (Optional)',
-    darkFrameUploadDescription: 'Upload a single dark frame (JPG/PNG/WEBP). It will be subtracted from each light frame before stacking to reduce thermal noise. Ensure it has similar dimensions to your light frames for best results.',
+    darkFrameUploadDescription: 'Upload a single dark frame (JPG/PNG/WEBP/FITS). It will be subtracted from each light frame before stacking to reduce thermal noise. Ensure it has similar dimensions to your light frames for best results.',
     useDarkFrameLabel: 'Enable Dark Frame Subtraction',
     darkFramePreviewTitle: 'Dark Frame Preview',
     darkFrameDimensionMismatchWarn: "Dark frame dimensions ({dfWidth}x{dfHeight}) do not match target stacking dimensions ({targetWidth}x{targetHeight}). Dark frame will be resized. For best results, use a dark frame with the same dimensions as your light frames.",
@@ -63,7 +63,7 @@ export const translations: Translations = {
 
     // Flat Frame
     flatFrameUploadTitle: 'Flat Frame (Optional)',
-    flatFrameUploadDescription: 'Upload a single flat frame (JPG/PNG/WEBP). Used to correct for sensor dust, vignetting, and uneven illumination. Ensure similar dimensions to light frames.',
+    flatFrameUploadDescription: 'Upload a single flat frame (JPG/PNG/WEBP/FITS). Used to correct for sensor dust, vignetting, and uneven illumination. Ensure similar dimensions to light frames.',
     useFlatFrameLabel: 'Enable Flat Field Correction',
     flatFramePreviewTitle: 'Flat Frame Preview',
     flatFrameDimensionMismatchWarn: "Flat frame dimensions ({dfWidth}x{dfHeight}) do not match target stacking dimensions ({targetWidth}x{targetHeight}). Flat frame will be resized. For best results, use a flat frame with the same dimensions as your light frames.",
@@ -79,7 +79,7 @@ export const translations: Translations = {
 
     // Bias Frame
     biasFrameUploadTitle: 'Bias Frame (Optional)',
-    biasFrameUploadDescription: 'Upload a single bias frame (JPG/PNG/WEBP). Represents the camera read-out noise, subtracted from Light, Dark, and Flat frames if used. Ensure similar dimensions.',
+    biasFrameUploadDescription: 'Upload a single bias frame (JPG/PNG/WEBP/FITS). Represents the camera read-out noise, subtracted from Light, Dark, and Flat frames if used. Ensure similar dimensions.',
     useBiasFrameLabel: 'Enable Bias Frame Subtraction',
     biasFramePreviewTitle: 'Bias Frame Preview',
     biasFrameDimensionMismatchWarn: "Bias frame dimensions ({dfWidth}x{dfHeight}) do not match target stacking dimensions ({targetWidth}x{targetHeight}). Bias frame will be resized. For best results, use a bias frame with the same dimensions as your light frames.",
@@ -95,7 +95,7 @@ export const translations: Translations = {
   ko: {
     appTitle: '아스트로스태커',
     uploadAndConfigure: '이미지 업로드 및 설정',
-    cardDescription: "PNG, JPG, GIF, 또는 WEBP 파일을 추가하세요. 이미지는 별 중심 또는 밝기 중심으로 정렬됩니다. 업로드 시 큰 이미지를 선택적으로 축소할 수 있습니다. 스태킹은 처리된 해상도를 사용합니다. 중간값 또는 시그마 클립 방법을 사용할 수 있습니다. DNG 파일은 수동 사전 변환이 필요할 수 있습니다. 라이브러리 문제로 인해 FITS 및 TIFF 처리는 현재 비활성화되어 있습니다.",
+    cardDescription: "PNG, JPG, GIF, WEBP, 또는 FITS 파일을 추가하세요. FITS 파일은 내장 파서를 사용하여 처리됩니다. 이미지는 별 중심 또는 밝기 중심으로 정렬됩니다. 업로드 시 큰 이미지를 선택적으로 축소할 수 있습니다. 스태킹은 처리된 해상도를 사용합니다. 중간값 또는 시그마 클립 방법을 사용할 수 있습니다. DNG 파일은 수동 사전 변환이 필요할 수 있습니다. TIFF 처리는 현재 비활성화되어 있습니다.",
     creditsLine1: '아스트로스태커 © {year}',
     creditsLine2Part1: '천관사님, 새턴님, 구구님, 플렉님, 라떼님, 얼음세상님, 늅님, 오르트님, 지민님, 그리고 다른 여러 분들의 도움으로 서민홍(암흑광자) 에 의해 제작되었습니다.',
     switchToEnglish: '영',
@@ -127,7 +127,7 @@ export const translations: Translations = {
 
     // Dark Frame
     darkFrameUploadTitle: '다크 프레임 (선택 사항)',
-    darkFrameUploadDescription: '단일 다크 프레임(JPG/PNG/WEBP)을 업로드하세요. 열 노이즈 감소를 위해 스태킹 전 각 라이트 프레임에서 빼게 됩니다. 최상의 결과를 위해 라이트 프레임과 유사한 크기인지 확인하세요.',
+    darkFrameUploadDescription: '단일 다크 프레임(JPG/PNG/WEBP/FITS)을 업로드하세요. 열 노이즈 감소를 위해 스태킹 전 각 라이트 프레임에서 빼게 됩니다. 최상의 결과를 위해 라이트 프레임과 유사한 크기인지 확인하세요.',
     useDarkFrameLabel: '다크 프레임 빼기 활성화',
     darkFramePreviewTitle: '다크 프레임 미리보기',
     darkFrameDimensionMismatchWarn: "다크 프레임 크기({dfWidth}x{dfHeight})가 대상 스태킹 크기({targetWidth}x{targetHeight})와 일치하지 않습니다. 다크 프레임 크기가 조정됩니다. 최상의 결과를 얻으려면 라이트 프레임과 동일한 크기의 다크 프레임을 사용하세요.",
@@ -143,7 +143,7 @@ export const translations: Translations = {
 
     // Flat Frame
     flatFrameUploadTitle: '플랫 프레임 (선택 사항)',
-    flatFrameUploadDescription: '단일 플랫 프레임(JPG/PNG/WEBP)을 업로드하세요. 센서 먼지, 비네팅, 고르지 않은 조명을 보정하는 데 사용됩니다. 라이트 프레임과 유사한 크기인지 확인하세요.',
+    flatFrameUploadDescription: '단일 플랫 프레임(JPG/PNG/WEBP/FITS)을 업로드하세요. 센서 먼지, 비네팅, 고르지 않은 조명을 보정하는 데 사용됩니다. 라이트 프레임과 유사한 크기인지 확인하세요.',
     useFlatFrameLabel: '플랫 필드 보정 활성화',
     flatFramePreviewTitle: '플랫 프레임 미리보기',
     flatFrameDimensionMismatchWarn: "플랫 프레임 크기({dfWidth}x{dfHeight})가 대상 스태킹 크기({targetWidth}x{targetHeight})와 일치하지 않습니다. 플랫 프레임 크기가 조정됩니다. 최상의 결과를 얻으려면 라이트 프레임과 동일한 크기의 플랫 프레임을 사용하세요.",
@@ -159,7 +159,7 @@ export const translations: Translations = {
 
     // Bias Frame
     biasFrameUploadTitle: '바이어스 프레임 (선택 사항)',
-    biasFrameUploadDescription: '단일 바이어스 프레임(JPG/PNG/WEBP)을 업로드하세요. 카메라 읽기 노이즈를 나타내며, 사용 시 라이트, 다크, 플랫 프레임에서 차감됩니다. 유사한 크기인지 확인하세요.',
+    biasFrameUploadDescription: '단일 바이어스 프레임(JPG/PNG/WEBP/FITS)을 업로드하세요. 카메라 읽기 노이즈를 나타내며, 사용 시 라이트, 다크, 플랫 프레임에서 차감됩니다. 유사한 크기인지 확인하세요.',
     useBiasFrameLabel: '바이어스 프레임 빼기 활성화',
     biasFramePreviewTitle: '바이어스 프레임 미리보기',
     biasFrameDimensionMismatchWarn: "바이어스 프레임 크기({dfWidth}x{dfHeight})가 대상 스태킹 크기({targetWidth}x{targetHeight})와 일치하지 않습니다. 바이어스 프레임 크기가 조정됩니다. 최상의 결과를 얻으려면 라이트 프레임과 동일한 크기의 바이어스 프레임을 사용하세요.",
@@ -175,7 +175,7 @@ export const translations: Translations = {
   zh: {
     appTitle: '天文图像叠加器 (AstroStacker)',
     uploadAndConfigure: '上传和配置图像',
-    cardDescription: "添加 PNG, JPG, GIF, 或 WEBP 文件。图像使用星点质心或亮度对齐。上传时可选择缩小大图像。叠加使用处理后的分辨率。可使用中值或Sigma裁剪方法。DNG文件可能需要手动预转换。由于库问题，FITS 和 TIFF 处理当前已禁用。",
+    cardDescription: "添加 PNG, JPG, GIF, WEBP, 或 FITS 文件。FITS 文件使用内置解析器进行处理。图像使用星点质心或亮度对齐。上传时可选择缩小大图像。叠加使用处理后的分辨率。可使用中值或Sigma裁剪方法。DNG文件可能需要手动预转换。TIFF 处理当前已禁用。",
     creditsLine1: '天文图像叠加器 © {year}',
     creditsLine2Part1: '由 Min Hong Seo (암흑광자) 在 천관사, Saturn, 구구, Plex, Latte, 얼음세상, 뉴비, 오르트, 지민 及许多其他人的宝贵帮助下创建。',
     switchToEnglish: '英',
@@ -207,7 +207,7 @@ export const translations: Translations = {
 
     // Dark Frame
     darkFrameUploadTitle: '暗场 (可选)',
-    darkFrameUploadDescription: '上传单个暗场文件 (JPG/PNG/WEBP)。它将在叠加前从每个亮场中减去以减少热噪声。为获得最佳效果，请确保其尺寸与亮场相似。',
+    darkFrameUploadDescription: '上传单个暗场文件 (JPG/PNG/WEBP/FITS)。它将在叠加前从每个亮场中减去以减少热噪声。为获得最佳效果，请确保其尺寸与亮场相似。',
     useDarkFrameLabel: '启用暗场扣除',
     darkFramePreviewTitle: '暗场预览',
     darkFrameDimensionMismatchWarn: "暗场尺寸 ({dfWidth}x{dfHeight}) 与目标叠加尺寸 ({targetWidth}x{targetHeight}) 不匹配。暗场将被调整大小。为获得最佳效果，请使用与亮场相同尺寸的暗场。",
@@ -223,7 +223,7 @@ export const translations: Translations = {
 
     // Flat Frame
     flatFrameUploadTitle: '平场 (可选)',
-    flatFrameUploadDescription: '上传单个平场文件 (JPG/PNG/WEBP)。用于校正传感器灰尘、渐晕和不均匀照明。确保尺寸与亮场相似。',
+    flatFrameUploadDescription: '上传单个平场文件 (JPG/PNG/WEBP/FITS)。用于校正传感器灰尘、渐晕和不均匀照明。确保尺寸与亮场相似。',
     useFlatFrameLabel: '启用平场校正',
     flatFramePreviewTitle: '平场预览',
     flatFrameDimensionMismatchWarn: "平场尺寸 ({dfWidth}x{dfHeight}) 与目标叠加尺寸 ({targetWidth}x{targetHeight}) 不匹配。平场将被调整大小。为获得最佳效果，请使用与亮场相同尺寸的平场。",
@@ -239,7 +239,7 @@ export const translations: Translations = {
 
     // Bias Frame
     biasFrameUploadTitle: '偏置场 (可选)',
-    biasFrameUploadDescription: '上传单个偏置场文件 (JPG/PNG/WEBP)。代表相机的读出噪声，如果使用，将从亮场、暗场和平场中减去。确保尺寸相似。',
+    biasFrameUploadDescription: '上传单个偏置场文件 (JPG/PNG/WEBP/FITS)。代表相机的读出噪声，如果使用，将从亮场、暗场和平场中减去。确保尺寸相似。',
     useBiasFrameLabel: '启用偏置场扣除',
     biasFramePreviewTitle: '偏置场预览',
     biasFrameDimensionMismatchWarn: "偏置场尺寸 ({dfWidth}x{dfHeight}) 与目标叠加尺寸 ({targetWidth}x{targetHeight}) 不匹配。偏置场将被调整大小。为获得最佳效果，请使用与亮场相同尺寸的偏置场。",
@@ -258,3 +258,5 @@ export const defaultLocale: Locale = 'en';
 
 export const getTranslations = (locale: Locale) => translations[locale] || translations[defaultLocale];
 
+
+    
