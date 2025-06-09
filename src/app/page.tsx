@@ -14,7 +14,7 @@ import { ImageQueueItem } from '@/components/astrostacker/ImageQueueItem';
 import { ImagePreview } from '@/components/astrostacker/ImagePreview';
 import { ImagePostProcessEditor } from '@/components/astrostacker/ImagePostProcessEditor';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Star as StarIcon, ListChecks, CheckCircle, RefreshCcw, Edit3, Loader2, Orbit, Trash2, CopyCheck, AlertTriangle, Wand2, ShieldOff, UploadCloud, Layers, Baseline, X, FileImage, ChevronRight } from 'lucide-react';
+import { Star as StarIcon, ListChecks, CheckCircle, RefreshCcw, Edit3, Loader2, Orbit, Trash2, CopyCheck, AlertTriangle, Wand2, ShieldOff, UploadCloud, Layers, Baseline, X, FileImage, ChevronRight, SkipForward } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
@@ -1160,8 +1160,7 @@ export default function AstroStackerPage() {
     ));
     
     setIsStarEditingMode(false);
-    const editingIndex = currentEditingImageIndex; // Store before clearing
-    setCurrentEditingImageIndex(null);
+    // Do not clear currentEditingImageIndex here, let the ApplyStarOptionsMenu handle it or next step
     toast({title: "Stars Confirmed", description: `Star selection saved for ${currentImageName}.`});
 
     if (allImageStarData.length > 1 && confirmedEntry.analysisStars && confirmedEntry.analysisDimensions) {
@@ -1172,7 +1171,35 @@ export default function AstroStackerPage() {
             dimensions: { ...confirmedEntry.analysisDimensions },
         });
         setShowApplyStarOptionsMenu(true);
+    } else {
+      setCurrentEditingImageIndex(null); // No menu, so clear index
     }
+  };
+
+  const handleConfirmAndNext = async () => {
+    if (currentEditingImageIndex === null) return; 
+
+    const hasNextImage = currentEditingImageIndex < allImageStarData.length - 1;
+    if (!hasNextImage) {
+      // Fallback to "Confirm & Close" behavior if this is the last image
+      // or if the button was somehow clicked when it should have been disabled.
+      addLog("Confirm & Next clicked on last image, behaving as Confirm & Close.");
+      handleConfirmStarsForCurrentImage();
+      return;
+    }
+
+    const currentImageEntry = allImageStarData[currentEditingImageIndex];
+    const currentImageName = currentImageEntry?.file.name || "current image";
+    addLog(`Confirmed star selection for ${currentImageName} and moving to next. Total stars: ${currentImageEntry?.analysisStars.length}. Mode: Manual.`);
+
+    setAllImageStarData(prev => prev.map((entry, idx) =>
+      idx === currentEditingImageIndex ? { ...entry, userReviewed: true, starSelectionMode: 'manual' } : entry
+    ));
+    
+    toast({title: "Stars Confirmed", description: `Star selection saved for ${currentImageName}.`});
+
+    const nextImageIndex = currentEditingImageIndex + 1;
+    await handleEditStarsRequest(nextImageIndex); 
   };
 
   const handleApplyStarsToMatchingDimensions = async () => {
@@ -1192,11 +1219,8 @@ export default function AstroStackerPage() {
           analysisStars: [...starsToApply],
           starSelectionMode: 'manual' as StarSelectionMode,
           userReviewed: true,
-          isAnalyzed: true, // Mark as analyzed since stars are applied
+          isAnalyzed: true, 
         };
-      } else if (entry.id !== sourceId) {
-        // This log could be verbose if many non-matching images exist.
-        // addLog(`[INFO] Skipped applying stars to ${entry.file.name} due to dimension mismatch for 'matching dimensions' apply.`);
       }
       return entry;
     }));
@@ -1204,6 +1228,7 @@ export default function AstroStackerPage() {
     toast({title: t('toastStarsAppliedMatchingDimTitle'), description: t('toastStarsAppliedMatchingDimDesc')});
     setShowApplyStarOptionsMenu(false);
     setSourceImageForApplyMenu(null);
+    setCurrentEditingImageIndex(null);
     setIsApplyingStarsFromMenu(false);
   };
   
@@ -1221,6 +1246,7 @@ export default function AstroStackerPage() {
       setIsApplyingStarsFromMenu(false);
       setShowApplyStarOptionsMenu(false);
       setSourceImageForApplyMenu(null);
+      setCurrentEditingImageIndex(null);
       return;
     }
   
@@ -1268,11 +1294,13 @@ export default function AstroStackerPage() {
     setIsApplyingStarsFromMenu(false);
     setShowApplyStarOptionsMenu(false);
     setSourceImageForApplyMenu(null);
+    setCurrentEditingImageIndex(null);
   };
 
   const handleCancelApplyStarOptionsMenu = () => {
     setShowApplyStarOptionsMenu(false);
     setSourceImageForApplyMenu(null);
+    setCurrentEditingImageIndex(null); // Ensure editor index is cleared if dialog is cancelled
     addLog("User chose not to apply star selection to other images from the menu.");
   };
 
@@ -2226,25 +2254,39 @@ export default function AstroStackerPage() {
                         onCanvasClick={handleStarAnnotationClick}
                         canvasDisplayWidth={STAR_ANNOTATION_MAX_DISPLAY_WIDTH}
                       />
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2">
+                      <div className="grid grid-cols-2 gap-2 pt-2">
                         <Button onClick={handleResetStars} variant="outline" className="w-full" disabled={isUiDisabled}>
                           <RefreshCcw className="mr-2 h-4 w-4" /> {t('resetToAuto')}
                         </Button>
                         <Button onClick={handleWipeAllStarsForCurrentImage} variant="destructive" className="w-full" disabled={isUiDisabled}>
                           <Trash2 className="mr-2 h-4 w-4" /> {t('wipeAllStars')}
                         </Button>
+                      </div>
+                      <div className="space-y-2 mt-2">
+                        <Button
+                          onClick={handleConfirmAndNext}
+                          className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+                          disabled={
+                            isUiDisabled ||
+                            currentEditingImageIndex === null ||
+                            currentEditingImageIndex >= allImageStarData.length - 1
+                          }
+                        >
+                          <SkipForward className="mr-2 h-4 w-4" />
+                          {t('confirmAndNext')}
+                        </Button>
                          <Button
                           onClick={handleConfirmStarsForCurrentImage}
-                          className="w-full bg-green-600 hover:bg-green-700 text-white sm:col-span-2"
+                          className="w-full bg-green-600 hover:bg-green-700 text-white"
                           disabled={isUiDisabled}
                         >
                           <CheckCircle className="mr-2 h-4 w-4" />
                           {t('confirmAndClose')}
                         </Button>
+                        <Button onClick={() => {setIsStarEditingMode(false); setCurrentEditingImageIndex(null);}} variant="ghost" className="w-full text-muted-foreground" disabled={isUiDisabled}>
+                            {t('cancelEditing')}
+                        </Button>
                       </div>
-                      <Button onClick={() => {setIsStarEditingMode(false); setCurrentEditingImageIndex(null);}} variant="ghost" className="w-full text-muted-foreground" disabled={isUiDisabled}>
-                          {t('cancelEditing')}
-                      </Button>
                     </div>
                   )
                 )}
@@ -2332,7 +2374,7 @@ export default function AstroStackerPage() {
                         variant="outline"
                         disabled={isApplyingStarsFromMenu || countImagesWithMatchingAspectRatio() === 0}
                     >
-                        {isApplyingStarsFromMenu ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ChevronRight className="mr-2 h-4 w-4" />} {/* Using ChevronRight as a placeholder for proportional */}
+                        {isApplyingStarsFromMenu ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ChevronRight className="mr-2 h-4 w-4" />}
                         {t('applyProportionallyBtn', { count: countImagesWithMatchingAspectRatio() })}
                     </Button>
                 </div>
