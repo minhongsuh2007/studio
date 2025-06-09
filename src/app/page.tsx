@@ -365,6 +365,7 @@ export default function AstroStackerPage() {
   const [showPostProcessEditor, setShowPostProcessEditor] = useState(false);
   const [imageForPostProcessing, setImageForPostProcessing] = useState<string | null>(null);
   const [editedPreviewUrl, setEditedPreviewUrl] = useState<string | null>(null);
+  const [isApplyingAdvancedStars, setIsApplyingAdvancedStars] = useState(false);
   const [brightness, setBrightness] = useState(100);
   const [exposure, setExposure] = useState(0);
   const [saturation, setSaturation] = useState(100);
@@ -857,6 +858,73 @@ export default function AstroStackerPage() {
     addLog("User chose not to apply star selection to all other images.");
   };
 
+  const handleAdvancedApplyStars = async () => {
+    if (currentEditingImageIndex === null) return;
+
+    setIsApplyingAdvancedStars(true);
+    addLog("Starting advanced star application...");
+
+    const sourceEntry = allImageStarData[currentEditingImageIndex];
+    if (!sourceEntry || !sourceEntry.analysisDimensions) {
+      addLog("[ERROR] Advanced apply failed: Could not get source image data.");
+      toast({ title: "Advanced Apply Failed", description: "Could not get source image data.", variant: "destructive" });
+      setIsApplyingAdvancedStars(false);
+      return;
+    }
+
+    const sourceStars = sourceEntry.analysisStars;
+    const { width: sourceWidth, height: sourceHeight } = sourceEntry.analysisDimensions;
+    const sourceAspectRatio = sourceWidth / sourceHeight;
+
+    if (sourceStars.length === 0) {
+        addLog("[WARN] Advanced apply skipped: Source image has no stars selected.");
+        toast({ title: "Advanced Apply", description: "Source image has no stars selected to apply.", variant: "default" });
+         setIsApplyingAdvancedStars(false);
+        return;
+    }
+
+    const updatedImageStarData = await Promise.all(allImageStarData.map(async (targetEntry, index) => {
+      if (targetEntry.id === sourceEntry.id) {
+        // Skip the source image itself
+        return targetEntry;
+      }
+
+      if (!targetEntry.analysisDimensions) {
+         addLog(`[WARN] Skipping advanced apply for ${targetEntry.file.name}: Dimension data not available.`);
+         return targetEntry;
+      }
+
+      const { width: targetWidth, height: targetHeight } = targetEntry.analysisDimensions;
+      const targetAspectRatio = targetWidth / targetHeight;
+
+      const aspectRatioTolerance = 0.01; // Allow for small floating point differences
+
+      if (Math.abs(sourceAspectRatio - targetAspectRatio) < aspectRatioTolerance) {
+        addLog(`Applying stars to ${targetEntry.file.name} (Matching aspect ratio)...`);
+        // Transform star coordinates proportionally
+        const transformedStars = sourceStars.map(star => ({
+          x: (star.x / sourceWidth) * targetWidth,
+          y: (star.y / sourceHeight) * targetHeight,
+          brightness: star.brightness, // Keep original brightness or recalculate based on target? Keeping for now.
+          isManuallyAdded: true, // Mark as manually added via this process
+        }));
+
+        addLog(`Successfully applied ${transformedStars.length} stars to ${targetEntry.file.name}.`);
+        return {
+          ...targetEntry,
+          analysisStars: transformedStars,
+          starSelectionMode: 'manual' as StarSelectionMode, // Explicitly set to manual
+          userReviewed: true, // Mark as reviewed
+          isAnalyzed: targetEntry.isAnalyzed || true, // Assume analyzed if stars are applied
+        };
+      } else {
+        addLog(`[WARN] Skipping advanced apply for ${targetEntry.file.name}: Aspect ratio mismatch. Source ${sourceWidth}x${sourceHeight}, Target ${targetWidth}x${targetHeight}.`);
+        return targetEntry;
+      }
+    }));
+
+    setAllImageStarData(updatedImageStarData);
+
 
   const handleStackAllImages = async () => {
     if (allImageStarData.length < 2) {
@@ -1315,7 +1383,7 @@ export default function AstroStackerPage() {
   };
 
 
-  const canStartStacking = allImageStarData.length >= 2;
+  const canStartStacking = allImageStarData.length >= 2 && !isApplyingAdvancedStars;
   const isUiDisabled = isProcessingStack || (currentEditingImageIndex !== null && allImageStarData[currentEditingImageIndex]?.isAnalyzing);
 
   const currentImageForEditing = currentEditingImageIndex !== null ? allImageStarData[currentEditingImageIndex] : null;
@@ -1487,12 +1555,16 @@ export default function AstroStackerPage() {
                         <Button onClick={handleWipeAllStarsForCurrentImage} variant="destructive" className="w-full" disabled={isUiDisabled}>
                           <Trash2 className="mr-2 h-4 w-4" /> {t('wipeAllStars')}
                         </Button>
+                         <Button onClick={handleAdvancedApplyStars} variant="outline" className="w-full sm:col-span-3 lg:col-span-1" disabled={isUiDisabled || isApplyingAdvancedStars}>
+                          <Settings2 className="mr-2 h-4 w-4" /> 고급 적용하기
+                        </Button>
                         <Button
                           onClick={handleConfirmStarsForCurrentImage}
                           className="w-full bg-green-600 hover:bg-green-700 text-white sm:col-span-3 lg:col-span-1"
                           disabled={isUiDisabled}
                         >
                           <CheckCircle className="mr-2 h-4 w-4" />
+
                           {t('confirmAndClose')}
                         </Button>
                       </div>

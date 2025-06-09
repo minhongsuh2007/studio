@@ -1,5 +1,5 @@
 
-export type Locale = 'en' | 'ko';
+export type Locale = 'en' | 'ko' | 'zh';
 
 interface TranslationMessages {
   [key: string]: string;
@@ -8,17 +8,19 @@ interface TranslationMessages {
 interface Translations {
   en: TranslationMessages;
   ko: TranslationMessages;
+  zh: TranslationMessages;
 }
 
 export const translations: Translations = {
   en: {
     appTitle: 'AstroStacker',
     uploadAndConfigure: 'Upload & Configure Images',
-    cardDescription: "Add PNG, JPG, GIF, or WEBP. Images are aligned using star centroids or brightness. Optionally downscale large images on upload. Stacking uses processed resolution. Median or Sigma Clip methods available.",
+    cardDescription: "Add PNG, JPG, GIF, WEBP, FITS, or TIFF. Images are aligned using star centroids or brightness. Optionally downscale large images on upload. Stacking uses processed resolution. Median or Sigma Clip methods available. DNG files may require manual pre-conversion.",
     creditsLine1: 'AstroStacker © {year}',
     creditsLine2Part1: 'Created by Min Hong Seo (암흑광자) with invaluable help from 천관사, Saturn, 구구, Plex, Latte, 얼음세상, 뉴비, 오르트, 지민, and many others.',
     switchToEnglish: 'EN',
     switchToKorean: 'KO',
+    switchToChinese: 'ZH',
     stackImagesButton: 'Stack Images ({count})',
     stackingButtonInProgress: 'Stacking...',
     finalizeAndDownload: 'Finalize & Download Image',
@@ -46,11 +48,12 @@ export const translations: Translations = {
   ko: {
     appTitle: '아스트로스태커',
     uploadAndConfigure: '이미지 업로드 및 설정',
-    cardDescription: "PNG, JPG, GIF 또는 WEBP 파일을 추가하세요. 이미지는 별 중심 또는 밝기 중심으로 정렬됩니다. 업로드 시 큰 이미지를 선택적으로 축소할 수 있습니다. 스태킹은 처리된 해상도를 사용합니다. 중간값 또는 시그마 클립 방법을 사용할 수 있습니다.",
+    cardDescription: "PNG, JPG, GIF, WEBP, FITS, 또는 TIFF 파일을 추가하세요. 이미지는 별 중심 또는 밝기 중심으로 정렬됩니다. 업로드 시 큰 이미지를 선택적으로 축소할 수 있습니다. 스태킹은 처리된 해상도를 사용합니다. 중간값 또는 시그마 클립 방법을 사용할 수 있습니다. DNG 파일은 수동 사전 변환이 필요할 수 있습니다.",
     creditsLine1: '아스트로스태커 © {year}',
     creditsLine2Part1: '천관사님, 새턴님, 구구님, 플렉님, 라떼님, 얼음세상님, 늅님, 오르트님, 지민님, 그리고 다른 여러 분들의 도움으로 서민홍(암흑광자) 에 의해 제작되었습니다.',
     switchToEnglish: '영',
     switchToKorean: '한',
+    switchToChinese: '중',
     stackImagesButton: '이미지 스태킹 ({count}개)',
     stackingButtonInProgress: '스태킹 중...',
     finalizeAndDownload: '이미지 확정 및 다운로드',
@@ -75,6 +78,39 @@ export const translations: Translations = {
     downscalePrompt: "이미지 '{fileName}' ({width}x{height}px)이(가) 큽니다. 최대 크기를 {maxSize}px로 축소(종횡비 유지)하면 안정성과 처리 속도를 향상시킬 수 있습니다. 축소하시겠습니까?",
     stackingProgress: '스태킹 진행률: {progressPercent}%',
   },
+  zh: {
+    appTitle: '天文图像叠加器 (AstroStacker)',
+    uploadAndConfigure: '上传和配置图像',
+    cardDescription: "添加 PNG, JPG, GIF, WEBP, FITS 或 TIFF 文件。图像使用星点质心或亮度对齐。上传时可选择缩小大图像。叠加使用处理后的分辨率。可使用中值或Sigma裁剪方法。DNG文件可能需要手动预转换。",
+    creditsLine1: '天文图像叠加器 © {year}',
+    creditsLine2Part1: '由 Min Hong Seo (암흑광자) 在 천관사, Saturn, 구구, Plex, Latte, 얼음세상, 뉴비, 오르트, 지민 及许多其他人的宝贵帮助下创建。',
+    switchToEnglish: '英',
+    switchToKorean: '韩',
+    switchToChinese: '中',
+    stackImagesButton: '叠加图像 ({count})',
+    stackingButtonInProgress: '叠加中...',
+    finalizeAndDownload: '完成并下载图像',
+    imageQueueCount: '图像队列 ({count})',
+    stackingMode: '叠加模式',
+    previewFit: '预览适应',
+    fitContain: '适应内容',
+    fitCover: '充满容器',
+    outputFormat: '输出格式',
+    jpgQuality: 'JPG 质量: {jpegQuality}%',
+    editStarsFor: '编辑星点: {fileName}',
+    editStarsDescription: '点击星点以添加/删除。当前: {starCount} 颗星。图像尺寸: {width}x{height}。',
+    resetToAuto: '重置为自动',
+    wipeAllStars: '清除所有星点',
+    confirmAndClose: '确认并关闭',
+    cancelEditing: '取消编辑',
+    processingLogs: '处理日志',
+    applyStarsToOther: '将星点选择应用于其他图像?',
+    applyStarsDescription: "您已为 '{fileName}' ({width}x{height}px) 手动设置了 {starCount} 颗星。是否将此星点选择应用于队列中具有匹配尺寸的所有其他 {otherImageCount} 张图像？这将把它们设置为手动模式并标记为已审查。",
+    noKeepIndividual: '不，保持独立',
+    yesApplyToAll: '是，应用于所有匹配项',
+    downscalePrompt: "图像 '{fileName}' ({width}x{height}px) 尺寸较大。将其缩小至最大 {maxSize}px (保持纵横比) 可以提高稳定性和速度。是否缩小？",
+    stackingProgress: '叠加进度: {progressPercent}%',
+  }
 };
 
 export const defaultLocale: Locale = 'en';

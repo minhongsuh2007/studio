@@ -38,6 +38,14 @@ export function AppHeader() {
           >
             {t('switchToKorean')}
           </Button>
+          <Button
+            variant={language === 'zh' ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => handleLanguageChange('zh')}
+            className="text-xs px-2 py-1 h-auto"
+          >
+            {t('switchToChinese')}
+          </Button>
         </div>
       </div>
     </header>
