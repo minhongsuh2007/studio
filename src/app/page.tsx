@@ -14,7 +14,7 @@ import { ImageQueueItem } from '@/components/astrostacker/ImageQueueItem';
 import { ImagePreview } from '@/components/astrostacker/ImagePreview';
 import { ImagePostProcessEditor } from '@/components/astrostacker/ImagePostProcessEditor';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Star as StarIcon, ListChecks, CheckCircle, RefreshCcw, Edit3, Loader2, Settings2, Orbit, Trash2, CopyCheck, AlertTriangle, Wand2, ShieldOff, UploadCloud } from 'lucide-react';
+import { Star as StarIcon, ListChecks, CheckCircle, RefreshCcw, Edit3, Loader2, Settings2, Orbit, Trash2, CopyCheck, AlertTriangle, Wand2, ShieldOff, UploadCloud, Layers, Baseline, X } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
@@ -23,8 +23,8 @@ import { Slider } from "@/components/ui/slider";
 import { StarAnnotationCanvas, type Star } from '@/components/astrostacker/StarAnnotationCanvas';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { Switch } from '@/components/ui/switch'; // Added for dark frame toggle
-import Image from 'next/image'; // For dark frame preview
+import { Switch } from '@/components/ui/switch';
+import Image from 'next/image';
 
 interface LogEntry {
   id: number;
@@ -72,6 +72,8 @@ const STAR_CLICK_TOLERANCE_ON_DISPLAY_CANVAS_PX = 10;
 
 const IS_LARGE_IMAGE_THRESHOLD_MP = 12;
 const MAX_DIMENSION_DOWNSCALED = 2048;
+
+const FLAT_FIELD_CORRECTION_MAX_SCALE_FACTOR = 5; // Prevents extreme amplification
 
 const yieldToEventLoop = async (delayMs: number) => {
   await new Promise(resolve => setTimeout(resolve, delayMs));
@@ -372,12 +374,24 @@ export default function AstroStackerPage() {
   const [saturation, setSaturation] = useState(100);
   const [isApplyingAdjustments, setIsApplyingAdjustments] = useState(false);
 
-  // Dark Frame State
+  // Calibration Frame States
   const [darkFrameFile, setDarkFrameFile] = useState<File | null>(null);
   const [darkFramePreviewUrl, setDarkFramePreviewUrl] = useState<string | null>(null);
   const [useDarkFrame, setUseDarkFrame] = useState<boolean>(false);
   const [originalDarkFrameDimensions, setOriginalDarkFrameDimensions] = useState<{ width: number; height: number } | null>(null);
   const [isProcessingDarkFrame, setIsProcessingDarkFrame] = useState(false);
+
+  const [flatFrameFile, setFlatFrameFile] = useState<File | null>(null);
+  const [flatFramePreviewUrl, setFlatFramePreviewUrl] = useState<string | null>(null);
+  const [useFlatFrame, setUseFlatFrame] = useState<boolean>(false);
+  const [originalFlatFrameDimensions, setOriginalFlatFrameDimensions] = useState<{ width: number; height: number } | null>(null);
+  const [isProcessingFlatFrame, setIsProcessingFlatFrame] = useState(false);
+
+  const [biasFrameFile, setBiasFrameFile] = useState<File | null>(null);
+  const [biasFramePreviewUrl, setBiasFramePreviewUrl] = useState<string | null>(null);
+  const [useBiasFrame, setUseBiasFrame] = useState<boolean>(false);
+  const [originalBiasFrameDimensions, setOriginalBiasFrameDimensions] = useState<{ width: number; height: number } | null>(null);
+  const [isProcessingBiasFrame, setIsProcessingBiasFrame] = useState(false);
 
 
   const addLog = useCallback((message: string) => {
@@ -580,62 +594,66 @@ export default function AstroStackerPage() {
     addLog(`Finished adding files. ${validNewEntries.length} new files queued. Total: ${allImageStarData.length + validNewEntries.length}.`);
   };
 
-  const handleDarkFrameFileAdded = async (files: File[]) => {
+  const handleCalibrationFrameAdded = async (
+    files: File[],
+    frameType: 'dark' | 'flat' | 'bias',
+    setFileState: React.Dispatch<React.SetStateAction<File | null>>,
+    setPreviewUrlState: React.Dispatch<React.SetStateAction<string | null>>,
+    setOriginalDimensionsState: React.Dispatch<React.SetStateAction<{ width: number; height: number; } | null>>,
+    setIsProcessingState: React.Dispatch<React.SetStateAction<boolean>>
+  ) => {
     if (files.length === 0) return;
     const file = files[0];
-    addLog(`Processing dark frame: ${file.name}`);
-    setIsProcessingDarkFrame(true);
-    setDarkFrameFile(null);
-    setDarkFramePreviewUrl(null);
-    setOriginalDarkFrameDimensions(null);
+    const frameTypeName = frameType.charAt(0).toUpperCase() + frameType.slice(1);
+    addLog(`Processing ${frameType} frame: ${file.name}`);
+
+    setIsProcessingState(true);
+    setFileState(null);
+    setPreviewUrlState(null);
+    setOriginalDimensionsState(null);
 
     try {
       const fileType = file.type.toLowerCase();
       const acceptedWebTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 
-      if (!acceptedWebTypes.includes(fileType) && !(file.name.toLowerCase().endsWith('.fits') || file.name.toLowerCase().endsWith('.tif') || file.name.toLowerCase().endsWith('.tiff'))) {
-          const unsupportedMsg = `Dark frame ${file.name} is unsupported. Use JPG, PNG, GIF, WEBP. FITS/TIFF also currently not supported for dark frames.`;
-          addLog(`[ERROR] ${unsupportedMsg}`);
-          toast({ title: "Unsupported Dark Frame", description: unsupportedMsg, variant: "destructive" });
-          setIsProcessingDarkFrame(false);
-          return;
-      }
-      // For now, block FITS/TIFF for dark frames as well until full processing is in place for them.
-      if (file.name.toLowerCase().endsWith('.fits') || file.name.toLowerCase().endsWith('.tif') || file.name.toLowerCase().endsWith('.tiff')) {
-        const unsupportedFormatMsg = `FITS/TIFF files are not currently supported as dark frames. Please use JPG or PNG.`;
-        addLog(`[ERROR] ${unsupportedFormatMsg}`);
-        toast({ title: "Unsupported Dark Frame Format", description: unsupportedFormatMsg, variant: "destructive" });
-        setIsProcessingDarkFrame(false);
+      if (!acceptedWebTypes.includes(fileType)) {
+        const unsupportedMsg = `${frameTypeName} frame ${file.name} is unsupported. Use JPG, PNG, GIF, WEBP.`;
+        addLog(`[ERROR] ${unsupportedMsg}`);
+        toast({ title: `Unsupported ${frameTypeName} Frame`, description: unsupportedMsg, variant: "destructive" });
+        setIsProcessingState(false);
         return;
       }
 
-
       const previewUrl = await fileToDataURL(file);
-      setDarkFramePreviewUrl(previewUrl);
-      setDarkFrameFile(file);
+      setPreviewUrlState(previewUrl);
+      setFileState(file);
 
       const img = new Image();
       img.onload = () => {
-        setOriginalDarkFrameDimensions({ width: img.naturalWidth, height: img.naturalHeight });
-        addLog(t('logDarkFrameLoaded', { fileName: file.name, width: img.naturalWidth, height: img.naturalHeight }));
-        setIsProcessingDarkFrame(false);
+        setOriginalDimensionsState({ width: img.naturalWidth, height: img.naturalHeight });
+        addLog(t(`log${frameTypeName}FrameLoaded` as any, { fileName: file.name, width: img.naturalWidth, height: img.naturalHeight }));
+        setIsProcessingState(false);
       };
       img.onerror = () => {
-        addLog(`[ERROR] Could not load dark frame ${file.name} to get dimensions.`);
-        toast({ title: "Error Loading Dark Frame", description: `Could not load ${file.name}.`, variant: "destructive" });
-        setDarkFramePreviewUrl(null);
-        setDarkFrameFile(null);
-        setIsProcessingDarkFrame(false);
+        addLog(`[ERROR] Could not load ${frameType} frame ${file.name} to get dimensions.`);
+        toast({ title: `Error Loading ${frameTypeName} Frame`, description: `Could not load ${file.name}.`, variant: "destructive" });
+        setPreviewUrlState(null);
+        setFileState(null);
+        setIsProcessingState(false);
       };
       img.src = previewUrl;
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      addLog(`[ERROR] Processing dark frame ${file.name}: ${errorMessage}`);
-      toast({ title: `Error Processing Dark Frame`, description: errorMessage, variant: "destructive" });
-      setIsProcessingDarkFrame(false);
+      addLog(`[ERROR] Processing ${frameType} frame ${file.name}: ${errorMessage}`);
+      toast({ title: `Error Processing ${frameTypeName} Frame`, description: errorMessage, variant: "destructive" });
+      setIsProcessingState(false);
     }
   };
+
+  const handleDarkFrameFileAdded = (files: File[]) => handleCalibrationFrameAdded(files, 'dark', setDarkFrameFile, setDarkFramePreviewUrl, setOriginalDarkFrameDimensions, setIsProcessingDarkFrame);
+  const handleFlatFrameFileAdded = (files: File[]) => handleCalibrationFrameAdded(files, 'flat', setFlatFrameFile, setFlatFramePreviewUrl, setOriginalFlatFrameDimensions, setIsProcessingFlatFrame);
+  const handleBiasFrameFileAdded = (files: File[]) => handleCalibrationFrameAdded(files, 'bias', setBiasFrameFile, setBiasFramePreviewUrl, setOriginalBiasFrameDimensions, setIsProcessingBiasFrame);
 
 
   const handleRemoveImage = (idToRemove: string) => {
@@ -650,8 +668,25 @@ export default function AstroStackerPage() {
     setDarkFrameFile(null);
     setDarkFramePreviewUrl(null);
     setOriginalDarkFrameDimensions(null);
-    setUseDarkFrame(false); // Also disable usage if removed
+    setUseDarkFrame(false);
   };
+
+  const handleRemoveFlatFrame = () => {
+    addLog(`Removing flat frame: ${flatFrameFile?.name || 'current flat frame'}`);
+    setFlatFrameFile(null);
+    setFlatFramePreviewUrl(null);
+    setOriginalFlatFrameDimensions(null);
+    setUseFlatFrame(false);
+  };
+
+  const handleRemoveBiasFrame = () => {
+    addLog(`Removing bias frame: ${biasFrameFile?.name || 'current bias frame'}`);
+    setBiasFrameFile(null);
+    setBiasFramePreviewUrl(null);
+    setOriginalBiasFrameDimensions(null);
+    setUseBiasFrame(false);
+  };
+
 
   const loadImage = (dataUrl: string, imageNameForLog: string): Promise<HTMLImageElement> => {
     addLog(`Loading image data into memory for: ${imageNameForLog}`);
@@ -746,18 +781,15 @@ export default function AstroStackerPage() {
         const updatedEntry: ImageStarEntry = {
           ...entry,
           starSelectionMode: newMode,
-          userReviewed: false, // Always set to false when mode changes or stars are edited non-auto
+          userReviewed: false, 
         };
         
-        // If switching to 'auto', revert to initial auto stars
         if (newMode === 'auto') {
           updatedEntry.analysisStars = [...entry.initialAutoStars];
-        } else { // Switching to 'manual'
-            // If manual mode had no stars, but auto-detected did, populate with auto as a base
+        } else { 
             if ((!entry.analysisStars || entry.analysisStars.length === 0) && entry.initialAutoStars.length > 0) {
                updatedEntry.analysisStars = [...entry.initialAutoStars];
             }
-            // Otherwise, keep existing manual stars if any (or empty if none were there and no auto fallback)
         }
         return updatedEntry;
       }
@@ -1048,7 +1080,10 @@ export default function AstroStackerPage() {
     setEditedPreviewUrl(null);
 
 
-    addLog(`Starting image stacking. Mode: ${stackingMode}. Output: ${outputFormat.toUpperCase()}. Files: ${allImageStarData.length}. Dark Frame: ${useDarkFrame && darkFrameFile ? darkFrameFile.name : 'Not Used'}.`);
+    addLog(`Starting image stacking. Mode: ${stackingMode}. Output: ${outputFormat.toUpperCase()}. Files: ${allImageStarData.length}.`);
+    addLog(`Dark Frame: ${useDarkFrame && darkFrameFile ? darkFrameFile.name : 'Not Used'}.`);
+    addLog(`Flat Frame: ${useFlatFrame && flatFrameFile ? flatFrameFile.name : 'Not Used'}.`);
+    addLog(`Bias Frame: ${useBiasFrame && biasFrameFile ? biasFrameFile.name : 'Not Used'}.`);
     addLog(`Star Alignment: Min Stars = ${MIN_STARS_FOR_ALIGNMENT}.`);
     addLog(`Star Detection Params: Combined Brightness Threshold = ${DEFAULT_STAR_BRIGHTNESS_THRESHOLD_COMBINED}, Local Contrast Factor = ${DEFAULT_STAR_LOCAL_CONTRAST_FACTOR}.`);
     addLog(`Brightness Centroid Fallback Threshold: ${BRIGHTNESS_CENTROID_FALLBACK_THRESHOLD_GRAYSCALE_EQUIVALENT} (grayscale equivalent).`);
@@ -1071,11 +1106,8 @@ export default function AstroStackerPage() {
         let entry = updatedStarDataForStacking[i];
         if (!entry.isAnalyzed && !entry.isAnalyzing) {
             addLog(`Image ${entry.file.name} (${entry.id}) not analyzed. Analyzing now...`);
-
             setAllImageStarData(prev => prev.map((e) => e.id === entry.id ? {...e, isAnalyzing: true} : e));
-
             const analysisSuccess = await analyzeImageForStars(i); 
-
             const potentiallyUpdatedEntryFromState = allImageStarData.find(e => e.id === entry.id);
 
             if (analysisSuccess && potentiallyUpdatedEntryFromState && potentiallyUpdatedEntryFromState.isAnalyzed) {
@@ -1086,14 +1118,7 @@ export default function AstroStackerPage() {
                 const analyzeFailMsg = `Analysis failed for ${entry.file.name}. It will be processed with fallback alignment.`;
                 addLog(`[WARN] ${analyzeFailMsg} (Details: analysisSuccess=${analysisSuccess}, entryFound=${!!potentiallyUpdatedEntryFromState}, entryAnalyzed=${potentiallyUpdatedEntryFromState?.isAnalyzed})`);
                 toast({ title: `Analysis Warning for ${entry.file.name}`, description: analyzeFailMsg, variant: "default"});
-
-                updatedStarDataForStacking[i] = {
-                    ...(potentiallyUpdatedEntryFromState || entry), 
-                    isAnalyzed: false, 
-                    isAnalyzing: false, 
-                    analysisStars: [], 
-                    initialAutoStars: [] 
-                };
+                updatedStarDataForStacking[i] = { ...(potentiallyUpdatedEntryFromState || entry), isAnalyzed: false, isAnalyzing: false, analysisStars: [], initialAutoStars: [] };
                 entry = updatedStarDataForStacking[i];
             }
              setAllImageStarData(prev => prev.map((e) => e.id === entry.id ? {...e, isAnalyzing: false, isAnalyzed: entry.isAnalyzed } : e));
@@ -1174,43 +1199,106 @@ export default function AstroStackerPage() {
         setProgressPercent(0);
         return;
       }
+      
+      const calibrationCanvas = document.createElement('canvas');
+      calibrationCanvas.width = targetWidth;
+      calibrationCanvas.height = targetHeight;
+      const calCtx = calibrationCanvas.getContext('2d', { willReadFrequently: true });
+      if (!calCtx) throw new Error("Could not get calibration canvas context.");
 
-      // Dark Frame Processing
-      let darkFrameFullImageData: ImageData | null = null;
-      if (useDarkFrame && darkFrameFile) {
-        addLog(`Processing dark frame: ${darkFrameFile.name}`);
+      // --- Load and Prepare Calibration Frames ---
+      let masterBiasData: Uint8ClampedArray | null = null;
+      let masterDarkData: Uint8ClampedArray | null = null;
+      let masterFlatData: Uint8ClampedArray | null = null;
+
+      // 1. Load Bias Frame (if used)
+      if (useBiasFrame && biasFrameFile && biasFramePreviewUrl) {
+        addLog(t('logLoadingBiasFrame', { fileName: biasFrameFile.name }));
         try {
-          const darkFrameImgEl = await loadImage(darkFramePreviewUrl!, darkFrameFile.name); // Use previewUrl as it's already a data URL
-          const dfCanvas = document.createElement('canvas');
-          dfCanvas.width = targetWidth;
-          dfCanvas.height = targetHeight;
-          const dfCtx = dfCanvas.getContext('2d', { willReadFrequently: true });
-          if (!dfCtx) throw new Error("Could not get dark frame canvas context.");
-          
-          dfCtx.drawImage(darkFrameImgEl, 0, 0, targetWidth, targetHeight);
-          darkFrameFullImageData = dfCtx.getImageData(0, 0, targetWidth, targetHeight);
-          
-          if (originalDarkFrameDimensions && (originalDarkFrameDimensions.width !== targetWidth || originalDarkFrameDimensions.height !== targetHeight)) {
-            const resizeMsg = t('darkFrameDimensionMismatchWarn', {
-              dfWidth: originalDarkFrameDimensions.width,
-              dfHeight: originalDarkFrameDimensions.height,
-              targetWidth: targetWidth,
-              targetHeight: targetHeight
-            });
-            addLog(`[WARN] ${resizeMsg}`);
-            toast({ title: "Dark Frame Resized", description: resizeMsg, variant: "default" });
+          const biasImgEl = await loadImage(biasFramePreviewUrl, biasFrameFile.name);
+          calCtx.clearRect(0, 0, targetWidth, targetHeight);
+          calCtx.drawImage(biasImgEl, 0, 0, targetWidth, targetHeight);
+          masterBiasData = calCtx.getImageData(0, 0, targetWidth, targetHeight).data;
+          if (originalBiasFrameDimensions && (originalBiasFrameDimensions.width !== targetWidth || originalBiasFrameDimensions.height !== targetHeight)) {
+             addLog(t('biasFrameDimensionMismatchWarn', { dfWidth: originalBiasFrameDimensions.width, dfHeight: originalBiasFrameDimensions.height, targetWidth, targetHeight }));
           }
-          addLog(`Dark frame processed and scaled to ${targetWidth}x${targetHeight}.`);
-        } catch (dfError) {
-          const dfErrorMsg = dfError instanceof Error ? dfError.message : String(dfError);
-          addLog(`[ERROR] Failed to process dark frame: ${dfErrorMsg}. Proceeding without dark frame subtraction.`);
-          toast({ title: "Dark Frame Error", description: `Could not process dark frame: ${dfErrorMsg}. Stacking without it.`, variant: "destructive"});
-          darkFrameFullImageData = null; // Ensure it's null if processing failed
+          addLog(t('logBiasFrameProcessed', { fileName: biasFrameFile.name }));
+        } catch (e) {
+          addLog(`[ERROR] Failed to load/process Bias Frame: ${e instanceof Error ? e.message : String(e)}. Stacking without it.`);
+          toast({ title: t('biasFrameErrorTitle'), description: t('biasFrameErrorDescription', { error: e instanceof Error ? e.message : String(e) }), variant: "destructive"});
+          masterBiasData = null;
         }
-      } else if (useDarkFrame && !darkFrameFile) {
-        addLog(`[WARN] ${t('darkFrameMissing')}`);
-        toast({ title: "Dark Frame Missing", description: t('darkFrameMissing'), variant: "default" });
+      } else if (useBiasFrame) {
+        addLog(t('biasFrameMissing'));
+        toast({ title: t('biasFrameMissingTitle'), description: t('biasFrameMissing'), variant: "default" });
       }
+      
+      // 2. Load Dark Frame (if used) & Subtract Bias
+      if (useDarkFrame && darkFrameFile && darkFramePreviewUrl) {
+        addLog(t('logLoadingDarkFrame', { fileName: darkFrameFile.name }));
+        try {
+          const darkImgEl = await loadImage(darkFramePreviewUrl, darkFrameFile.name);
+          calCtx.clearRect(0, 0, targetWidth, targetHeight);
+          calCtx.drawImage(darkImgEl, 0, 0, targetWidth, targetHeight);
+          const tempDarkImageData = calCtx.getImageData(0, 0, targetWidth, targetHeight);
+          let tempDarkData = tempDarkImageData.data;
+
+          if (masterBiasData) {
+            addLog(t('logSubtractingBiasFromDark', { darkFrameName: darkFrameFile.name }));
+            for (let p = 0; p < tempDarkData.length; p += 4) {
+              tempDarkData[p] = Math.max(0, tempDarkData[p] - masterBiasData[p]);
+              tempDarkData[p+1] = Math.max(0, tempDarkData[p+1] - masterBiasData[p+1]);
+              tempDarkData[p+2] = Math.max(0, tempDarkData[p+2] - masterBiasData[p+2]);
+            }
+          }
+          masterDarkData = tempDarkData;
+          if (originalDarkFrameDimensions && (originalDarkFrameDimensions.width !== targetWidth || originalDarkFrameDimensions.height !== targetHeight)) {
+             addLog(t('darkFrameDimensionMismatchWarn', { dfWidth: originalDarkFrameDimensions.width, dfHeight: originalDarkFrameDimensions.height, targetWidth, targetHeight }));
+          }
+          addLog(t('logDarkFrameProcessed', { fileName: darkFrameFile.name }));
+        } catch (e) {
+          addLog(`[ERROR] Failed to load/process Dark Frame: ${e instanceof Error ? e.message : String(e)}. Stacking without it.`);
+          toast({ title: t('darkFrameErrorTitle'), description: t('darkFrameErrorDescription', { error: e instanceof Error ? e.message : String(e) }), variant: "destructive"});
+          masterDarkData = null;
+        }
+      } else if (useDarkFrame) {
+         addLog(t('darkFrameMissing'));
+         toast({ title: t('darkFrameMissingTitle'), description: t('darkFrameMissing'), variant: "default" });
+      }
+
+      // 3. Load Flat Frame (if used) & Subtract Bias
+      if (useFlatFrame && flatFrameFile && flatFramePreviewUrl) {
+        addLog(t('logLoadingFlatFrame', { fileName: flatFrameFile.name }));
+        try {
+          const flatImgEl = await loadImage(flatFramePreviewUrl, flatFrameFile.name);
+          calCtx.clearRect(0, 0, targetWidth, targetHeight);
+          calCtx.drawImage(flatImgEl, 0, 0, targetWidth, targetHeight);
+          const tempFlatImageData = calCtx.getImageData(0, 0, targetWidth, targetHeight);
+          let tempFlatData = tempFlatImageData.data;
+
+          if (masterBiasData) {
+            addLog(t('logSubtractingBiasFromFlat', { flatFrameName: flatFrameFile.name }));
+            for (let p = 0; p < tempFlatData.length; p += 4) {
+              tempFlatData[p] = Math.max(0, tempFlatData[p] - masterBiasData[p]);
+              tempFlatData[p+1] = Math.max(0, tempFlatData[p+1] - masterBiasData[p+1]);
+              tempFlatData[p+2] = Math.max(0, tempFlatData[p+2] - masterBiasData[p+2]);
+            }
+          }
+          masterFlatData = tempFlatData;
+           if (originalFlatFrameDimensions && (originalFlatFrameDimensions.width !== targetWidth || originalFlatFrameDimensions.height !== targetHeight)) {
+             addLog(t('flatFrameDimensionMismatchWarn', { dfWidth: originalFlatFrameDimensions.width, dfHeight: originalFlatFrameDimensions.height, targetWidth, targetHeight }));
+          }
+          addLog(t('logFlatFrameProcessed', { fileName: flatFrameFile.name }));
+        } catch (e) {
+          addLog(`[ERROR] Failed to load/process Flat Frame: ${e instanceof Error ? e.message : String(e)}. Stacking without it.`);
+          toast({ title: t('flatFrameErrorTitle'), description: t('flatFrameErrorDescription', { error: e instanceof Error ? e.message : String(e) }), variant: "destructive"});
+          masterFlatData = null;
+        }
+      } else if (useFlatFrame) {
+         addLog(t('flatFrameMissing'));
+         toast({ title: t('flatFrameMissingTitle'), description: t('flatFrameMissing'), variant: "default" });
+      }
+      // --- End Calibration Frame Loading ---
 
 
       const numImages = imageElements.length;
@@ -1341,7 +1429,7 @@ export default function AstroStackerPage() {
         const currentBandHeight = Math.min(STACKING_BAND_HEIGHT, targetHeight - yBandStart);
 
         const bandPixelDataCollector: Array<{ r: number[], g: number[], b: number[] }> = [];
-        for (let i = 0; i < targetWidth * currentBandHeight; i++) {
+        for (let k = 0; k < targetWidth * currentBandHeight; k++) {
           bandPixelDataCollector.push({ r: [], g: [], b: [] });
         }
 
@@ -1364,35 +1452,69 @@ export default function AstroStackerPage() {
           } else {
             addLog(`[STACK WARN] Image ${i} (${allImageStarData[i]?.file?.name}) had no centroid for offset calculation. Using 0,0 offset.`);
           }
+          
+          // Draw original light frame to calibration canvas to get its full ImageData
+          calCtx.clearRect(0,0, targetWidth, targetHeight);
+          calCtx.drawImage(img, 0,0, targetWidth, targetHeight); // Draw light frame at original scale for calibration
+          let lightFrameImageData = calCtx.getImageData(0,0, targetWidth, targetHeight);
+          let calibratedLightData = new Uint8ClampedArray(lightFrameImageData.data); // Work on a copy
 
+          let logCalibrationMsg = "";
+
+          // 1. Bias Subtraction from Light
+          if (masterBiasData) {
+            for (let p = 0; p < calibratedLightData.length; p += 4) {
+              calibratedLightData[p]   = Math.max(0, calibratedLightData[p]   - masterBiasData[p]);
+              calibratedLightData[p+1] = Math.max(0, calibratedLightData[p+1] - masterBiasData[p+1]);
+              calibratedLightData[p+2] = Math.max(0, calibratedLightData[p+2] - masterBiasData[p+2]);
+            }
+            logCalibrationMsg += "Bias subtracted. ";
+          }
+
+          // 2. Dark Subtraction from Light
+          if (masterDarkData) {
+            for (let p = 0; p < calibratedLightData.length; p += 4) {
+              calibratedLightData[p]   = Math.max(0, calibratedLightData[p]   - masterDarkData[p]);
+              calibratedLightData[p+1] = Math.max(0, calibratedLightData[p+1] - masterDarkData[p+1]);
+              calibratedLightData[p+2] = Math.max(0, calibratedLightData[p+2] - masterDarkData[p+2]);
+            }
+             logCalibrationMsg += "Dark subtracted. ";
+          }
+          
+          // 3. Flat Field Correction
+          if (masterFlatData) {
+            const numPixelsFlat = targetWidth * targetHeight;
+            let sumR = 0, sumG = 0, sumB = 0;
+            for (let p = 0; p < masterFlatData.length; p += 4) {
+              sumR += masterFlatData[p]; sumG += masterFlatData[p+1]; sumB += masterFlatData[p+2];
+            }
+            const meanR = numPixelsFlat > 0 ? sumR / numPixelsFlat : 0;
+            const meanG = numPixelsFlat > 0 ? sumG / numPixelsFlat : 0;
+            const meanB = numPixelsFlat > 0 ? sumB / numPixelsFlat : 0;
+
+            for (let p = 0; p < calibratedLightData.length; p += 4) {
+              const flatR = masterFlatData[p]; const flatG = masterFlatData[p+1]; const flatB = masterFlatData[p+2];
+              const scaleR = (flatR > 1) ? meanR / flatR : 1;
+              const scaleG = (flatG > 1) ? meanG / flatG : 1;
+              const scaleB = (flatB > 1) ? meanB / flatB : 1;
+              
+              calibratedLightData[p]   = Math.min(255, Math.max(0, calibratedLightData[p]   * Math.min(scaleR, FLAT_FIELD_CORRECTION_MAX_SCALE_FACTOR) ));
+              calibratedLightData[p+1] = Math.min(255, Math.max(0, calibratedLightData[p+1] * Math.min(scaleG, FLAT_FIELD_CORRECTION_MAX_SCALE_FACTOR) ));
+              calibratedLightData[p+2] = Math.min(255, Math.max(0, calibratedLightData[p+2] * Math.min(scaleB, FLAT_FIELD_CORRECTION_MAX_SCALE_FACTOR) ));
+            }
+             logCalibrationMsg += `Flat corrected (Mean R:${meanR.toFixed(1)}, G:${meanG.toFixed(1)}, B:${meanB.toFixed(1)}).`;
+          }
+          if (logCalibrationMsg && i === 0) addLog(`[CALIBRATE] Image 0 (${allImageStarData[0]?.file?.name}): ${logCalibrationMsg}`);
+
+
+          // Put calibrated data onto the main offscreenCanvas, shifted by dx, dy
           ctx.clearRect(0, 0, targetWidth, targetHeight); 
-          ctx.drawImage(img, dx, dy, targetWidth, targetHeight); 
+          const calibratedImageDataForDraw = new ImageData(calibratedLightData, targetWidth, targetHeight);
+          ctx.putImageData(calibratedImageDataForDraw, dx, dy); // dx, dy are offsets for alignment
 
           try {
-            // Get full aligned light frame data
-            const alignedLightFullImageData = ctx.getImageData(0, 0, targetWidth, targetHeight);
-            
-            // Apply dark frame subtraction if enabled and dark frame data is available
-            if (useDarkFrame && darkFrameFullImageData) {
-                const lightData = alignedLightFullImageData.data;
-                const darkData = darkFrameFullImageData.data;
-                for (let p = 0; p < lightData.length; p += 4) {
-                    lightData[p] = Math.max(0, lightData[p] - darkData[p]);         // R
-                    lightData[p + 1] = Math.max(0, lightData[p + 1] - darkData[p + 1]); // G
-                    lightData[p + 2] = Math.max(0, lightData[p + 2] - darkData[p + 2]); // B
-                    // Alpha (lightData[p + 3]) remains unchanged
-                }
-                // Put subtracted data back to canvas to extract the band
-                ctx.putImageData(alignedLightFullImageData, 0, 0);
-                if (yBandStart === 0 && i === 0) { // Log only once per stack for brevity
-                     addLog(t('logApplyingDarkFrame', { lightFrameName: allImageStarData[i]?.file?.name || `Image ${i}` }));
-                }
-            }
-            
-            // Extract the current band's data from the (potentially dark-subtracted) image on the canvas
             const bandFrameImageData = ctx.getImageData(0, yBandStart, targetWidth, currentBandHeight);
             const bandData = bandFrameImageData.data;
-
 
             for (let j = 0; j < bandData.length; j += 4) {
               const bandPixelIndex = j / 4; 
@@ -1493,10 +1615,15 @@ export default function AstroStackerPage() {
           ? `${successfulStarAlignments}/${imageElements.length} images primarily aligned using star-based centroids.`
           : `All images aligned using brightness-based centroids or geometric centers.`;
         
-        const darkFrameMessage = useDarkFrame && darkFrameFullImageData ? "Dark frame subtraction applied." : "No dark frame subtraction.";
+        let calibrationSummary = "";
+        if (useBiasFrame && masterBiasData) calibrationSummary += "Bias subtracted. ";
+        if (useDarkFrame && masterDarkData) calibrationSummary += "Dark subtracted. ";
+        if (useFlatFrame && masterFlatData) calibrationSummary += "Flat corrected. ";
+        if (calibrationSummary === "") calibrationSummary = "No calibration frames applied. ";
+
 
         const stackingMethodUsed = stackingMode === 'median' ? 'Median' : 'Sigma Clip';
-        const successToastMsg = `${alignmentMessage} ${darkFrameMessage} ${validImagesStackedCount} image(s) (out of ${imageElements.length} processed) stacked. Dim: ${targetWidth}x${targetHeight}. Ready for post-processing.`;
+        const successToastMsg = `${alignmentMessage} ${calibrationSummary} ${validImagesStackedCount} image(s) (out of ${imageElements.length} processed) stacked. Dim: ${targetWidth}x${targetHeight}. Ready for post-processing.`;
         addLog(`Stacking complete. ${successToastMsg}`);
         toast({
           title: `${stackingMethodUsed} Stacking Complete (${outputFormat.toUpperCase()})`,
@@ -1548,7 +1675,7 @@ export default function AstroStackerPage() {
 
 
   const canStartStacking = allImageStarData.length >= 2 && !isApplyingAdvancedStars;
-  const isUiDisabled = isProcessingStack || isProcessingDarkFrame || (currentEditingImageIndex !== null && allImageStarData[currentEditingImageIndex]?.isAnalyzing);
+  const isUiDisabled = isProcessingStack || isProcessingDarkFrame || isProcessingFlatFrame || isProcessingBiasFrame || (currentEditingImageIndex !== null && allImageStarData[currentEditingImageIndex]?.isAnalyzing);
 
   const currentImageForEditing = currentEditingImageIndex !== null ? allImageStarData[currentEditingImageIndex] : null;
   const sourceImageForDialog = allImageStarData.find(img => img.id === sourceImageIdForApplyToAll);
@@ -1611,6 +1738,43 @@ export default function AstroStackerPage() {
                       </>
                     )}
                     
+                    {/* Bias Frame Section */}
+                    <Card className="mt-4 shadow-md">
+                        <CardHeader className="pb-3 pt-4">
+                            <CardTitle className="flex items-center text-lg">
+                                <Baseline className="mr-2 h-5 w-5 text-accent" />
+                                {t('biasFrameUploadTitle')}
+                            </CardTitle>
+                            <CardDescription className="text-xs">{t('biasFrameUploadDescription')}</CardDescription>
+                        </CardHeader>
+                        <CardContent className="space-y-3 pb-4">
+                            <ImageUploadArea onFilesAdded={handleBiasFrameFileAdded} isProcessing={isUiDisabled || isProcessingBiasFrame} multiple={false} />
+                            {isProcessingBiasFrame && <Loader2 className="mx-auto my-2 h-6 w-6 animate-spin text-accent" />}
+                            {biasFramePreviewUrl && (
+                                <div className="mt-2 space-y-2">
+                                    <Label className="text-sm font-semibold">{t('biasFramePreviewTitle')}</Label>
+                                    <div className="relative aspect-video w-full rounded border overflow-hidden">
+                                        <Image src={biasFramePreviewUrl} alt="Bias Frame Preview" layout="fill" objectFit="contain" data-ai-hint="noise pattern sensor" />
+                                        <Button variant="destructive" size="icon" onClick={handleRemoveBiasFrame} className="absolute top-1 right-1 h-6 w-6 z-10" disabled={isUiDisabled}>
+                                            <X className="h-3 w-3" />
+                                        </Button>
+                                    </div>
+                                    {originalBiasFrameDimensions && (
+                                      <p className="text-xs text-muted-foreground">
+                                        {biasFrameFile?.name} ({originalBiasFrameDimensions.width}x{originalBiasFrameDimensions.height})
+                                      </p>
+                                    )}
+                                </div>
+                            )}
+                            {biasFrameFile && (
+                                <div className="flex items-center space-x-2 pt-2">
+                                    <Switch id="use-bias-frame" checked={useBiasFrame} onCheckedChange={setUseBiasFrame} disabled={isUiDisabled || !biasFrameFile} />
+                                    <Label htmlFor="use-bias-frame" className="text-sm cursor-pointer">{t('useBiasFrameLabel')}</Label>
+                                </div>
+                            )}
+                        </CardContent>
+                    </Card>
+                    
                     {/* Dark Frame Section */}
                     <Card className="mt-4 shadow-md">
                         <CardHeader className="pb-3 pt-4">
@@ -1621,7 +1785,7 @@ export default function AstroStackerPage() {
                             <CardDescription className="text-xs">{t('darkFrameUploadDescription')}</CardDescription>
                         </CardHeader>
                         <CardContent className="space-y-3 pb-4">
-                            <ImageUploadArea onFilesAdded={handleDarkFrameFileAdded} isProcessing={isUiDisabled} multiple={false} />
+                            <ImageUploadArea onFilesAdded={handleDarkFrameFileAdded} isProcessing={isUiDisabled || isProcessingDarkFrame} multiple={false} />
                             {isProcessingDarkFrame && <Loader2 className="mx-auto my-2 h-6 w-6 animate-spin text-accent" />}
                             {darkFramePreviewUrl && (
                                 <div className="mt-2 space-y-2">
@@ -1647,6 +1811,44 @@ export default function AstroStackerPage() {
                             )}
                         </CardContent>
                     </Card>
+
+                    {/* Flat Frame Section */}
+                    <Card className="mt-4 shadow-md">
+                        <CardHeader className="pb-3 pt-4">
+                            <CardTitle className="flex items-center text-lg">
+                                <Layers className="mr-2 h-5 w-5 text-accent" />
+                                {t('flatFrameUploadTitle')}
+                            </CardTitle>
+                            <CardDescription className="text-xs">{t('flatFrameUploadDescription')}</CardDescription>
+                        </CardHeader>
+                        <CardContent className="space-y-3 pb-4">
+                            <ImageUploadArea onFilesAdded={handleFlatFrameFileAdded} isProcessing={isUiDisabled || isProcessingFlatFrame} multiple={false} />
+                            {isProcessingFlatFrame && <Loader2 className="mx-auto my-2 h-6 w-6 animate-spin text-accent" />}
+                            {flatFramePreviewUrl && (
+                                <div className="mt-2 space-y-2">
+                                    <Label className="text-sm font-semibold">{t('flatFramePreviewTitle')}</Label>
+                                    <div className="relative aspect-video w-full rounded border overflow-hidden">
+                                        <Image src={flatFramePreviewUrl} alt="Flat Frame Preview" layout="fill" objectFit="contain" data-ai-hint="uniform light sensor" />
+                                        <Button variant="destructive" size="icon" onClick={handleRemoveFlatFrame} className="absolute top-1 right-1 h-6 w-6 z-10" disabled={isUiDisabled}>
+                                            <X className="h-3 w-3" />
+                                        </Button>
+                                    </div>
+                                    {originalFlatFrameDimensions && (
+                                      <p className="text-xs text-muted-foreground">
+                                        {flatFrameFile?.name} ({originalFlatFrameDimensions.width}x{originalFlatFrameDimensions.height})
+                                      </p>
+                                    )}
+                                </div>
+                            )}
+                            {flatFrameFile && (
+                                <div className="flex items-center space-x-2 pt-2">
+                                    <Switch id="use-flat-frame" checked={useFlatFrame} onCheckedChange={setUseFlatFrame} disabled={isUiDisabled || !flatFrameFile} />
+                                    <Label htmlFor="use-flat-frame" className="text-sm cursor-pointer">{t('useFlatFrameLabel')}</Label>
+                                </div>
+                            )}
+                        </CardContent>
+                    </Card>
+
 
                     {allImageStarData.length > 0 && (
                         <>
@@ -1892,3 +2094,4 @@ export default function AstroStackerPage() {
     </div>
   );
 }
+
