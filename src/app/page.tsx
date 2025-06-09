@@ -24,7 +24,7 @@ import { StarAnnotationCanvas, type Star } from '@/components/astrostacker/StarA
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Switch } from '@/components/ui/switch';
-import Image from 'next/image';
+import NextImage from 'next/image'; // Aliased import
 
 
 interface LogEntry {
@@ -91,7 +91,7 @@ const applyImageAdjustmentsToDataURL = async (
   if (!baseDataUrl) return baseDataUrl;
 
   return new Promise((resolve, reject) => {
-    const img = new Image();
+    const img = new Image(); // Uses global Image constructor
     img.onload = () => {
       const canvas = document.createElement('canvas');
       canvas.width = img.naturalWidth;
@@ -680,7 +680,7 @@ export default function AstroStackerPage() {
 
 
         return new Promise<ImageStarEntry | null>((resolveEntry) => {
-            const img = new Image();
+            const img = new Image(); // Uses global Image constructor
             img.onload = async () => {
                 const { naturalWidth, naturalHeight } = img;
                 let processedPreviewUrl = originalPreviewUrl!;
@@ -820,7 +820,7 @@ export default function AstroStackerPage() {
       setPreviewUrlState(previewUrl);
       setFileState(file);
 
-      const img = new Image();
+      const img = new Image(); // Uses global Image constructor
       img.onload = () => {
         setOriginalDimensionsState({ width: img.naturalWidth, height: img.naturalHeight });
         addLog(t(`log${frameTypeName}FrameLoaded` as any, { fileName: file.name, width: img.naturalWidth, height: img.naturalHeight }));
@@ -883,7 +883,7 @@ export default function AstroStackerPage() {
   const loadImage = (dataUrl: string, imageNameForLog: string): Promise<HTMLImageElement> => {
     addLog(`Loading image data into memory for: ${imageNameForLog}`);
     return new Promise((resolve, reject) => {
-      const img = new Image();
+      const img = new Image(); // Uses global Image constructor
       img.onload = () => {
         if (img.naturalWidth === 0 || img.naturalHeight === 0) {
           addLog(`[ERROR] Image ${imageNameForLog} loaded with 0x0 dimensions from data URL.`);
@@ -1946,7 +1946,7 @@ export default function AstroStackerPage() {
                                 <div className="mt-2 space-y-2">
                                     <Label className="text-sm font-semibold">{t('biasFramePreviewTitle')}</Label>
                                     <div className="relative aspect-video w-full rounded border overflow-hidden">
-                                        <Image src={biasFramePreviewUrl} alt="Bias Frame Preview" layout="fill" objectFit="contain" data-ai-hint="noise pattern sensor" />
+                                        <NextImage src={biasFramePreviewUrl} alt="Bias Frame Preview" layout="fill" objectFit="contain" data-ai-hint="noise pattern sensor" />
                                         <Button variant="destructive" size="icon" onClick={handleRemoveBiasFrame} className="absolute top-1 right-1 h-6 w-6 z-10" disabled={isUiDisabled}>
                                             <X className="h-3 w-3" />
                                         </Button>
@@ -1983,7 +1983,7 @@ export default function AstroStackerPage() {
                                 <div className="mt-2 space-y-2">
                                     <Label className="text-sm font-semibold">{t('darkFramePreviewTitle')}</Label>
                                     <div className="relative aspect-video w-full rounded border overflow-hidden">
-                                        <Image src={darkFramePreviewUrl} alt="Dark Frame Preview" layout="fill" objectFit="contain" data-ai-hint="dark frame sensor" />
+                                        <NextImage src={darkFramePreviewUrl} alt="Dark Frame Preview" layout="fill" objectFit="contain" data-ai-hint="dark frame sensor" />
                                         <Button variant="destructive" size="icon" onClick={handleRemoveDarkFrame} className="absolute top-1 right-1 h-6 w-6 z-10" disabled={isUiDisabled}>
                                             <X className="h-3 w-3" />
                                         </Button>
@@ -2020,7 +2020,7 @@ export default function AstroStackerPage() {
                                 <div className="mt-2 space-y-2">
                                     <Label className="text-sm font-semibold">{t('flatFramePreviewTitle')}</Label>
                                     <div className="relative aspect-video w-full rounded border overflow-hidden">
-                                        <Image src={flatFramePreviewUrl} alt="Flat Frame Preview" layout="fill" objectFit="contain" data-ai-hint="uniform light sensor" />
+                                        <NextImage src={flatFramePreviewUrl} alt="Flat Frame Preview" layout="fill" objectFit="contain" data-ai-hint="uniform light sensor" />
                                         <Button variant="destructive" size="icon" onClick={handleRemoveFlatFrame} className="absolute top-1 right-1 h-6 w-6 z-10" disabled={isUiDisabled}>
                                             <X className="h-3 w-3" />
                                         </Button>
@@ -2286,6 +2286,3 @@ export default function AstroStackerPage() {
     </div>
   );
 }
-
-
-    
