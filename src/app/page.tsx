@@ -81,6 +81,9 @@ const STAR_CLICK_TOLERANCE_ON_DISPLAY_CANVAS_PX = 10;
 const MANUAL_STAR_CLICK_CENTROID_RADIUS = 10; // Pixels in analysis image space
 const MANUAL_STAR_CLICK_CENTROID_BRIGHTNESS_THRESHOLD = 30; // Grayscale brightness for local centroid
 
+const AUTO_DETECT_STAR_REFINEMENT_RADIUS = 5; // Pixels in analysis image space for auto-detection refinement
+const AUTO_DETECT_STAR_REFINEMENT_BRIGHTNESS_THRESHOLD = 30; // Grayscale brightness for auto-detection refinement
+
 const IS_LARGE_IMAGE_THRESHOLD_MP = 12;
 const MAX_DIMENSION_DOWNSCALED = 2048;
 
@@ -155,6 +158,7 @@ const applyImageAdjustmentsToDataURL = async (
 
 function detectStars(
   imageData: ImageData,
+  addLog: (message: string) => void,
   brightnessThresholdCombined: number = DEFAULT_STAR_BRIGHTNESS_THRESHOLD_COMBINED,
   localContrastFactor: number = DEFAULT_STAR_LOCAL_CONTRAST_FACTOR
 ): Star[] {
@@ -162,7 +166,7 @@ function detectStars(
   const { data, width, height } = imageData;
 
   if (width === 0 || height === 0) {
-    console.warn("detectStars called with zero-dimension imageData.");
+    addLog("[DETECT WARN] detectStars called with zero-dimension imageData.");
     return stars;
   }
 
@@ -191,15 +195,46 @@ function detectStars(
         const avgNeighborBrightness = neighborSumBrightness / neighborCount;
 
         if (currentPixelBrightness > avgNeighborBrightness * localContrastFactor) {
-          stars.push({ x, y, brightness: currentPixelBrightness });
+          // Initial candidate found at (x, y)
+          let refinedX = x;
+          let refinedY = y;
+
+          const cropRectX = Math.max(0, x - AUTO_DETECT_STAR_REFINEMENT_RADIUS);
+          const cropRectY = Math.max(0, y - AUTO_DETECT_STAR_REFINEMENT_RADIUS);
+          const cropRectWidth = Math.min(
+              width - cropRectX,
+              AUTO_DETECT_STAR_REFINEMENT_RADIUS * 2
+          );
+          const cropRectHeight = Math.min(
+              height - cropRectY,
+              AUTO_DETECT_STAR_REFINEMENT_RADIUS * 2
+          );
+
+          if (cropRectWidth > 0 && cropRectHeight > 0) {
+              const localCentroid = calculateLocalBrightnessCentroid(
+                  imageData,
+                  { x: cropRectX, y: cropRectY, width: cropRectWidth, height: cropRectHeight },
+                  addLog, // Pass addLog for detailed logging from centroid function
+                  AUTO_DETECT_STAR_REFINEMENT_BRIGHTNESS_THRESHOLD
+              );
+
+              if (localCentroid) {
+                  refinedX = cropRectX + localCentroid.x;
+                  refinedY = cropRectY + localCentroid.y;
+                  // addLog(`[DETECT DEBUG] Star at (${x},${y}) refined to (${refinedX.toFixed(1)},${refinedY.toFixed(1)})`);
+              } else {
+                  // addLog(`[DETECT DEBUG] No local centroid for star at (${x},${y}), using original. Area: ${cropRectX},${cropRectY},${cropRectWidth},${cropRectHeight}`);
+              }
+          }
+          stars.push({ x: refinedX, y: refinedY, brightness: currentPixelBrightness });
         }
       }
     }
   }
    if (stars.length > 1000) {
-    console.warn(`Detected a large number of stars (${stars.length}) during analysis.`);
+    addLog(`[DETECT WARN] Detected a large number of stars (${stars.length}) during analysis. Refinement applied.`);
   } else if (stars.length === 0) {
-    console.warn(`No stars detected with current parameters (Combined Threshold: ${brightnessThresholdCombined}, Contrast Factor: ${localContrastFactor}).`);
+    addLog(`[DETECT WARN] No stars detected with current parameters (Combined Threshold: ${brightnessThresholdCombined}, Contrast Factor: ${localContrastFactor}).`);
   }
   return stars;
 }
@@ -1008,7 +1043,7 @@ export default function AstroStackerPage() {
       tempAnalysisCtx.drawImage(imgEl, 0, 0, analysisWidth, analysisHeight);
       const analysisImageData = tempAnalysisCtx.getImageData(0, 0, analysisWidth, analysisHeight);
 
-      const detectedStars = detectStars(analysisImageData);
+      const detectedStars = detectStars(analysisImageData, addLog);
       addLog(`Auto-detected ${detectedStars.length} stars in ${currentEntry.file.name} (at ${analysisWidth}x${analysisHeight}).`);
 
       setAllImageStarData(prev => prev.map((entry, idx) => {
@@ -1474,6 +1509,7 @@ export default function AstroStackerPage() {
     addLog(`Flat Frames: ${useFlatFrames && flatFrameFiles.length > 0 ? `${flatFrameFiles.length} frame(s)` : 'Not Used'}.`);
     addLog(`Star Alignment: Min Stars = ${MIN_STARS_FOR_ALIGNMENT}, Auto Target Count = ${AUTO_ALIGN_TARGET_STAR_COUNT}.`);
     addLog(`Star Detection Params: Combined Brightness Threshold = ${DEFAULT_STAR_BRIGHTNESS_THRESHOLD_COMBINED}, Local Contrast Factor = ${DEFAULT_STAR_LOCAL_CONTRAST_FACTOR}.`);
+    addLog(`Auto-Detect Refinement: Radius = ${AUTO_DETECT_STAR_REFINEMENT_RADIUS}px, Threshold = ${AUTO_DETECT_STAR_REFINEMENT_BRIGHTNESS_THRESHOLD}.`);
     addLog(`Brightness Centroid Fallback Threshold: ${BRIGHTNESS_CENTROID_FALLBACK_THRESHOLD_GRAYSCALE_EQUIVALENT} (grayscale equivalent).`);
 
     if (typeof window === 'undefined' || typeof document === 'undefined') {
