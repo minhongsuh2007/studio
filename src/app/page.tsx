@@ -78,7 +78,7 @@ const SIGMA_CLIP_THRESHOLD = 2.0;
 const SIGMA_CLIP_ITERATIONS = 2;
 const MIN_STARS_FOR_CENTROID_ALIGNMENT = 3;
 const MIN_STARS_FOR_AFFINE_ALIGNMENT = 5;
-const NUM_STARS_TO_USE_FOR_AFFINE_MATCHING = 10;
+const NUM_STARS_TO_USE_FOR_AFFINE_MATCHING = 10; 
 const AUTO_ALIGN_TARGET_STAR_COUNT = 10;
 
 
@@ -108,7 +108,7 @@ const DETECTOR_MIN_CONTRAST = 20;
 const DETECTOR_MIN_BRIGHTNESS = 40;
 const DETECTOR_MAX_BRIGHTNESS = 220; // Stars brighter than this might be saturated or too large
 const DETECTOR_MIN_DISTANCE = 6; // Minimum pixels between star centers
-const DETECTOR_MAX_STARS = 10;
+const DETECTOR_MAX_STARS = 10; // Reduced for performance, was 75
 const DETECTOR_MIN_FWHM = 1.5;
 const DETECTOR_MAX_FWHM = 5.0;
 const DETECTOR_ANNULUS_INNER_RADIUS = 4; // For background estimation
@@ -196,7 +196,7 @@ const applyImageAdjustmentsToDataURL = async (
 function getGrayscaleArrayFromCanvas(ctx: CanvasRenderingContext2D, addLog?: (message: string) => void): number[][] {
   const { width, height } = ctx.canvas;
   if (width === 0 || height === 0) {
-    if (addLog) addLog(`[DETECTOR CANVAS] Canvas dimensions are ${width}x${height}. Cannot extract grayscale data.`);
+    if (addLog) addLog(`[DETECTOR CANVAS ERROR] Canvas dimensions are ${width}x${height}. Cannot extract grayscale data.`);
     return [];
   }
   if (addLog) addLog(`[DETECTOR CANVAS] Extracting grayscale data from canvas: ${width}x${height}`);
@@ -231,7 +231,7 @@ function estimateLocalBackground(
   let count = 0;
 
   if (width === 0 || height === 0) {
-    if (addLog) addLog("[DETECTOR BG] Empty image or row for background estimation.");
+    if (addLog) addLog("[DETECTOR BG ERROR] Empty image or row for background estimation.");
     return 0;
   }
 
@@ -275,8 +275,8 @@ function estimateFWHM(
   const imageWidth = image[0]?.length || 0;
   const imageHeight = image.length;
 
-  if (imageWidth === 0 || imageHeight === 0 || y < 0 || y >= imageHeight) {
-    if (addLog) addLog(`[FWHM EST] Invalid image or y-coordinate for FWHM estimation at (${x},${y}).`);
+  if (imageWidth === 0 || imageHeight === 0 || y < 0 || y >= imageHeight || !image[y]) {
+    if (addLog) addLog(`[FWHM EST ERROR] Invalid image or y-coordinate for FWHM estimation at (${x},${y}). Image dims: ${imageWidth}x${imageHeight}, y=${y}`);
     return 0;
   }
 
@@ -285,18 +285,18 @@ function estimateFWHM(
     if (px >= 0 && px < imageWidth) {
       profile.push(image[y][px]);
     } else {
-      profile.push(0);
+      profile.push(0); // Pad with zero if out of bounds
     }
   }
 
   if (profile.length === 0) {
-    if (addLog) addLog(`[FWHM EST] Profile array is empty at (${x},${y}).`);
+    if (addLog) addLog(`[FWHM EST ERROR] Profile array is empty at (${x},${y}).`);
     return 0;
   }
 
   const peak = Math.max(...profile);
   if (peak === 0) {
-     if (addLog) addLog(`[FWHM EST] Peak value in profile is 0 at (${x},${y}). Profile: ${profile.map(p=>p.toFixed(1)).join(',')}`);
+     if (addLog) addLog(`[FWHM EST WARN] Peak value in profile is 0 at (${x},${y}). Profile: ${profile.map(p=>p.toFixed(1)).join(',')}`);
      return 0;
   }
   const halfMax = peak / 2;
@@ -310,7 +310,6 @@ function estimateFWHM(
           break;
       }
   }
-  // Handle case where peak is at the very start of profile and is above halfMax
   if (left === -1 && profile[0] >= halfMax && profile.length > 1 && profile[0] > profile[1]) {
       left = 0;
   }
@@ -323,17 +322,20 @@ function estimateFWHM(
           break;
       }
   }
-   // Handle case where peak is at the very end of profile and is above halfMax
    if (right === -1 && profile[profile.length - 1] >= halfMax && profile.length > 1 && profile[profile.length - 1] > profile[profile.length - 2]) {
       right = profile.length - 1;
   }
 
 
   const fwhm = (left !== -1 && right !== -1 && right > left) ? Math.abs(right - left) : 0;
-  if (addLog && fwhm > 0 && peak > (DETECTOR_MIN_BRIGHTNESS * 1.5)) {
-     addLog(`[FWHM EST] At (${x},${y}): Peak=${peak.toFixed(1)}, HM=${halfMax.toFixed(1)}, L=${left.toFixed(2)}, R=${right.toFixed(2)}, FWHM=${fwhm.toFixed(2)}`);
-  } else if (addLog && fwhm === 0 && peak > (DETECTOR_MIN_BRIGHTNESS * 1.5)) {
-     addLog(`[FWHM EST WARN] At (${x},${y}): FWHM is 0. Peak=${peak.toFixed(1)}, L=${left.toFixed(1)}, R=${right.toFixed(1)}`);
+  
+  const logLevelThreshold = DETECTOR_MIN_BRIGHTNESS * 1.2; // Only log detailed FWHM for reasonably bright candidates
+  if (addLog && peak > logLevelThreshold) {
+    if (fwhm > 0) {
+      addLog(`[FWHM EST] At (${x},${y}): Peak=${peak.toFixed(1)}, HM=${halfMax.toFixed(1)}, L=${left.toFixed(2)}, R=${right.toFixed(2)}, FWHM=${fwhm.toFixed(2)}`);
+    } else {
+      addLog(`[FWHM EST WARN] At (${x},${y}): FWHM is 0. Peak=${peak.toFixed(1)}, L=${left.toFixed(1)}, R=${right.toFixed(1)}. Profile: ${profile.map(p=>p.toFixed(0)).join(',')}`);
+    }
   }
   return fwhm;
 }
@@ -375,8 +377,8 @@ function detectStarsWithNewPipeline(
 
       // 1. Brightness check
       if (value < DETECTOR_MIN_BRIGHTNESS || value > DETECTOR_MAX_BRIGHTNESS) {
-        if (value > DETECTOR_MAX_BRIGHTNESS && value > (DETECTOR_MIN_BRIGHTNESS * 1.5) /*&& Math.random() < 0.1*/ ) addLog(`[DETECTOR REJECT BRIGHT] (${x},${y}) val ${value.toFixed(0)} > MAX_BRIGHTNESS ${DETECTOR_MAX_BRIGHTNESS}`);
-        else if (value < DETECTOR_MIN_BRIGHTNESS && value > 0 /*&& Math.random() < 0.05*/) addLog(`[DETECTOR REJECT DIM] (${x},${y}) val ${value.toFixed(0)} < MIN_BRIGHTNESS ${DETECTOR_MIN_BRIGHTNESS}`);
+        if (value > DETECTOR_MAX_BRIGHTNESS && value > (DETECTOR_MIN_BRIGHTNESS * 1.1) && Math.random() < 0.02) addLog(`[DETECTOR REJECT BRIGHT] (${x},${y}) val ${value.toFixed(0)} > MAX_BRIGHTNESS ${DETECTOR_MAX_BRIGHTNESS}`);
+        else if (value < DETECTOR_MIN_BRIGHTNESS && value > 0  && Math.random() < 0.01) addLog(`[DETECTOR REJECT DIM] (${x},${y}) val ${value.toFixed(0)} < MIN_BRIGHTNESS ${DETECTOR_MIN_BRIGHTNESS}`);
         continue;
       }
       passedBrightness++;
@@ -384,7 +386,7 @@ function detectStarsWithNewPipeline(
       // 2. Contrast check
       const contrast = getLocalContrast(grayscaleImage, x, y, addLog);
       if (contrast < DETECTOR_MIN_CONTRAST) {
-        if (value > DETECTOR_MIN_BRIGHTNESS /*&& Math.random() < 0.1*/) addLog(`[DETECTOR REJECT CONTRAST] (${x},${y}) val ${value.toFixed(0)}, contrast ${contrast.toFixed(1)} < MIN_CONTRAST ${DETECTOR_MIN_CONTRAST}`);
+        if (value > (DETECTOR_MIN_BRIGHTNESS * 1.1) && Math.random() < 0.02) addLog(`[DETECTOR REJECT CONTRAST] (${x},${y}) val ${value.toFixed(0)}, contrast ${contrast.toFixed(1)} < MIN_CONTRAST ${DETECTOR_MIN_CONTRAST}`);
         continue;
       }
       passedContrast++;
@@ -392,8 +394,8 @@ function detectStarsWithNewPipeline(
       // 3. FWHM check
       const fwhm = estimateFWHM(grayscaleImage, x, y, DETECTOR_FWHM_PROFILE_HALF_WIDTH, addLog);
       if (fwhm < DETECTOR_MIN_FWHM || fwhm > DETECTOR_MAX_FWHM) {
-        if (value > DETECTOR_MIN_BRIGHTNESS && fwhm !==0 /*&& Math.random() < 0.1*/) addLog(`[DETECTOR REJECT FWHM] (${x},${y}) val ${value.toFixed(0)}, FWHM ${fwhm.toFixed(1)} out of [${DETECTOR_MIN_FWHM}-${DETECTOR_MAX_FWHM}]`);
-        else if (value > DETECTOR_MIN_BRIGHTNESS && fwhm === 0 && DETECTOR_MIN_FWHM > 0 /*&& Math.random() < 0.1*/) addLog(`[DETECTOR REJECT FWHM ZERO] (${x},${y}) val ${value.toFixed(0)}, FWHM is 0, less than MIN_FWHM ${DETECTOR_MIN_FWHM}`);
+        if (value > (DETECTOR_MIN_BRIGHTNESS*1.1) && fwhm !==0 && Math.random() < 0.02) addLog(`[DETECTOR REJECT FWHM] (${x},${y}) val ${value.toFixed(0)}, FWHM ${fwhm.toFixed(1)} out of [${DETECTOR_MIN_FWHM}-${DETECTOR_MAX_FWHM}]`);
+        else if (value > (DETECTOR_MIN_BRIGHTNESS*1.1) && fwhm === 0 && DETECTOR_MIN_FWHM > 0 && Math.random() < 0.02) addLog(`[DETECTOR REJECT FWHM ZERO] (${x},${y}) val ${value.toFixed(0)}, FWHM is 0, less than MIN_FWHM ${DETECTOR_MIN_FWHM}`);
         continue;
       }
       passedFWHMCount++;
@@ -405,11 +407,11 @@ function detectStarsWithNewPipeline(
       ];
       const tooFlat = neighbors.every(n => Math.abs(n - value) <= DETECTOR_FLATNESS_TOLERANCE);
       if (tooFlat) {
-        if (value > DETECTOR_MIN_BRIGHTNESS /*&& Math.random() < 0.1*/) addLog(`[DETECTOR REJECT FLAT] (${x},${y}) Too flat. Val: ${value.toFixed(0)}, N: ${neighbors.map(n=>n.toFixed(0)).join(',')}`);
+        if (value > (DETECTOR_MIN_BRIGHTNESS*1.1) && Math.random() < 0.02) addLog(`[DETECTOR REJECT FLAT] (${x},${y}) Too flat. Val: ${value.toFixed(0)}, N: ${neighbors.map(n=>n.toFixed(0)).join(',')}`);
         continue;
       }
       if (!(value > neighbors[0] && value > neighbors[1] && value > neighbors[2] && value > neighbors[3])) {
-         if (value > DETECTOR_MIN_BRIGHTNESS /*&& Math.random() < 0.1*/) addLog(`[DETECTOR REJECT LOCALMAX] (${x},${y}) Not local max. Val: ${value.toFixed(0)}, N: ${neighbors.map(n=>n.toFixed(0)).join(',')}`);
+         if (value > (DETECTOR_MIN_BRIGHTNESS*1.1) && Math.random() < 0.02) addLog(`[DETECTOR REJECT LOCALMAX] (${x},${y}) Not local max. Val: ${value.toFixed(0)}, N: ${neighbors.map(n=>n.toFixed(0)).join(',')}`);
            continue;
       }
       passedFlatnessAndLocalMax++;
@@ -431,7 +433,7 @@ function detectStarsWithNewPipeline(
   }
 
   if (stars.length > 0) {
-    addLog(`[DETECTOR] Found ${stars.length} stars after all filters. Top star ex: (${stars[0]?.x}, ${stars[0]?.y}) Val:${stars[0]?.value.toFixed(1)} FWHM:${stars[0]?.fwhm.toFixed(1)} Contrast:${stars[0]?.contrast.toFixed(1)}`);
+    addLog(`[DETECTOR] Found ${stars.length} stars after all filters. Top star ex: (${stars[0]?.x.toFixed(0)}, ${stars[0]?.y.toFixed(0)}) Val:${stars[0]?.value.toFixed(1)} FWHM:${stars[0]?.fwhm.toFixed(1)} Contrast:${stars[0]?.contrast.toFixed(1)}`);
   } else {
     addLog(`[DETECTOR WARN] No stars found after all filters.`);
   }
@@ -448,7 +450,7 @@ function calculateStarArrayCentroid(starsInput: Star[], addLog: (message: string
   }
   if (starsInput.length < MIN_STARS_FOR_CENTROID_ALIGNMENT) {
      const message = `Not enough stars (${starsInput.length}) provided for star-based centroid. Need at least ${MIN_STARS_FOR_CENTROID_ALIGNMENT}.`;
-     addLog(`[ALIGN] ${message}`);
+     addLog(`[ALIGN WARN] ${message}`);
      return null;
   }
 
@@ -466,7 +468,6 @@ function calculateStarArrayCentroid(starsInput: Star[], addLog: (message: string
 
   if (totalBrightness === 0) {
     if (starsInput.length > 0) {
-        // If brightness is zero but stars exist, use simple average of positions
         const warnMsg = "Total brightness of provided stars is zero. Using simple average of their positions.";
         addLog(`[ALIGN WARN] ${warnMsg}`);
         let sumX = 0;
@@ -1231,6 +1232,7 @@ export default function AstroStackerPage() {
     });
   };
 
+
   const analyzeImageForStars = async (
     entryToAnalyze: ImageStarEntry,
     localAddLog: (message: string) => void
@@ -1244,28 +1246,29 @@ export default function AstroStackerPage() {
     );
   
     let processedEntryData: Partial<ImageStarEntry> = {
-      isAnalyzed: false,
-      analysisStars: [],
-      initialAutoStars: [],
-      analysisDimensions: entryToAnalyze.analysisDimensions || { width: 0, height: 0 }, 
+      analysisStars: [...entryToAnalyze.analysisStars],
+      initialAutoStars: [...entryToAnalyze.initialAutoStars],
+      analysisDimensions: entryToAnalyze.analysisDimensions || { width: 0, height: 0 },
+      userReviewed: entryToAnalyze.userReviewed,
+      starSelectionMode: entryToAnalyze.starSelectionMode,
     };
   
     try {
-      localAddLog(`[ANALYZE] Starting analysis for: ${entryToAnalyze.file.name}`);
+      localAddLog(`[ANALYZE] Starting analysis for: ${entryToAnalyze.file.name} (ID: ${entryToAnalyze.id})`);
+      
       if (!entryToAnalyze.analysisDimensions || entryToAnalyze.analysisDimensions.width === 0 || entryToAnalyze.analysisDimensions.height === 0) {
         throw new Error(`Analysis dimensions for ${entryToAnalyze.file.name} are invalid or zero (${entryToAnalyze.analysisDimensions?.width}x${entryToAnalyze.analysisDimensions?.height}). Cannot proceed with analysis.`);
       }
 
       const imgEl = await loadImage(entryToAnalyze.previewUrl, entryToAnalyze.file.name);
+      const analysisWidth = entryToAnalyze.analysisDimensions.width;
+      const analysisHeight = entryToAnalyze.analysisDimensions.height;
   
       const tempAnalysisCanvas = document.createElement('canvas');
       const tempAnalysisCtx = tempAnalysisCanvas.getContext('2d', { willReadFrequently: true });
       if (!tempAnalysisCtx) {
         throw new Error("Could not get analysis canvas context.");
       }
-  
-      const analysisWidth = entryToAnalyze.analysisDimensions.width;
-      const analysisHeight = entryToAnalyze.analysisDimensions.height;
   
       tempAnalysisCanvas.width = analysisWidth;
       tempAnalysisCanvas.height = analysisHeight;
@@ -1290,24 +1293,21 @@ export default function AstroStackerPage() {
       }));
   
       processedEntryData.initialAutoStars = [...finalStars];
-      processedEntryData.analysisDimensions = { width: analysisWidth, height: analysisHeight };
-      processedEntryData.isAnalyzed = true;
-  
-      if (entryToAnalyze.starSelectionMode === 'auto' || (entryToAnalyze.starSelectionMode === 'manual' && !entryToAnalyze.userReviewed)) {
+      processedEntryData.analysisDimensions = { width: analysisWidth, height: analysisHeight }; // ensure dimensions are updated
+      
+      if (entryToAnalyze.starSelectionMode === 'auto') {
         processedEntryData.analysisStars = [...finalStars];
-      } else if (entryToAnalyze.starSelectionMode === 'manual' && entryToAnalyze.userReviewed) {
-        processedEntryData.analysisStars = entryToAnalyze.analysisStars && entryToAnalyze.analysisStars.length > 0
-                                         ? [...entryToAnalyze.analysisStars]
-                                         : [...finalStars];
       }
-      localAddLog(`[ANALYZE] Analysis successful for ${entryToAnalyze.file.name}. Stars detected: ${finalStars.length}. IsAnalyzed: true.`);
+      // If manual mode, analysisStars are preserved unless explicitly changed by user later.
+      
+      processedEntryData.isAnalyzed = true;
+      localAddLog(`[ANALYZE] Analysis successful for ${entryToAnalyze.file.name}. isAnalyzed set to true.`);
   
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       localAddLog(`[ANALYZE ERROR] Analysis failed for ${entryToAnalyze.file.name}: ${errorMessage}`);
       toast({ title: `Analysis Failed for ${entryToAnalyze.file.name}`, description: errorMessage, variant: "destructive" });
-      processedEntryData.isAnalyzed = false; // Ensure isAnalyzed is false on error
-      processedEntryData.analysisDimensions = entryToAnalyze.analysisDimensions || { width: 0, height: 0 };
+      processedEntryData.isAnalyzed = false;
     }
     
     const finalUpdatedEntry: ImageStarEntry = {
@@ -1315,10 +1315,10 @@ export default function AstroStackerPage() {
       ...processedEntryData,
       isAnalyzing: false, 
     };
-
-    localAddLog(`[ANALYZE FINAL STATE] For ${finalUpdatedEntry.file.name}: isAnalyzed=${finalUpdatedEntry.isAnalyzed}, isAnalyzing=${finalUpdatedEntry.isAnalyzing}, Stars Found=${finalUpdatedEntry.analysisStars.length}`);
-
+    
     setAllImageStarData(prev => prev.map(e => (e.id === finalUpdatedEntry.id ? finalUpdatedEntry : e)));
+    
+    localAddLog(`[ANALYZE FINAL STATE] For ${finalUpdatedEntry.file.name}: isAnalyzed=${finalUpdatedEntry.isAnalyzed}, isAnalyzing=${finalUpdatedEntry.isAnalyzing}, AutoStars=${finalUpdatedEntry.initialAutoStars.length}, AnalysisStars=${finalUpdatedEntry.analysisStars.length}`);
     return finalUpdatedEntry;
   }
 
@@ -1345,17 +1345,21 @@ export default function AstroStackerPage() {
     };
 
     if (newMode === 'auto') {
-      updatedEntry.analysisStars = [...updatedEntry.initialAutoStars];
+      updatedEntry.analysisStars = [...updatedEntry.initialAutoStars]; // Revert to auto-detected stars
       setAllImageStarData(prev => prev.map(e => e.id === imageId ? updatedEntry : e));
-    } else { 
+    } else { // Switching to manual
+        // If no manual stars yet, and auto stars exist, copy them as a starting point
         if ((!updatedEntry.analysisStars || updatedEntry.analysisStars.length === 0) && updatedEntry.initialAutoStars.length > 0) {
            updatedEntry.analysisStars = [...updatedEntry.initialAutoStars];
         }
         setAllImageStarData(prev => prev.map(e => e.id === imageId ? updatedEntry : e));
         
+        // If switching to manual and it hasn't been analyzed yet (or analysis dimensions missing), trigger analysis.
         if (!updatedEntry.isAnalyzed && !updatedEntry.isAnalyzing) {
             addLog(`Image ${updatedEntry.file.name} switched to manual mode, and needs analysis. Analyzing now...`);
-            await analyzeImageForStars(updatedEntry, addLog);
+            // Use the state from setAllImageStarData for consistency if it's quick, or re-fetch from allImageStarData
+            const freshEntry = allImageStarData.find(e => e.id === imageId) || updatedEntry;
+            await analyzeImageForStars(freshEntry, addLog);
         }
     }
   };
@@ -1383,8 +1387,11 @@ export default function AstroStackerPage() {
 
     if (!entryForEditing.isAnalyzed && !entryForEditing.isAnalyzing) {
       addLog(`Analyzing ${entryForEditing.file.name} before editing stars.`);
-      const processedEntry = await analyzeImageForStars({...entryForEditing, starSelectionMode: 'manual'}, addLog);
+      // Pass the entry *as it is currently in the state before this analysis call*
+      const entryBeforeAnalysis = allImageStarData.find(e => e.id === entryForEditing.id) || entryForEditing;
+      const processedEntry = await analyzeImageForStars({...entryBeforeAnalysis, starSelectionMode: 'manual'}, addLog);
       
+      // After analysis, get the latest state of this entry from the global state
       const finalEntryAfterAnalysis = allImageStarData.find(e => e.id === processedEntry.id);
       if (!finalEntryAfterAnalysis || !finalEntryAfterAnalysis.isAnalyzed) {
         toast({title: "Analysis Failed", description: `Could not analyze ${entryForEditing.file.name}. Cannot edit stars.`, variant: "destructive"});
@@ -1397,10 +1404,11 @@ export default function AstroStackerPage() {
       return;
     }
     
+    // Get the absolute latest version of the entry for editing after any potential state updates
     const finalEntryForEditing = allImageStarData.find(e => e.id === entryForEditing.id) || entryForEditing;
 
 
-    if (finalEntryForEditing && finalEntryForEditing.isAnalyzed && finalEntryForEditing.analysisDimensions) {
+    if (finalEntryForEditing && finalEntryForEditing.isAnalyzed && finalEntryForEditing.analysisDimensions && finalEntryForEditing.analysisDimensions.width > 0) {
       let starsToEdit = [...finalEntryForEditing.analysisStars];
       if (finalEntryForEditing.starSelectionMode !== 'manual') {
         setAllImageStarData(prev => prev.map((e, idx) =>
@@ -1443,8 +1451,8 @@ export default function AstroStackerPage() {
       imgToEdit.src = finalEntryForEditing.previewUrl; 
 
     } else {
-       console.warn(`Cannot edit stars for ${finalEntryForEditing?.file?.name || 'image'}: Analysis data, dimension data, or preview URL might be incomplete or loading failed.`);
-       toast({title: "Error", description: `Could not prepare ${finalEntryForEditing?.file?.name || 'image'} for star editing. Analysis data may be missing.`, variant: "destructive"});
+       console.warn(`Cannot edit stars for ${finalEntryForEditing?.file?.name || 'image'}: Analysis data (isAnalyzed=${finalEntryForEditing?.isAnalyzed}), dimension data (${finalEntryForEditing?.analysisDimensions?.width}x${finalEntryForEditing?.analysisDimensions?.height}), or preview URL might be incomplete or loading failed.`);
+       toast({title: "Error", description: `Could not prepare ${finalEntryForEditing?.file?.name || 'image'} for star editing. Analysis data may be missing or invalid.`, variant: "destructive"});
     }
   };
 
@@ -1774,29 +1782,30 @@ export default function AstroStackerPage() {
     setProgressPercent(PROGRESS_INITIAL_SETUP);
     addLog(`Initial setup complete. Progress: ${PROGRESS_INITIAL_SETUP}%.`);
 
-    addLog(`Starting pre-stack analysis for ${allImageStarData.length} images if needed...`);
-    const idsToAnalyze = allImageStarData
+    addLog(`Starting pre-stack analysis if needed...`);
+    const idsThatNeedAnalysis = allImageStarData
         .filter(entry => !entry.isAnalyzed && !entry.isAnalyzing)
         .map(entry => entry.id);
 
-    if (idsToAnalyze.length > 0) {
-        addLog(`Found ${idsToAnalyze.length} images requiring analysis: ${idsToAnalyze.join(', ')}`);
-    }
-
-    for (const imageId of idsToAnalyze) {
-        // Find the entry from the most current state in case previous analyses in this loop updated it.
-        const entryToProcess = allImageStarData.find(e => e.id === imageId);
-        if (entryToProcess && !entryToProcess.isAnalyzed && !entryToProcess.isAnalyzing) { // Double check state
-            addLog(`Image ${entryToProcess.file.name} (${entryToProcess.id}) needs analysis for stacking process.`);
-            await analyzeImageForStars(entryToProcess, addLog); // This function updates global state.
+    if (idsThatNeedAnalysis.length > 0) {
+        addLog(`Found ${idsThatNeedAnalysis.length} images requiring analysis: ${idsThatNeedAnalysis.join(', ')}`);
+        for (const imageId of idsThatNeedAnalysis) {
+            // Find the entry from the most current state in case previous analyses in this loop updated it.
+            const entryToAnalyze = allImageStarData.find(e => e.id === imageId);
+            if (entryToAnalyze) { 
+                addLog(`Analyzing image ${entryToAnalyze.file.name} (ID: ${entryToAnalyze.id}) for stacking process.`);
+                await analyzeImageForStars(entryToAnalyze, addLog); 
+            }
         }
+    }  else {
+        addLog("No images require pre-stack analysis.");
     }
     
-    // Clear 'isAnalyzing' for any items that might have been stuck from a previous run but weren't in idsToAnalyze.
-    // This ensures 'isAnalyzing' is false if analyzeImageForStars for it isn't called in this specific stack run.
+    // Cleanup: Ensure no image is stuck in 'isAnalyzing' state from a previous, unrelated run.
+    // This primarily addresses UI state rather than data for the current stack.
     setAllImageStarData(prevData => prevData.map(entry => {
-        if (entry.isAnalyzing && !idsToAnalyze.includes(entry.id)) {
-            localAddLog(`[STACK PREP] Clearing stale 'isAnalyzing' flag for ${entry.file.name}.`);
+        if (entry.isAnalyzing && !idsThatNeedAnalysis.includes(entry.id)) { // Check if it was part of the current batch
+            addLog(`[STACK PREP] Clearing stale 'isAnalyzing' flag for ${entry.file.name}. It was not part of the current analysis batch.`);
             return { ...entry, isAnalyzing: false }; 
         }
         return entry;
@@ -1832,11 +1841,11 @@ export default function AstroStackerPage() {
     }
 
     const firstValidImageIndex = currentImageEntriesForStacking.findIndex(
-      entry => imageElements.some(imgEl => imgEl.src === entry.previewUrl)
+      entry => imageElements.some(imgEl => imgEl.src === entry.previewUrl) && entry.isAnalyzed
     );
 
     if (firstValidImageIndex === -1) {
-      const noValidRefMsg = `Could not find a valid reference image among loaded images. Cannot proceed.`;
+      const noValidRefMsg = `Could not find a valid reference image (analyzed) among loaded images. Cannot proceed.`;
       addLog(`[ERROR] ${noValidRefMsg}`);
       toast({ title: "Invalid Reference Image", description: noValidRefMsg, variant: "destructive" });
       setIsProcessingStack(false); setProgressPercent(0); return;
@@ -2012,11 +2021,13 @@ export default function AstroStackerPage() {
       let method = "unknown_fallback";
       
       let starsForCentroidCalc: Star[] = [];
+      // Use initialAutoStars for 'auto' mode, and analysisStars for 'manual' (which could be user-edited or copied from auto)
       if (entryData.starSelectionMode === 'auto') { 
           starsForCentroidCalc = [...entryData.initialAutoStars].sort((a,b) => b.brightness - a.brightness).slice(0, AUTO_ALIGN_TARGET_STAR_COUNT);
       } else { 
           starsForCentroidCalc = [...entryData.analysisStars];
       }
+
 
       if (!entryData.isAnalyzed || !entryData.analysisDimensions || entryData.analysisDimensions.width === 0 || entryData.analysisDimensions.height === 0) {
           finalScaledCentroid = { x: targetWidth / 2, y: targetHeight / 2 };
@@ -2078,7 +2089,7 @@ export default function AstroStackerPage() {
             referenceStarsForAffine = []; 
         }
     } else {
-         addLog(`[AFFINE REF INFO] Reference image ${referenceImageEntry?.file?.name || 'N/A'} not suitable for affine (not analyzed, or < ${MIN_STARS_FOR_AFFINE_ALIGNMENT} stars before FWHM filter). Affine alignment will be skipped for all images.`);
+         addLog(`[AFFINE REF INFO] Reference image ${referenceImageEntry?.file?.name || 'N/A'} not suitable for affine (not analyzed, or < ${MIN_STARS_FOR_AFFINE_ALIGNMENT} stars before FWHM filter, or stars missing FWHM). Affine alignment will be skipped for all images.`);
          referenceStarsForAffine = [];
     }
     const referenceCentroidForFallback = centroids[firstValidImageIndex]; 
@@ -2120,6 +2131,10 @@ export default function AstroStackerPage() {
         if (!currentImageEntry) { 
             addLog(`[STACK SKIP WARN] Cannot find entry data for image element ${i} (src: ${imgElement.src.substring(0,50)}...). This image will be skipped.`); 
             continue; 
+        }
+        if (!currentImageEntry.isAnalyzed) {
+             addLog(`[STACK SKIP WARN] Image ${currentImageEntry.file.name} was not successfully analyzed. Skipping for stacking.`);
+             continue;
         }
 
 
@@ -2182,7 +2197,7 @@ export default function AstroStackerPage() {
             if (yBandStart === 0) addLog(`[AFFINE CURR PREP] Img ${i} (${currentImageEntry.file.name}): Total analysis stars: ${currentImageEntry.analysisStars.length}. After FWHM filter: ${goodFWHMCurrentStars.length} stars.`);
             
             const currentStarsForAffinePoints: AstroAlignPoint[] = goodFWHMCurrentStars.map(s => {
-                if (yBandStart === 0 && goodFWHMCurrentStars.length >= MIN_STARS_FOR_AFFINE_ALIGNMENT) addLog(`  [AFFINE CURR STAR] Using: x=${s.x.toFixed(2)}, y=${s.y.toFixed(2)}, fwhm=${s.fwhm?.toFixed(2)}, bright=${s.brightness.toFixed(0)}`);
+                if (yBandStart === 0 && goodFWHMCurrentStars.length >= MIN_STARS_FOR_AFFINE_ALIGNMENT && Math.random() < 0.2) addLog(`  [AFFINE CURR STAR] Sampled: x=${s.x.toFixed(2)}, y=${s.y.toFixed(2)}, fwhm=${s.fwhm?.toFixed(2)}, bright=${s.brightness.toFixed(0)}`);
                 return { x: s.x, y: s.y };
             });
 
@@ -2195,8 +2210,10 @@ export default function AstroStackerPage() {
 
                 if (yBandStart === 0) { 
                   addLog(`[AFFINE ATTEMPT] For ${currentImageEntry.file.name} with ${numPointsToMatch} pairs.`);
-                  addLog(`  SRC Pts (current): ${JSON.stringify(srcPts.map(p => ({x:p.x.toFixed(1), y:p.y.toFixed(1)})))}`);
-                  addLog(`  DST Pts (reference): ${JSON.stringify(dstPts.map(p => ({x:p.x.toFixed(1), y:p.y.toFixed(1)})))}`);
+                  if (Math.random() < 0.3) { // Log sample points occasionally
+                    addLog(`  SRC Pts (current - sample): ${JSON.stringify(srcPts.slice(0,3).map(p => ({x:p.x.toFixed(1), y:p.y.toFixed(1)})))}`);
+                    addLog(`  DST Pts (reference - sample): ${JSON.stringify(dstPts.slice(0,3).map(p => ({x:p.x.toFixed(1), y:p.y.toFixed(1)})))}`);
+                  }
                 }
 
                 try {
@@ -2336,8 +2353,8 @@ export default function AstroStackerPage() {
       setShowPostProcessEditor(true); 
 
       const alignmentMessage = affineAlignmentsUsed > 0
-        ? `${affineAlignmentsUsed}/${numValidLightImages -1} non-reference images aligned using Affine Transform. Others (or if affine failed) used centroid fallback.`
-        : `All ${numValidLightImages -1} non-reference images (and reference) aligned using centroid-based methods (Affine conditions not met or failed).`;
+        ? `${affineAlignmentsUsed}/${imageElements.length -1} non-reference images aligned using Affine Transform. Others (or if affine failed) used centroid fallback.`
+        : `All ${imageElements.length -1} non-reference images (and reference) aligned using centroid-based methods (Affine conditions not met or failed).`;
 
       let calibrationSummary = "";
       if (useBiasFrames && masterBiasData) calibrationSummary += `Bias (${biasFrameFiles.length} frames). `;
@@ -2369,7 +2386,7 @@ export default function AstroStackerPage() {
   } finally {
     setIsProcessingStack(false);
     setProgressPercent(0);
-    setAllImageStarData(prev => prev.map(e => ({...e, isAnalyzing: false})));
+    // Don't reset isAnalyzing globally here; analyzeImageForStars handles its own item.
     addLog("Image stacking process finished.");
   }
 };
@@ -2767,7 +2784,7 @@ export default function AstroStackerPage() {
                         {logs.map((log) => (
                           <div key={log.id} className="mb-1 font-mono">
                             <span className="text-muted-foreground mr-2">{log.timestamp}</span>
-                            <span className={log.message.startsWith('[ERROR]') || log.message.startsWith('[INTERNAL_ANALYZE ERROR]') || log.message.startsWith('[FATAL ERROR]') ? 'text-destructive' : (log.message.startsWith('[WARN]') || log.message.includes('Warning:') || log.message.startsWith('[FWHM EST WARN]') || log.message.startsWith('[DETECTOR WARN]') ? 'text-yellow-500' : 'text-foreground/80')}>{log.message}</span>
+                            <span className={log.message.startsWith('[ERROR]') || log.message.startsWith('[ANALYZE ERROR]') || log.message.startsWith('[FITS ERROR]') || log.message.startsWith('[FATAL ERROR]') || log.message.startsWith('[DETECTOR ERROR]') || log.message.startsWith('[DETECTOR CANVAS ERROR]') || log.message.startsWith('[FWHM EST ERROR]') ? 'text-destructive' : (log.message.startsWith('[WARN]') || log.message.includes('Warning:') || log.message.startsWith('[FWHM EST WARN]') || log.message.startsWith('[DETECTOR WARN]') || log.message.startsWith('[ALIGN WARN]') || log.message.startsWith('[LOCAL CENTROID WARN]') || log.message.startsWith('[STACK SKIP WARN]') || log.message.startsWith('[AFFINE WARN]') ? 'text-yellow-500' : 'text-foreground/80')}>{log.message}</span>
                           </div>
                         ))}
                       </ScrollArea>
@@ -2876,3 +2893,4 @@ export default function AstroStackerPage() {
     
 
       
+
