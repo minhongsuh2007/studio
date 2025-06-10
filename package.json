@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --turbopack -p 9002",
+    "dev": "next dev --turbopack --port 9002 --hostname 0.0.0.0",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
@@ -24,6 +24,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "dotenv": "^16.5.0",
+    "libraw-wasm": "latest",
     "lucide-react": "^0.475.0",
     "mathjs": "^13.0.3",
     "next": "15.2.3",
