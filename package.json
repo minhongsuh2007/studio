@@ -24,7 +24,6 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "dotenv": "^16.5.0",
-    "libraw-wasm": "latest",
     "lucide-react": "^0.475.0",
     "mathjs": "^13.0.3",
     "next": "15.2.3",

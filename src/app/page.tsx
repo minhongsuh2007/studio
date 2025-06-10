@@ -8,6 +8,7 @@ import { useToast } from '@/hooks/use-toast';
 import { fileToDataURL } from '@/lib/utils';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { estimateAffineTransform, warpImage, type Point as AstroAlignPoint } from '@/lib/astro-align';
+// Removed: import initLibRaw, { type LibRaw } from 'libraw-js';
 
 
 import { AppHeader } from '@/components/astrostacker/AppHeader';
@@ -964,6 +965,8 @@ export default function AstroStackerPage() {
     }
     addLog(fileProcessingMessage);
 
+    const rawFileExtensions = ['.dng', '.cr2', '.cr3', '.crw']; 
+
     const newEntriesPromises = files.map(async (file): Promise<ImageStarEntry | null> => {
       try {
         const fileType = file.type.toLowerCase();
@@ -987,21 +990,19 @@ export default function AstroStackerPage() {
                 return null;
             }
              addLog(`[FITS] Successfully generated preview for ${file.name}.`);
-        } else if (fileType === 'image/x-adobe-dng' || fileName.endsWith('.dng')) {
-          const dngMsg = `${file.name} is a DNG. Direct browser preview might be limited or slow. Manual conversion to JPG/PNG is recommended for best results.`;
-          addLog(`[WARN] ${dngMsg}`);
-          toast({
-            title: "DNG File Detected",
-            description: dngMsg,
-            variant: "default", 
-            duration: 8000,
-          });
-          originalPreviewUrl = await fileToDataURL(file); 
-
+        } else if (rawFileExtensions.some(ext => fileName.endsWith(ext))) {
+            addLog(`[RAW UNAVAILABLE] RAW file ${file.name} detected, but the 'libraw-js' library (or its alternative) could not be installed/initialized. RAW processing is disabled.`);
+            toast({
+                title: "RAW Processing Unavailable",
+                description: `The library required for RAW file ${file.name} (e.g. DNG, CR2) is currently not working due to installation issues. Please convert to JPG/PNG first or try again later.`,
+                variant: "destructive",
+                duration: 10000,
+            });
+            return null;
         } else if (acceptedWebTypes.includes(fileType)) {
             originalPreviewUrl = await fileToDataURL(file);
         } else {
-            const unsupportedMsg = `${file.name} is unsupported. Use JPG, PNG, GIF, WEBP or FITS.`;
+            const unsupportedMsg = `${file.name} is unsupported. Use JPG, PNG, GIF, WEBP, FITS. RAW processing is currently facing issues.`;
             addLog(`[ERROR] ${unsupportedMsg}`);
             toast({
                 title: "Unsupported File Type",
@@ -1071,7 +1072,7 @@ export default function AstroStackerPage() {
                 });
             };
             img.onerror = () => {
-                const errorMessage = `Could not load generated preview image ${file.name} to check dimensions. This can happen if the data URL is invalid or too large. FITS files may produce large data URLs.`;
+                const errorMessage = `Could not load generated preview image ${file.name} to check dimensions. This can happen if the data URL is invalid or too large. RAW/FITS files may produce large data URLs.`;
                 addLog(`[ERROR] ${errorMessage}`);
                 toast({ title: "Error Reading Preview", description: errorMessage, variant: "destructive" });
                 resolveEntry(null);
@@ -1117,6 +1118,7 @@ export default function AstroStackerPage() {
     const newFiles: File[] = [];
     const newPreviewUrls: string[] = [];
     const newOriginalDimensions: Array<{ width: number; height: number } | null> = [];
+    const rawFileExtensions = ['.dng', '.cr2', '.cr3', '.crw'];
 
     for (const file of uploadedFiles) {
       addLog(`[CAL] Processing ${frameType} frame: ${file.name}`);
@@ -1133,8 +1135,17 @@ export default function AstroStackerPage() {
             toast({ title: `FITS ${frameTypeName} Fail`, description: `Could not process FITS ${file.name}. Logs have details.`, variant: "destructive" });
             continue; 
           }
+        } else if (rawFileExtensions.some(ext => fileName.endsWith(ext))) {
+            addLog(`[RAW CALIB. UNAVAILABLE] RAW ${frameTypeName} frame ${file.name} detected, but the RAW processing library could not be installed/initialized.`);
+            toast({
+                title: `RAW ${frameTypeName} Frame Unavailable`,
+                description: `Cannot process RAW ${frameTypeName} ${file.name} as its library failed to install. Please convert to JPG/PNG first.`,
+                variant: "destructive",
+                duration: 8000,
+            });
+            continue;
         } else if (!acceptedWebTypes.includes(fileType)) {
-          addLog(`[ERROR] Unsupported ${frameTypeName} frame ${file.name}. Use JPG, PNG, GIF, WEBP, or FITS.`);
+          addLog(`[ERROR] Unsupported ${frameTypeName} frame ${file.name}. Use JPG, PNG, GIF, WEBP, FITS. RAW processing currently unavailable.`);
           toast({ title: `Unsupported ${frameTypeName} Frame`, description: `${file.name} is unsupported.`, variant: "destructive" });
           continue; 
         } else {
@@ -1183,43 +1194,35 @@ export default function AstroStackerPage() {
 
   const handleRemoveImage = (idToRemove: string) => {
     const entry = allImageStarData.find(entry => entry.id === idToRemove);
-    const fileName = entry?.file?.name || `image with id ${idToRemove}`;
+    const fileNameForLog = entry?.file?.name || `image with id ${idToRemove}`;
     setAllImageStarData(prev => prev.filter(item => item.id !== idToRemove));
-    addLog(`Removed ${fileName} from queue.`);
+    addLog(`Removed ${fileNameForLog} from queue.`);
   };
   
   const handleRemoveCalibrationFrame = (
     indexToRemove: number,
     frameType: 'dark' | 'flat' | 'bias',
-    dispatchFiles: React.Dispatch<React.SetStateAction<File[]>>,
-    dispatchPreviews: React.Dispatch<React.SetStateAction<string[]>>,
-    dispatchDimensions: React.Dispatch<React.SetStateAction<Array<{ width: number; height: number } | null>>>
+    filesStateFunction: () => File[], // Pass a function that returns the current state array
+    setFilesState: React.Dispatch<React.SetStateAction<File[]>>,
+    setPreviewUrlsState: React.Dispatch<React.SetStateAction<string[]>>,
+    setOriginalDimensionsListState: React.Dispatch<React.SetStateAction<Array<{ width: number; height: number } | null>>>
   ) => {
+    const currentFiles = filesStateFunction(); // Get current files
     let fileNameForLog = `frame at index ${indexToRemove}`;
-    let currentFiles: File[] = [];
-
-    if (frameType === 'dark') {
-      currentFiles = darkFrameFiles;
-    } else if (frameType === 'flat') {
-      currentFiles = flatFrameFiles;
-    } else if (frameType === 'bias') {
-      currentFiles = biasFrameFiles;
-    }
-
     if (indexToRemove >= 0 && indexToRemove < currentFiles.length && currentFiles[indexToRemove]) {
       fileNameForLog = currentFiles[indexToRemove].name;
     }
   
     addLog(`Removing ${frameType} frame: ${fileNameForLog} (index ${indexToRemove})`);
   
-    dispatchFiles(prev => prev.filter((_, index) => index !== indexToRemove));
-    dispatchPreviews(prev => prev.filter((_, index) => index !== indexToRemove));
-    dispatchDimensions(prev => prev.filter((_, index) => index !== indexToRemove));
+    setFilesState(prev => prev.filter((_, index) => index !== indexToRemove));
+    setPreviewUrlsState(prev => prev.filter((_, index) => index !== indexToRemove));
+    setOriginalDimensionsListState(prev => prev.filter((_, index) => index !== indexToRemove));
   };
 
-  const handleRemoveDarkFrame = (index: number) => handleRemoveCalibrationFrame(index, 'dark', setDarkFrameFiles, setDarkFramePreviewUrls, setOriginalDarkFrameDimensionsList);
-  const handleRemoveFlatFrame = (index: number) => handleRemoveCalibrationFrame(index, 'flat', setFlatFrameFiles, setFlatFramePreviewUrls, setOriginalFlatFrameDimensionsList);
-  const handleRemoveBiasFrame = (index: number) => handleRemoveCalibrationFrame(index, 'bias', setBiasFrameFiles, setBiasFramePreviewUrls, setOriginalBiasFrameDimensionsList);
+  const handleRemoveDarkFrame = (index: number) => handleRemoveCalibrationFrame(index, 'dark', () => darkFrameFiles, setDarkFrameFiles, setDarkFramePreviewUrls, setOriginalDarkFrameDimensionsList);
+  const handleRemoveFlatFrame = (index: number) => handleRemoveCalibrationFrame(index, 'flat', () => flatFrameFiles, setFlatFrameFiles, setFlatFramePreviewUrls, setOriginalFlatFrameDimensionsList);
+  const handleRemoveBiasFrame = (index: number) => handleRemoveCalibrationFrame(index, 'bias', () => biasFrameFiles, setBiasFrameFiles, setBiasFramePreviewUrls, setOriginalBiasFrameDimensionsList);
 
 
   const loadImage = (dataUrl: string, imageNameForLog: string): Promise<HTMLImageElement> => {
@@ -1370,10 +1373,11 @@ const analyzeImageForStars = async (
         setAllImageStarData(prev => prev.map(e => e.id === imageId ? updatedEntry : e));
         
         setTimeout(async () => {
-            const currentGlobalState = allImageStarData.find(e => e.id === imageId);
-            if (currentGlobalState && !currentGlobalState.isAnalyzed && !currentGlobalState.isAnalyzing) {
-                addLog(`Image ${currentGlobalState.file.name} switched to manual mode, and needs analysis. Analyzing now...`);
-                await analyzeImageForStars(currentGlobalState, addLog); 
+            // Re-fetch the entry from the latest state after the map update
+            const currentGlobalStateEntry = allImageStarData.find(e => e.id === imageId);
+            if (currentGlobalStateEntry && !currentGlobalStateEntry.isAnalyzed && !currentGlobalStateEntry.isAnalyzing) {
+                addLog(`Image ${currentGlobalStateEntry.file.name} switched to manual mode, and needs analysis. Analyzing now...`);
+                await analyzeImageForStars(currentGlobalStateEntry, addLog); 
             }
         }, 0);
     }
@@ -1405,9 +1409,8 @@ const analyzeImageForStars = async (
 
     if (!entryForEditing.isAnalyzed && !entryForEditing.isAnalyzing) {
         addLog(`Analyzing ${entryForEditing.file.name} before editing stars (was not analyzed).`);
-        const processedEntry = await analyzeImageForStars(entryForEditing, addLog); 
-        entryForEditing = processedEntry;
-        if (processedEntry.analysisStars.length === 0) {
+        entryForEditing = await analyzeImageForStars(entryForEditing, addLog); 
+        if (entryForEditing.analysisStars.length === 0) {
              toast({ title: "Analysis Note", description: `Analysis for ${entryForEditing.file.name} found 0 stars. You can add them manually.`, variant: "default" });
         }
     } else if (entryForEditing.isAnalyzing) {
@@ -1802,8 +1805,10 @@ const analyzeImageForStars = async (
           addLog("No images require pre-stack analysis at this time.");
       }
   
+      let currentImageEntriesForStacking = [...allImageStarData];
+
       let stateWasModifiedByCleanup = false;
-      const cleanedGlobalData = allImageStarData.map(entry => {
+      const cleanedGlobalData = currentImageEntriesForStacking.map(entry => {
         if (entry.isAnalyzing) { 
           addLog(`[STACK PREP CLEANUP] Forcing ${entry.file.name} out of 'isAnalyzing' before stacking. Current isAnalyzed: ${entry.isAnalyzed}`);
           stateWasModifiedByCleanup = true;
@@ -1815,12 +1820,10 @@ const analyzeImageForStars = async (
       if (stateWasModifiedByCleanup) {
           setAllImageStarData(cleanedGlobalData);
           await yieldToEventLoop(50); 
+          currentImageEntriesForStacking = [...cleanedGlobalData]; 
       }
       addLog("Pre-stack analysis/preparation phase complete.");
   
-      const currentImageEntriesForStacking = [...allImageStarData];
-
-
     const imageElements: HTMLImageElement[] = [];
     addLog(`Loading ${currentImageEntriesForStacking.length} image elements from their previewUrls...`);
     for (const entry of currentImageEntriesForStacking) { 
@@ -2238,7 +2241,7 @@ const analyzeImageForStars = async (
                               affineAlignmentsUsed++;
                               addLog(`[AFFINE SUCCESS] Matrix for ${currentImageEntry.file.name}: ${JSON.stringify(estimatedMatrix?.map(row => row.map(val => val.toFixed(3))))}`);
                           }
-                      } else { // Should not happen if estimateAffineTransform throws on error
+                      } else { 
                           addLog(`[AFFINE WARN] ${currentImageEntry.file.name}: estimateAffineTransform returned null/undefined unexpectedly. Falling back to centroid.`);
                           useAffineTransform = false;
                           estimatedMatrix = null;
@@ -2807,7 +2810,7 @@ const analyzeImageForStars = async (
                         {logs.map((log) => (
                           <div key={log.id} className="mb-1 font-mono">
                             <span className="text-muted-foreground mr-2">{log.timestamp}</span>
-                            <span className={log.message.startsWith('[ERROR]') || log.message.startsWith('[ANALYZE ERROR]') || log.message.startsWith('[FITS ERROR]') || log.message.startsWith('[FATAL ERROR]') || log.message.startsWith('[DETECTOR ERROR]') || log.message.startsWith('[DETECTOR CANVAS ERROR]') || log.message.startsWith('[FWHM EST ERROR]') || log.message.startsWith('[ANALYSIS ERROR CAUGHT]') || log.message.startsWith('[AFFINE ERROR]')  ? 'text-destructive' : (log.message.startsWith('[WARN]') || log.message.includes('Warning:') || log.message.startsWith('[FWHM EST WARN]') || log.message.startsWith('[DETECTOR WARN]') || log.message.startsWith('[ALIGN WARN]') || log.message.startsWith('[LOCAL CENTROID WARN]') || log.message.startsWith('[STACK SKIP WARN]') || log.message.startsWith('[AFFINE WARN]') || log.message.startsWith('[AFFINE FAIL]') ? 'text-yellow-500' : 'text-foreground/80')}>{log.message}</span>
+                            <span className={log.message.startsWith('[ERROR]') || log.message.startsWith('[ANALYZE ERROR]') || log.message.startsWith('[FITS ERROR]') || log.message.startsWith('[FATAL ERROR]') || log.message.startsWith('[DETECTOR ERROR]') || log.message.startsWith('[DETECTOR CANVAS ERROR]') || log.message.startsWith('[FWHM EST ERROR]') || log.message.startsWith('[ANALYSIS ERROR CAUGHT]') || log.message.startsWith('[AFFINE ERROR]') || log.message.startsWith('[RAW JS ERROR]') || log.message.startsWith('[RAW UNAVAILABLE]') || log.message.startsWith('[RAW CALIB. UNAVAILABLE]')  ? 'text-destructive' : (log.message.startsWith('[WARN]') || log.message.includes('Warning:') || log.message.startsWith('[FWHM EST WARN]') || log.message.startsWith('[DETECTOR WARN]') || log.message.startsWith('[ALIGN WARN]') || log.message.startsWith('[LOCAL CENTROID WARN]') || log.message.startsWith('[STACK SKIP WARN]') || log.message.startsWith('[AFFINE WARN]') || log.message.startsWith('[AFFINE FAIL]') ? 'text-yellow-500' : 'text-foreground/80')}>{log.message}</span>
                           </div>
                         ))}
                       </ScrollArea>
@@ -2916,6 +2919,8 @@ const analyzeImageForStars = async (
     
 
       
+
+
 
 
 
