@@ -77,8 +77,8 @@ const STACKING_BAND_HEIGHT = 50;
 const SIGMA_CLIP_THRESHOLD = 2.0;
 const SIGMA_CLIP_ITERATIONS = 2;
 const MIN_STARS_FOR_CENTROID_ALIGNMENT = 3;
-const MIN_STARS_FOR_AFFINE_ALIGNMENT = 5; 
-const NUM_STARS_TO_USE_FOR_AFFINE_MATCHING = 10; 
+const MIN_STARS_FOR_AFFINE_ALIGNMENT = 5;
+const NUM_STARS_TO_USE_FOR_AFFINE_MATCHING = 10;
 const AUTO_ALIGN_TARGET_STAR_COUNT = 10;
 
 
@@ -108,7 +108,7 @@ const DETECTOR_MIN_CONTRAST = 20;
 const DETECTOR_MIN_BRIGHTNESS = 40;
 const DETECTOR_MAX_BRIGHTNESS = 220; // Stars brighter than this might be saturated or too large
 const DETECTOR_MIN_DISTANCE = 6; // Minimum pixels between star centers
-const DETECTOR_MAX_STARS = 10; 
+const DETECTOR_MAX_STARS = 10;
 const DETECTOR_MIN_FWHM = 1.5;
 const DETECTOR_MAX_FWHM = 5.0;
 const DETECTOR_ANNULUS_INNER_RADIUS = 4; // For background estimation
@@ -330,7 +330,7 @@ function estimateFWHM(
 
 
   const fwhm = (left !== -1 && right !== -1 && right > left) ? Math.abs(right - left) : 0;
-  if (addLog && fwhm > 0 && peak > (DETECTOR_MIN_BRIGHTNESS * 1.5)) { 
+  if (addLog && fwhm > 0 && peak > (DETECTOR_MIN_BRIGHTNESS * 1.5)) {
      addLog(`[FWHM EST] At (${x},${y}): Peak=${peak.toFixed(1)}, HM=${halfMax.toFixed(1)}, L=${left.toFixed(2)}, R=${right.toFixed(2)}, FWHM=${fwhm.toFixed(2)}`);
   } else if (addLog && fwhm === 0 && peak > (DETECTOR_MIN_BRIGHTNESS * 1.5)) {
      addLog(`[FWHM EST WARN] At (${x},${y}): FWHM is 0. Peak=${peak.toFixed(1)}, L=${left.toFixed(1)}, R=${right.toFixed(1)}`);
@@ -1252,6 +1252,10 @@ export default function AstroStackerPage() {
   
     try {
       localAddLog(`[ANALYZE] Starting analysis for: ${entryToAnalyze.file.name}`);
+      if (!entryToAnalyze.analysisDimensions || entryToAnalyze.analysisDimensions.width === 0 || entryToAnalyze.analysisDimensions.height === 0) {
+        throw new Error(`Analysis dimensions for ${entryToAnalyze.file.name} are invalid or zero (${entryToAnalyze.analysisDimensions?.width}x${entryToAnalyze.analysisDimensions?.height}). Cannot proceed with analysis.`);
+      }
+
       const imgEl = await loadImage(entryToAnalyze.previewUrl, entryToAnalyze.file.name);
   
       const tempAnalysisCanvas = document.createElement('canvas');
@@ -1263,10 +1267,6 @@ export default function AstroStackerPage() {
       const analysisWidth = entryToAnalyze.analysisDimensions.width;
       const analysisHeight = entryToAnalyze.analysisDimensions.height;
   
-      if (analysisWidth === 0 || analysisHeight === 0) {
-        throw new Error(`Analysis dimensions for ${entryToAnalyze.file.name} are invalid (${analysisWidth}x${analysisHeight}).`);
-      }
-
       tempAnalysisCanvas.width = analysisWidth;
       tempAnalysisCanvas.height = analysisHeight;
       tempAnalysisCtx.drawImage(imgEl, 0, 0, analysisWidth, analysisHeight);
@@ -1306,8 +1306,7 @@ export default function AstroStackerPage() {
       const errorMessage = error instanceof Error ? error.message : String(error);
       localAddLog(`[ANALYZE ERROR] Analysis failed for ${entryToAnalyze.file.name}: ${errorMessage}`);
       toast({ title: `Analysis Failed for ${entryToAnalyze.file.name}`, description: errorMessage, variant: "destructive" });
-      // isAnalyzed remains false, stars remain empty from defaults
-      // Ensure dimensions are preserved if known, even on error later in try block
+      processedEntryData.isAnalyzed = false; // Ensure isAnalyzed is false on error
       processedEntryData.analysisDimensions = entryToAnalyze.analysisDimensions || { width: 0, height: 0 };
     }
     
@@ -1316,6 +1315,8 @@ export default function AstroStackerPage() {
       ...processedEntryData,
       isAnalyzing: false, 
     };
+
+    localAddLog(`[ANALYZE FINAL STATE] For ${finalUpdatedEntry.file.name}: isAnalyzed=${finalUpdatedEntry.isAnalyzed}, isAnalyzing=${finalUpdatedEntry.isAnalyzing}, Stars Found=${finalUpdatedEntry.analysisStars.length}`);
 
     setAllImageStarData(prev => prev.map(e => (e.id === finalUpdatedEntry.id ? finalUpdatedEntry : e)));
     return finalUpdatedEntry;
@@ -1773,27 +1774,42 @@ export default function AstroStackerPage() {
     setProgressPercent(PROGRESS_INITIAL_SETUP);
     addLog(`Initial setup complete. Progress: ${PROGRESS_INITIAL_SETUP}%.`);
 
-    let imageEntriesForCurrentStacking: ImageStarEntry[] = JSON.parse(JSON.stringify(allImageStarData));
+    addLog(`Starting pre-stack analysis for ${allImageStarData.length} images if needed...`);
+    const idsToAnalyze = allImageStarData
+        .filter(entry => !entry.isAnalyzed && !entry.isAnalyzing)
+        .map(entry => entry.id);
 
-    addLog(`Starting pre-stack analysis for ${imageEntriesForCurrentStacking.length} images if needed...`);
-    for (let i = 0; i < imageEntriesForCurrentStacking.length; i++) {
-        let entry = imageEntriesForCurrentStacking[i]; 
-        if (!entry.isAnalyzed && !entry.isAnalyzing) {
-            addLog(`Image ${entry.file.name} (${entry.id}) needs analysis for stacking process.`);
-            
-            const processedEntry = await analyzeImageForStars(entry, addLog); 
-            imageEntriesForCurrentStacking[i] = processedEntry; 
-        }
-        entry = imageEntriesForCurrentStacking[i]; 
-        if (entry.isAnalyzing) {
-          imageEntriesForCurrentStacking[i] = { ...entry, isAnalyzing: false };
+    if (idsToAnalyze.length > 0) {
+        addLog(`Found ${idsToAnalyze.length} images requiring analysis: ${idsToAnalyze.join(', ')}`);
+    }
+
+    for (const imageId of idsToAnalyze) {
+        // Find the entry from the most current state in case previous analyses in this loop updated it.
+        const entryToProcess = allImageStarData.find(e => e.id === imageId);
+        if (entryToProcess && !entryToProcess.isAnalyzed && !entryToProcess.isAnalyzing) { // Double check state
+            addLog(`Image ${entryToProcess.file.name} (${entryToProcess.id}) needs analysis for stacking process.`);
+            await analyzeImageForStars(entryToProcess, addLog); // This function updates global state.
         }
     }
+    
+    // Clear 'isAnalyzing' for any items that might have been stuck from a previous run but weren't in idsToAnalyze.
+    // This ensures 'isAnalyzing' is false if analyzeImageForStars for it isn't called in this specific stack run.
+    setAllImageStarData(prevData => prevData.map(entry => {
+        if (entry.isAnalyzing && !idsToAnalyze.includes(entry.id)) {
+            localAddLog(`[STACK PREP] Clearing stale 'isAnalyzing' flag for ${entry.file.name}.`);
+            return { ...entry, isAnalyzing: false }; 
+        }
+        return entry;
+    }));
     addLog("Pre-stack analysis/preparation phase complete.");
 
+    // Use a fresh reference to allImageStarData which should now reflect all analyses.
+    const currentImageEntriesForStacking = [...allImageStarData];
+
+
     const imageElements: HTMLImageElement[] = [];
-    addLog(`Loading ${imageEntriesForCurrentStacking.length} image elements from their previewUrls...`);
-    for (const entry of imageEntriesForCurrentStacking) { 
+    addLog(`Loading ${currentImageEntriesForStacking.length} image elements from their previewUrls...`);
+    for (const entry of currentImageEntriesForStacking) { 
       try {
         const imgEl = await loadImage(entry.previewUrl, entry.file.name);
         imageElements.push(imgEl);
@@ -1803,7 +1819,7 @@ export default function AstroStackerPage() {
          toast({ title: `Error Loading ${entry.file.name}`, description: errorMessage, variant: "destructive" });
       }
     }
-    addLog(`Successfully loaded ${imageElements.length} out of ${imageEntriesForCurrentStacking.length} images into HTMLImageElements.`);
+    addLog(`Successfully loaded ${imageElements.length} out of ${currentImageEntriesForStacking.length} images into HTMLImageElements.`);
 
 
     if (imageElements.length < 2) {
@@ -1815,7 +1831,7 @@ export default function AstroStackerPage() {
       return;
     }
 
-    const firstValidImageIndex = imageEntriesForCurrentStacking.findIndex(
+    const firstValidImageIndex = currentImageEntriesForStacking.findIndex(
       entry => imageElements.some(imgEl => imgEl.src === entry.previewUrl)
     );
 
@@ -1826,7 +1842,7 @@ export default function AstroStackerPage() {
       setIsProcessingStack(false); setProgressPercent(0); return;
     }
     
-    const referenceImageEntry = imageEntriesForCurrentStacking[firstValidImageIndex];
+    const referenceImageEntry = currentImageEntriesForStacking[firstValidImageIndex];
 
     if (!referenceImageEntry?.analysisDimensions || referenceImageEntry.analysisDimensions.width === 0 || referenceImageEntry.analysisDimensions.height === 0) {
       const invalidRefMsg = `The reference image (${referenceImageEntry?.file?.name || 'unknown'}) is invalid or its analysis dimensions are missing/zero. Cannot proceed.`;
@@ -1984,8 +2000,8 @@ export default function AstroStackerPage() {
 
 
     addLog(`Starting fallback centroid calculation for ${numValidLightImages} valid light images (used if Affine fails)...`);
-    for (let i = 0; i < imageEntriesForCurrentStacking.length; i++) {
-      const entryData = imageEntriesForCurrentStacking[i];
+    for (let i = 0; i < currentImageEntriesForStacking.length; i++) {
+      const entryData = currentImageEntriesForStacking[i];
       const imgEl = imageElements.find(el => el.src === entryData.previewUrl); 
 
       if (!imgEl) { 
@@ -2100,7 +2116,7 @@ export default function AstroStackerPage() {
       let imagesContributingToBand = 0; 
       for (let i = 0; i < imageElements.length; i++) {
         const imgElement = imageElements[i];
-        const currentImageEntry = imageEntriesForCurrentStacking.find(entry => entry.previewUrl === imgElement.src);
+        const currentImageEntry = currentImageEntriesForStacking.find(entry => entry.previewUrl === imgElement.src);
         if (!currentImageEntry) { 
             addLog(`[STACK SKIP WARN] Cannot find entry data for image element ${i} (src: ${imgElement.src.substring(0,50)}...). This image will be skipped.`); 
             continue; 
@@ -2213,7 +2229,7 @@ export default function AstroStackerPage() {
         if (useAffineTransform && estimatedMatrix && currentImageEntry.id !== referenceImageEntry.id) {
             warpImage(currentImageCtx, tempWarpedImageCtx, estimatedMatrix, addLog);
         } else { 
-            const originalEntryIndexInCentroids = imageEntriesForCurrentStacking.findIndex(e => e.id === currentImageEntry.id);
+            const originalEntryIndexInCentroids = currentImageEntriesForStacking.findIndex(e => e.id === currentImageEntry.id);
             const currentCentroid = originalEntryIndexInCentroids !== -1 ? centroids[originalEntryIndexInCentroids] : null;
             
             let dx = 0, dy = 0;
