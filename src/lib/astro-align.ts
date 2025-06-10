@@ -58,6 +58,14 @@ export function estimateAffineTransform(
       throw new Error(`Affine transform estimation resulted in ${x_solution.length} parameters, expected 6.`);
   }
 
+  // Check for non-finite parameters
+  for (let i = 0; i < x_solution.length; i++) {
+    if (!isFinite(x_solution[i])) {
+      console.error("Non-finite parameter detected in x_solution:", x_solution);
+      throw new Error(`Affine transform estimation resulted in non-finite parameters (e.g., NaN or Infinity at index ${i}: ${x_solution[i]}).`);
+    }
+  }
+
   return [
     [x_solution[0], x_solution[1], x_solution[2]], // for x' = ax + by + c
     [x_solution[3], x_solution[4], x_solution[5]], // for y' = dx + ey + f
@@ -91,12 +99,19 @@ export function warpImage(
   addLog?: (message: string) => void
 ) {
   if (matrix.length !== 2 || matrix[0].length !== 3 || matrix[1].length !== 3) {
-    if(addLog) addLog(`[WARP ERROR] Invalid matrix format for warpImage. Matrix: ${JSON.stringify(matrix)}`);
+    if(addLog) addLog(`[WARP ERROR] Invalid matrix format for warpImage. Matrix: ${JSON.stringify(matrix)}. Drawing original.`);
     dstCtx.drawImage(srcCtx.canvas, 0, 0); 
     return;
   }
   const [a, b, c] = matrix[0];
   const [d, e, f] = matrix[1];
+
+  // Final check for non-finite values in the matrix passed to warp
+  if (![a,b,c,d,e,f].every(isFinite)) {
+    if(addLog) addLog(`[WARP ERROR] Non-finite values in affine matrix before setTransform: a=${a},b=${b},c=${c},d=${d},e=${e},f=${f}. Drawing original.`);
+    dstCtx.drawImage(srcCtx.canvas, 0, 0);
+    return;
+  }
 
   if (addLog) {
     addLog(`[WARP] Applying matrix: a=${a.toFixed(4)}, b=${b.toFixed(4)}, c=${c.toFixed(2)}, d=${d.toFixed(4)}, e=${e.toFixed(4)}, f=${f.toFixed(2)}`);
@@ -105,8 +120,10 @@ export function warpImage(
   dstCtx.imageSmoothingEnabled = true;
   dstCtx.imageSmoothingQuality = 'high';
   
+  dstCtx.save(); // Save current state
   dstCtx.setTransform(a, d, b, e, c, f);
   dstCtx.drawImage(srcCtx.canvas, 0, 0);
-  dstCtx.setTransform(1, 0, 0, 1, 0, 0); 
+  dstCtx.restore(); // Restore original transform (important!)
 }
+
 
