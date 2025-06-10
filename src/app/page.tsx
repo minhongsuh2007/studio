@@ -76,16 +76,15 @@ const SIGMA_CLIP_ITERATIONS = 2;
 const MIN_STARS_FOR_ALIGNMENT = 3;
 const AUTO_ALIGN_TARGET_STAR_COUNT = 25; // Number of brightest stars to use for alignment in auto mode
 
-const PROGRESS_INITIAL_SETUP = 5;
-const PROGRESS_CENTROID_CALCULATION_TOTAL = 30;
-const PROGRESS_BANDED_STACKING_TOTAL = 65;
-
 // Constants for the new PSF Pipeline
 const PIPELINE_PSF_FWHM_FOR_BLUR = 2.0;     // FWHM for the PSF kernel used in findAndTrackStars for blurring
 const PIPELINE_PSF_KERNEL_SIZE = 7;        // Kernel size for createPSF called within findAndTrackStars
 const PIPELINE_DETECT_TOP_N_STARS = 75;    // The 'count' parameter for detectTopStars
 const PIPELINE_DETECT_MAX_FWHM = 7.0;      // The 'maxFWHM' parameter for detectTopStars
 const PIPELINE_ESTIMATE_CENTROID_WINDOW = 3; // The 'window' parameter for estimateCentroid
+const PIPELINE_DETECT_SATURATION_THRESHOLD = 240; // Saturation threshold for star detection
+const PIPELINE_DETECT_FLATNESS_TOLERANCE = 2;   // Flatness tolerance for star detection
+
 
 // Constants for manual star click refinement (still used)
 const BRIGHTNESS_CENTROID_FALLBACK_THRESHOLD_GRAYSCALE_EQUIVALENT = 30;
@@ -168,15 +167,17 @@ const applyImageAdjustmentsToDataURL = async (
 
 
 // --- New PSF Star Detection Pipeline (User Provided) ---
-type PSFPipelineStar = {
-  x: number; // Original integer x
-  y: number; // Original integer y
+// This type is specific to the PSF pipeline's internal representation of a star
+interface PSFPipelineStar {
+  x: number; // Original integer x from convolved image peak
+  y: number; // Original integer y from convolved image peak
   value: number; // Peak value from convolved image
-  fwhm: number;
-  cx?: number; // Subpixel x
-  cy?: number; // Subpixel y
-  id?: number; // Tracked across frames (not used for single image analysis yet)
-};
+  fwhm: number;  // Estimated Full Width at Half Maximum
+  cx?: number; // Subpixel centroid x (if calculated)
+  cy?: number; // Subpixel centroid y (if calculated)
+  id?: number; // Optional ID for tracking across frames (not used for single image analysis yet)
+}
+
 
 /**
  * Create 2D Gaussian PSF kernel
@@ -267,17 +268,16 @@ function convolveImagePSF(image: number[][], kernel: number[][], addLog?: (messa
 
 /**
  * Estimate subpixel centroid using brightness-weighted mean
+ * (Works on the convolved image for PSF pipeline)
  */
 function estimateCentroidPSF(
-  image: number[][],
-  x: number,
-  y: number,
-  windowSize = 3, // Renamed from window to windowSize for clarity
+  image: number[][], // This is typically the convolved image in the PSF pipeline
+  x: number, // Integer peak x from convolved image
+  y: number, // Integer peak y from convolved image
+  windowSize = PIPELINE_ESTIMATE_CENTROID_WINDOW, // Use the global constant for default
   addLog?: (message: string) => void
-): [number, number] | null { // Return null if out of bounds
-  let sum = 0,
-    sumX = 0,
-    sumY = 0;
+): [number, number] | null {
+  let sumVal = 0, sumX = 0, sumY = 0;
   const height = image.length;
   const width = image[0]?.length || 0;
 
@@ -285,107 +285,120 @@ function estimateCentroidPSF(
     for (let dx = -windowSize; dx <= windowSize; dx++) {
       const currentY = y + dy;
       const currentX = x + dx;
+      // Boundary checks
       if (currentY < 0 || currentY >= height || currentX < 0 || currentX >= width) {
-        // if (addLog && (dx === -windowSize && dy === -windowSize)) addLog(`[PSF CENTROID] Skipping out-of-bounds pixel at ${currentX},${currentY} for center ${x},${y}`);
-        continue; // Skip pixels outside image bounds
+        // if (addLog && dx === -windowSize && dy === -windowSize) addLog(`[PSF CENTROID] Skipping out-of-bounds pixel at ${currentX},${currentY} for peak ${x},${y}`);
+        continue;
       }
       const val = image[currentY][currentX];
-      sum += val;
-      sumX += currentX * val;
-      sumY += currentY * val;
+      sumVal += val;
+      sumX += currentX * val; // Use absolute coords for weighted sum
+      sumY += currentY * val; // Use absolute coords for weighted sum
     }
   }
-  if (sum === 0) {
-    if (addLog) addLog(`[PSF CENTROID WARN] Sum of pixel values in window for centroid at (${x},${y}) is zero. Cannot calculate centroid.`);
+  if (sumVal === 0) {
+    if (addLog) addLog(`[PSF CENTROID WARN] Sum of pixel values in window for centroid at peak (${x},${y}) is zero. Cannot calculate centroid.`);
     return null;
   }
-  return [sumX / sum, sumY / sum];
+  return [sumX / sumVal, sumY / sumVal];
 }
 
 
 /**
- * Find top N brightest stars (with FWHM and centroid filtering)
+ * Find top N brightest stars (with FWHM and centroid filtering) from convolved image.
+ * FWHM and centroid estimation also happens on the convolved image.
  */
 function detectTopStarsPSF(
-  image: number[][], // This should be the convolved image
-  originalGrayscaleImage: number[][], // For more accurate centroid/FWHM if needed, or use convolved for simplicity
-  count = 5,
-  maxFWHM = 5.0,
-  centroidWindow = 3,
+  image: number[][], // This is the convolved image
+  count = PIPELINE_DETECT_TOP_N_STARS,
+  maxFWHM = PIPELINE_DETECT_MAX_FWHM,
+  saturationThreshold = PIPELINE_DETECT_SATURATION_THRESHOLD,
+  flatnessTolerance = PIPELINE_DETECT_FLATNESS_TOLERANCE,
   addLog?: (message: string) => void
 ): PSFPipelineStar[] {
   const height = image.length;
   const width = image[0]?.length || 0;
   if (width === 0 || height === 0) {
-    if (addLog) addLog("[PSF PIPE WARN] detectTopStarsPSF called with empty image.");
+    if (addLog) addLog("[PSF DETECT WARN] detectTopStarsPSF called with empty image.");
     return [];
   }
   const candidates: PSFPipelineStar[] = [];
-  if (addLog) addLog(`[PSF DETECT] Detecting top stars. Target count: ${count}, Max FWHM: ${maxFWHM}, Centroid window: ${centroidWindow}. Image: ${width}x${height}`);
+  if (addLog) addLog(`[PSF DETECT] Detecting top stars. Target count: ${count}, Max FWHM: ${maxFWHM}, Saturation: ${saturationThreshold}, Flatness Tol: ${flatnessTolerance}. Image: ${width}x${height}`);
 
   // Iterate within a boundary to allow FWHM/centroid estimation window
-  const boundary = Math.max(5, centroidWindow + 1); 
+  // A boundary of 5 is used in user's code; this means FWHM window (-2 to 2) and centroid window (-3 to 3) from peak (x,y) are safe.
+  const boundary = 5; 
 
   for (let y = boundary; y < height - boundary; y++) {
     for (let x = boundary; x < width - boundary; x++) {
       const value = image[y][x]; // Value from convolved image
 
-      // Local maxima check on convolved image
-      if (
-        value > image[y - 1][x] &&
-        value > image[y + 1][x] &&
-        value > image[y][x - 1] &&
-        value > image[y][x + 1]
-      ) {
-        // Estimate FWHM using a small window on the *original* grayscale image for better accuracy
-        // or on the convolved image if original is not easily available or for consistency
-        let fwhmSum = 0,
-          fwhmSumX = 0,
-          fwhmSumY = 0,
-          fwhmSumXX = 0,
-          fwhmSumYY = 0;
-        const fwhmEstWindow = 2; // Small window for FWHM estimation
-        
-        let validPixelsForFWHM = 0;
-        for (let dy = -fwhmEstWindow; dy <= fwhmEstWindow; dy++) {
-          for (let dx = -fwhmEstWindow; dx <= fwhmEstWindow; dx++) {
-            const px = x + dx;
-            const py = y + dy;
-            // Ensure indices are within bounds of originalGrayscaleImage
-            if (py >= 0 && py < originalGrayscaleImage.length && px >= 0 && px < (originalGrayscaleImage[0]?.length || 0)) {
-              const val = originalGrayscaleImage[py][px]; 
-              fwhmSum += val;
-              fwhmSumX += dx * val;
-              fwhmSumY += dy * val;
-              fwhmSumXX += dx * dx * val;
-              fwhmSumYY += dy * dy * val;
-              validPixelsForFWHM++;
-            }
-          }
+      // Saturation Check
+      if (value >= saturationThreshold) {
+        // if (addLog) addLog(`[PSF DETECT] Candidate at (${x},${y}) value ${value.toFixed(1)} rejected due to saturation (threshold ${saturationThreshold}).`);
+        continue;
+      }
+
+      // Flatness Check & Local Maxima (combined for efficiency)
+      const neighbors = [
+        image[y - 1][x], image[y + 1][x],
+        image[y][x - 1], image[y][x + 1],
+      ];
+      
+      let isLocalMaximum = true;
+      for(const nVal of neighbors) {
+        if (value <= nVal) {
+          isLocalMaximum = false;
+          break;
         }
+      }
+      if (!isLocalMaximum) continue; // Not a local maximum
 
-        if (fwhmSum === 0 || validPixelsForFWHM < (fwhmEstWindow*2+1)**2 / 2) { // Ensure enough pixels contributed
-            // if (addLog) addLog(`[PSF FWHM WARN] Sum for FWHM at (${x},${y}) is zero or too few pixels. Skipping FWHM calc.`);
-            continue; 
+      const isTooFlat = neighbors.every(n => Math.abs(n - value) <= flatnessTolerance);
+      if (isTooFlat) {
+        // if (addLog) addLog(`[PSF DETECT] Candidate at (${x},${y}) rejected due to flatness (tolerance ${flatnessTolerance}). Center: ${value.toFixed(1)}, Neighbors: ${neighbors.map(n=>n.toFixed(1)).join(',')}`);
+        continue;
+      }
+
+      // Passed saturation, flatness, and local maximum checks. Now estimate FWHM.
+      // FWHM estimation uses a 5x5 window (-2 to 2 around x,y) on the *convolved* image
+      let fwhmSum = 0, fwhmSumX = 0, fwhmSumY = 0, fwhmSumXX = 0, fwhmSumYY = 0;
+      const fwhmEstWindow = 2;
+      
+      for (let dy = -fwhmEstWindow; dy <= fwhmEstWindow; dy++) {
+        for (let dx = -fwhmEstWindow; dx <= fwhmEstWindow; dx++) {
+          const px = x + dx; // Absolute x in image
+          const py = y + dy; // Absolute y in image
+          const val = image[py][px]; 
+          fwhmSum += val;
+          fwhmSumX += dx * val; // dx is relative to center (x,y)
+          fwhmSumY += dy * val; // dy is relative to center (x,y)
+          fwhmSumXX += dx * dx * val;
+          fwhmSumYY += dy * dy * val;
         }
+      }
 
-        const varX = fwhmSumXX / fwhmSum - (fwhmSumX / fwhmSum) ** 2;
-        const varY = fwhmSumYY / fwhmSum - (fwhmSumY / fwhmSum) ** 2;
-        const sigma = Math.sqrt((varX + varY) / 2); // Average variance
-        const fwhm = 2.3548 * sigma;
+      if (fwhmSum === 0) {
+          // if (addLog) addLog(`[PSF FWHM WARN] Sum for FWHM at (${x},${y}) is zero. Skipping FWHM calc.`);
+          continue; 
+      }
 
-        if (fwhm > 0 && fwhm <= maxFWHM) { // Ensure FWHM is positive and within limits
-          // Estimate centroid on the *original* grayscale image for better subpixel accuracy
-          const centroidResult = estimateCentroidPSF(originalGrayscaleImage, x, y, centroidWindow, addLog);
-          if (centroidResult) {
-            const [cx, cy] = centroidResult;
-            candidates.push({ x, y, value, fwhm, cx, cy });
-          } else {
-            // if (addLog) addLog(`[PSF DETECT] Centroid estimation failed for candidate at (${x},${y}).`)
-          }
+      const varX = fwhmSumXX / fwhmSum - (fwhmSumX / fwhmSum) ** 2;
+      const varY = fwhmSumYY / fwhmSum - (fwhmSumY / fwhmSum) ** 2;
+      const sigma = Math.sqrt((varX + varY) / 2); // Average variance
+      const fwhm = 2.3548 * sigma;
+
+      if (fwhm > 0 && fwhm <= maxFWHM) { // Ensure FWHM is positive and within limits
+        // Estimate centroid on the *convolved* image
+        const centroidResult = estimateCentroidPSF(image, x, y, PIPELINE_ESTIMATE_CENTROID_WINDOW, addLog); // Use default window from constant
+        if (centroidResult) {
+          const [cx, cy] = centroidResult;
+          candidates.push({ x, y, value, fwhm, cx, cy });
         } else {
-            // if (addLog && fwhm > 0) addLog(`[PSF DETECT] Candidate at (${x},${y}) rejected due to FWHM: ${fwhm.toFixed(2)} (max: ${maxFWHM})`);
+          // if (addLog) addLog(`[PSF DETECT] Centroid estimation failed for candidate at (${x},${y}).`)
         }
+      } else {
+          // if (addLog && fwhm > 0) addLog(`[PSF DETECT] Candidate at (${x},${y}) rejected due to FWHM: ${fwhm.toFixed(2)} (max: ${maxFWHM})`);
       }
     }
   }
@@ -400,6 +413,7 @@ function detectTopStarsPSF(
   }
   return topNStars;
 }
+
 
 
 /**
@@ -447,19 +461,22 @@ function matchStarsPSF(prev: PSFPipelineStar[], current: PSFPipelineStar[], maxD
 
 
 /**
- * Pipeline entry point
+ * Main PSF Pipeline entry point.
+ * Parameters are drawn from global constants.
  */
 function findAndTrackStarsPSF(
   ctx: CanvasRenderingContext2D,
   prevStars: PSFPipelineStar[] | null, // For potential future frame-to-frame tracking
-  psfFwhm: number,
-  psfKernelSize: number,
-  detectCount: number,
-  detectMaxFwhm: number,
-  centroidWindow: number,
-  addLog: (message: string) => void // Made addLog mandatory for better diagnostics
+  psfFwhmForBlur: number, // FWHM for the PSF kernel used in findAndTrackStars for blurring
+  psfKernelSizeForBlur: number, // Kernel size for createPSF called within findAndTrackStars
+  detectTopN: number, // The 'count' parameter for detectTopStars
+  detectMaxFwhm: number, // The 'maxFWHM' parameter for detectTopStars
+  detectSaturationThresh: number, // Saturation threshold for detectTopStars
+  detectFlatnessTol: number, // Flatness tolerance for detectTopStars
+  // Note: estimateCentroidPSF inside detectTopStarsPSF will use PIPELINE_ESTIMATE_CENTROID_WINDOW
+  addLog: (message: string) => void // Made addLog mandatory
 ): PSFPipelineStar[] {
-  addLog(`[PSF PIPE] Initiating findAndTrackStars. PSF FWHM: ${psfFwhm}, Kernel: ${psfKernelSize}, Detect Count: ${detectCount}, Detect Max FWHM: ${detectMaxFwhm}, Centroid Window: ${centroidWindow}`);
+  addLog(`[PSF PIPE] Initiating findAndTrackStars. PSF FWHM (Blur): ${psfFwhmForBlur}, Kernel (Blur): ${psfKernelSizeForBlur}, Detect Count: ${detectTopN}, Detect Max FWHM: ${detectMaxFwhm}, Saturation: ${detectSaturationThresh}, Flatness Tol: ${detectFlatnessTol}`);
   
   const originalGrayscale = getGrayscaleImageDataFromCanvas(ctx, addLog);
   if (originalGrayscale.length === 0 || originalGrayscale[0].length === 0) {
@@ -467,18 +484,25 @@ function findAndTrackStarsPSF(
     return [];
   }
 
-  const psf = createPSF(psfKernelSize, psfFwhm, addLog);
+  const psf = createPSF(psfKernelSizeForBlur, psfFwhmForBlur, addLog);
   const blurred = convolveImagePSF(originalGrayscale, psf, addLog);
   if (blurred.length === 0 || blurred[0].length === 0) {
     addLog("[PSF PIPE ERROR] Blurred image is empty after convolution.");
     return [];
   }
   
-  const stars = detectTopStarsPSF(blurred, originalGrayscale, detectCount, detectMaxFwhm, centroidWindow, addLog);
+  // Pass all relevant detection parameters to detectTopStarsPSF
+  const stars = detectTopStarsPSF(
+      blurred, 
+      detectTopN, 
+      detectMaxFwhm, 
+      detectSaturationThresh, 
+      detectFlatnessTol, 
+      addLog
+  );
 
   if (prevStars && prevStars.length > 0) {
     // Star matching logic is available but typically not used for single-image analysis in this app's context
-    // return matchStarsPSF(prevStars, stars, 5 /* maxDist */, addLog); 
     addLog("[PSF PIPE] prevStars provided but matching is currently bypassed for single image analysis.");
     return stars; // For current app, always return stars from current frame analysis
   }
@@ -1316,6 +1340,7 @@ export default function AstroStackerPage() {
       
       addLog(`[PSF PIPE] Canvas prepared for ${currentEntry.file.name} at ${analysisWidth}x${analysisHeight}.`);
 
+      // Call the main PSF pipeline function
       const pipelineStars: PSFPipelineStar[] = findAndTrackStarsPSF(
         tempAnalysisCtx,
         null, // No previous stars for single image analysis
@@ -1323,7 +1348,9 @@ export default function AstroStackerPage() {
         PIPELINE_PSF_KERNEL_SIZE,
         PIPELINE_DETECT_TOP_N_STARS,
         PIPELINE_DETECT_MAX_FWHM,
-        PIPELINE_ESTIMATE_CENTROID_WINDOW,
+        PIPELINE_DETECT_SATURATION_THRESHOLD,
+        PIPELINE_DETECT_FLATNESS_TOLERANCE,
+        // Centroid window is implicitly used by estimateCentroidPSF called within detectTopStarsPSF
         addLog 
       );
       
@@ -1848,7 +1875,7 @@ export default function AstroStackerPage() {
     addLog(`Dark Frames: ${useDarkFrames && darkFrameFiles.length > 0 ? `${darkFrameFiles.length} frame(s)` : 'Not Used'}.`);
     addLog(`Flat Frames: ${useFlatFrames && flatFrameFiles.length > 0 ? `${flatFrameFiles.length} frame(s)` : 'Not Used'}.`);
     addLog(`Star Alignment: Min Stars = ${MIN_STARS_FOR_ALIGNMENT}, Auto Target Count = ${AUTO_ALIGN_TARGET_STAR_COUNT}.`);
-    addLog(`Star Detection (PSF Pipeline): FWHM_Blur=${PIPELINE_PSF_FWHM_FOR_BLUR}, Kernel=${PIPELINE_PSF_KERNEL_SIZE}, TopN=${PIPELINE_DETECT_TOP_N_STARS}, MaxFWHM=${PIPELINE_DETECT_MAX_FWHM}, CentroidWin=${PIPELINE_ESTIMATE_CENTROID_WINDOW}.`);
+    addLog(`Star Detection (PSF Pipeline): Blur_FWHM=${PIPELINE_PSF_FWHM_FOR_BLUR}, Blur_Kernel=${PIPELINE_PSF_KERNEL_SIZE}, Detect_TopN=${PIPELINE_DETECT_TOP_N_STARS}, Detect_MaxFWHM=${PIPELINE_DETECT_MAX_FWHM}, Detect_Saturation=${PIPELINE_DETECT_SATURATION_THRESHOLD}, Detect_Flatness=${PIPELINE_DETECT_FLATNESS_TOLERANCE}, CentroidWin=${PIPELINE_ESTIMATE_CENTROID_WINDOW}.`);
     addLog(`Brightness Centroid Fallback Threshold: ${BRIGHTNESS_CENTROID_FALLBACK_THRESHOLD_GRAYSCALE_EQUIVALENT} (grayscale equivalent).`);
 
     if (typeof window === 'undefined' || typeof document === 'undefined') {
