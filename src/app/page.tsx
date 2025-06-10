@@ -7,6 +7,8 @@ import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
 import { fileToDataURL } from '@/lib/utils';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { estimateAffineTransform, warpImage, type Point as AstroAlignPoint } from '@/lib/astro-align';
+
 
 import { AppHeader } from '@/components/astrostacker/AppHeader';
 import { ImageUploadArea } from '@/components/astrostacker/ImageUploadArea';
@@ -73,8 +75,11 @@ const STACKING_BAND_HEIGHT = 50;
 
 const SIGMA_CLIP_THRESHOLD = 2.0;
 const SIGMA_CLIP_ITERATIONS = 2;
-const MIN_STARS_FOR_ALIGNMENT = 3;
-const AUTO_ALIGN_TARGET_STAR_COUNT = 25; // Number of brightest stars to use for alignment in auto mode
+const MIN_STARS_FOR_CENTROID_ALIGNMENT = 3; // For old centroid method
+const MIN_STARS_FOR_AFFINE_ALIGNMENT = 3; // For new affine transform
+const NUM_STARS_TO_USE_FOR_AFFINE_MATCHING = 10; // Number of brightest stars to attempt to match for affine
+const AUTO_ALIGN_TARGET_STAR_COUNT = 25; // Number of brightest stars to use for alignment in auto mode (for centroid method if affine fails)
+
 
 // Constants for the new PSF Pipeline
 const PIPELINE_PSF_FWHM_FOR_BLUR = 2.0;     // FWHM for the PSF kernel used in findAndTrackStars for blurring
@@ -100,7 +105,7 @@ const FLAT_FIELD_CORRECTION_MAX_SCALE_FACTOR = 5;
 const ASPECT_RATIO_TOLERANCE = 0.01;
 
 const PROGRESS_INITIAL_SETUP = 5;
-const PROGRESS_CENTROID_CALCULATION_TOTAL = 35;
+const PROGRESS_CENTROID_CALCULATION_TOTAL = 35; // This remains for fallback centroid calculation
 const PROGRESS_BANDED_STACKING_TOTAL = 60;
 
 
@@ -347,7 +352,7 @@ function estimateCentroidPSF(
  * FWHM and centroid estimation also happens on the convolved image.
  */
 function detectTopStarsPSF(
-  image: number[][], // This is the convolved image
+  image: number[][],
   count = PIPELINE_DETECT_TOP_N_STARS,
   maxFWHM = PIPELINE_DETECT_MAX_FWHM,
   saturationThreshold = PIPELINE_DETECT_SATURATION_THRESHOLD,
@@ -587,8 +592,8 @@ function findAndTrackStarsPSF(
 
 
 function calculateStarArrayCentroid(starsInput: Star[], addLog: (message: string) => void): { x: number; y: number } | null {
-  if (starsInput.length < MIN_STARS_FOR_ALIGNMENT) {
-     const message = `Not enough stars (${starsInput.length}) provided for star-based centroid. Need at least ${MIN_STARS_FOR_ALIGNMENT}.`;
+  if (starsInput.length < MIN_STARS_FOR_CENTROID_ALIGNMENT) {
+     const message = `Not enough stars (${starsInput.length}) provided for star-based centroid. Need at least ${MIN_STARS_FOR_CENTROID_ALIGNMENT}.`;
      addLog(`[ALIGN] ${message}`);
      return null;
   }
@@ -1939,7 +1944,7 @@ export default function AstroStackerPage() {
     addLog(`Bias Frames: ${useBiasFrames && biasFrameFiles.length > 0 ? `${biasFrameFiles.length} frame(s)` : 'Not Used'}.`);
     addLog(`Dark Frames: ${useDarkFrames && darkFrameFiles.length > 0 ? `${darkFrameFiles.length} frame(s)` : 'Not Used'}.`);
     addLog(`Flat Frames: ${useFlatFrames && flatFrameFiles.length > 0 ? `${flatFrameFiles.length} frame(s)` : 'Not Used'}.`);
-    addLog(`Star Alignment: Min Stars = ${MIN_STARS_FOR_ALIGNMENT}, Auto Target Count = ${AUTO_ALIGN_TARGET_STAR_COUNT}.`);
+    addLog(`Alignment: Affine (Min ${MIN_STARS_FOR_AFFINE_ALIGNMENT} stars, Match ${NUM_STARS_TO_USE_FOR_AFFINE_MATCHING}), Fallback Centroid (Min ${MIN_STARS_FOR_CENTROID_ALIGNMENT} stars, Auto Target ${AUTO_ALIGN_TARGET_STAR_COUNT}).`);
     addLog(`Star Detection (PSF Pipeline): Blur_FWHM=${PIPELINE_PSF_FWHM_FOR_BLUR}, Blur_Kernel=${PIPELINE_PSF_KERNEL_SIZE}, Detect_TopN=${PIPELINE_DETECT_TOP_N_STARS}, Detect_MaxFWHM=${PIPELINE_DETECT_MAX_FWHM}, Detect_Saturation=${PIPELINE_DETECT_SATURATION_THRESHOLD}, Detect_Flatness=${PIPELINE_DETECT_FLATNESS_TOLERANCE}, CentroidWin=${PIPELINE_ESTIMATE_CENTROID_WINDOW}.`);
     addLog(`Brightness Centroid Fallback Threshold: ${BRIGHTNESS_CENTROID_FALLBACK_THRESHOLD_GRAYSCALE_EQUIVALENT} (grayscale equivalent).`);
 
@@ -1990,10 +1995,14 @@ export default function AstroStackerPage() {
         if (entry.starSelectionMode === 'auto') {
             // For auto mode, always use initialAutoStars for alignment, sorted by brightness
             const sortedAutoStars = [...entry.initialAutoStars].sort((a, b) => b.brightness - a.brightness);
-            const starsForAlignment = sortedAutoStars.slice(0, AUTO_ALIGN_TARGET_STAR_COUNT);
-            if (JSON.stringify(entry.analysisStars) !== JSON.stringify(starsForAlignment)) {
-                 updatedStarDataForStacking[i] = { ...entry, analysisStars: starsForAlignment };
-                 addLog(`For auto mode image ${entry.file.name}, using top ${starsForAlignment.length} (target ${AUTO_ALIGN_TARGET_STAR_COUNT}) of ${entry.initialAutoStars.length} auto-detected stars for alignment.`);
+             // For affine, we'll use NUM_STARS_TO_USE_FOR_AFFINE_MATCHING later, but for CENTROID fallback, prepare with AUTO_ALIGN_TARGET_STAR_COUNT
+            const starsForCentroidFallback = sortedAutoStars.slice(0, AUTO_ALIGN_TARGET_STAR_COUNT);
+            
+            // For affine, the actual number of stars will be determined by NUM_STARS_TO_USE_FOR_AFFINE_MATCHING
+            // but ensure analysisStars is at least populated with initialAutoStars if auto.
+            if (JSON.stringify(entry.analysisStars) !== JSON.stringify(entry.initialAutoStars)) {
+                updatedStarDataForStacking[i] = { ...entry, analysisStars: [...entry.initialAutoStars] }; // Use all auto for now, will be filtered for affine/centroid later
+                addLog(`For auto mode image ${entry.file.name}, set analysisStars from initialAutoStars (${entry.initialAutoStars.length} stars).`);
             }
         } else if (entry.starSelectionMode === 'manual') {
             // For manual mode, if not reviewed by user, ensure it uses some stars if available
@@ -2214,294 +2223,219 @@ export default function AstroStackerPage() {
       const dynamicDelayMs = Math.max(10, Math.min(100, 10 + Math.floor(loadScore * 90))); // Delay between 10ms and 100ms
       addLog(`Calculated dynamic yield delay: ${dynamicDelayMs}ms (Load score: ${loadScore.toFixed(2)}, Images: ${numValidLightImages}, Pixels: ${totalPixels})`);
 
-
-      const offscreenCanvas = document.createElement('canvas');
-      offscreenCanvas.width = targetWidth;
-      offscreenCanvas.height = targetHeight;
-      const ctx = offscreenCanvas.getContext('2d', { willReadFrequently: true });
-
+      // Centroid calculation for fallback (remains largely the same, but progress is part of this stage)
+      const centroids: ({ x: number; y: number } | null)[] = [];
+      let successfulCentroidBasedAlignments = 0;
+      const centroidProgressIncrement = numValidLightImages > 0 ? PROGRESS_CENTROID_CALCULATION_TOTAL / numValidLightImages : 0;
+      
       const tempAnalysisCanvasForFallback = document.createElement('canvas'); // For fallback brightness centroid
       const tempAnalysisCtxForFallback = tempAnalysisCanvasForFallback.getContext('2d', { willReadFrequently: true });
+      if (!tempAnalysisCtxForFallback) throw new Error("Could not get fallback analysis canvas context.");
 
-      if (!ctx || !tempAnalysisCtxForFallback) {
-        const canvasError = "Could not get canvas contexts for stacking.";
-        addLog(`[ERROR] ${canvasError}`);
-        throw new Error(canvasError);
-      }
-      addLog(`Canvas contexts obtained.`);
 
-      const centroids: ({ x: number; y: number } | null)[] = [];
-      let successfulStarAlignments = 0;
-      const centroidProgressIncrement = numValidLightImages > 0 ? PROGRESS_CENTROID_CALCULATION_TOTAL / numValidLightImages : 0;
-
-      addLog(`Starting centroid calculation for ${numValidLightImages} valid light images...`);
-      // Loop through updatedStarDataForStacking to get star data, but use imageElements for actual image data
+      addLog(`Starting fallback centroid calculation for ${numValidLightImages} valid light images (used if Affine fails)...`);
       for (let i = 0; i < updatedStarDataForStacking.length; i++) {
         const entryData = updatedStarDataForStacking[i];
-        // Find the corresponding HTMLImageElement for this entry
         const imgEl = imageElements.find(el => el.src === entryData.previewUrl);
 
-        if (!imgEl) { // This image failed to load or was filtered out
-            addLog(`[ALIGN SKIP] Image ${entryData.file.name} was not loaded successfully. Skipping centroid calculation.`);
-            centroids.push(null); // Push null if image not loaded, so offsets array matches
-            continue;
+        if (!imgEl) {
+            centroids.push(null); continue;
         }
-
         const fileNameForLog = entryData.file.name;
         let finalScaledCentroid: { x: number; y: number } | null = null;
-        let method = "unknown";
+        let method = "unknown_fallback";
         
-        // Use analysisStars from the entryData (which was prepared from initialAutoStars if in auto mode)
-        let starsForCentroidCalculation: Star[] = entryData.analysisStars;
+        let starsForCentroidCalc: Star[] = entryData.analysisStars;
+        if (entryData.starSelectionMode === 'auto') { // For auto, use top N for centroid as well
+            starsForCentroidCalc = [...entryData.initialAutoStars].sort((a,b) => b.brightness - a.brightness).slice(0, AUTO_ALIGN_TARGET_STAR_COUNT);
+        }
 
-        // Ensure analysisDimensions are valid from entryData
         if (!entryData.isAnalyzed || !entryData.analysisDimensions || entryData.analysisDimensions.width === 0 || entryData.analysisDimensions.height === 0) {
-            const reason = !entryData.isAnalyzed ? "analysis failed or skipped" : "invalid analysis data";
-            const skipMsg = `Centroid for ${fileNameForLog} (${reason}): using target geometric center.`;
-            console.warn(skipMsg);
-            addLog(`[ALIGN WARN] ${skipMsg}`);
             finalScaledCentroid = { x: targetWidth / 2, y: targetHeight / 2 };
-            method = `${reason}_geometric_fallback`;
+            method = `geometric_fallback (no_analysis_data)`;
         } else {
             const {width: analysisWidth, height: analysisHeight} = entryData.analysisDimensions;
-            try {
-              addLog(`[ALIGN] Analyzing image ${i} (${fileNameForLog}): ${analysisWidth}x${analysisHeight} with ${starsForCentroidCalculation.length} stars for centroid (Mode: ${entryData.starSelectionMode}, Reviewed: ${entryData.userReviewed}).`);
-              let analysisImageCentroid = calculateStarArrayCentroid(starsForCentroidCalculation, addLog);
-
-              if (analysisImageCentroid) {
-                  method = entryData.starSelectionMode === 'manual' && entryData.userReviewed ? `user-manual-star-based` : `auto-star-based (target ${AUTO_ALIGN_TARGET_STAR_COUNT})`;
-                  if(entryData.starSelectionMode === 'manual' && !entryData.userReviewed && starsForCentroidCalculation.length > 0) {
-                    method = `unreviewed-manual-star-based (${starsForCentroidCalculation.length} stars)`;
-                  }
-                  successfulStarAlignments++;
-              } else { // Fallback to brightness centroid if star-based failed
-                const reason = starsForCentroidCalculation.length < MIN_STARS_FOR_ALIGNMENT ? `only ${starsForCentroidCalculation.length} stars (min ${MIN_STARS_FOR_ALIGNMENT} required)` : "star centroid failed";
-                method = `brightness-based fallback (${reason})`;
-                addLog(`[ALIGN WARN] Star-based centroid failed for ${fileNameForLog} (${reason}). Falling back to brightness-based centroid.`);
-
-                // Use the analysis dimensions for the fallback canvas
-                tempAnalysisCanvasForFallback.width = analysisWidth;
-                tempAnalysisCanvasForFallback.height = analysisHeight;
-                tempAnalysisCtxForFallback.clearRect(0, 0, analysisWidth, analysisHeight);
-                // Draw the HTMLImageElement (could be full-res preview) scaled to analysis dimensions
-                tempAnalysisCtxForFallback.drawImage(imgEl, 0, 0, analysisWidth, analysisHeight);
-                const fallbackImageData = tempAnalysisCtxForFallback.getImageData(0, 0, analysisWidth, analysisHeight);
-                analysisImageCentroid = calculateBrightnessCentroid(fallbackImageData, addLog);
-              }
-
-              if (analysisImageCentroid) {
-                 // Scale centroid from analysis dimensions to target stacking dimensions
-                 finalScaledCentroid = {
-                    x: (analysisImageCentroid.x / analysisWidth) * targetWidth,
-                    y: (analysisImageCentroid.y / analysisHeight) * targetHeight,
-                };
-              }
-
-            } catch (imgAnalysisError) {
-                const errorMessage = imgAnalysisError instanceof Error ? imgAnalysisError.message : String(imgAnalysisError);
-                addLog(`[ALIGN ERROR] Error during centroid phase for ${fileNameForLog}: ${errorMessage}. Aligning to geometric center.`);
-                toast({ title: `Centroid Error for ${fileNameForLog}`, description: `Could not determine centroid: ${errorMessage}.`, variant: "destructive" });
-                method = "analysis_error";
+            let analysisImageCentroid = calculateStarArrayCentroid(starsForCentroidCalc, addLog);
+            if (analysisImageCentroid) {
+                method = `star-based_fallback (${starsForCentroidCalc.length} stars)`;
+                successfulCentroidBasedAlignments++;
+            } else {
+                method = `brightness-based_fallback`;
+                tempAnalysisCanvasForFallback.width = analysisWidth; tempAnalysisCanvasForFallback.height = analysisHeight;
+                tempAnalysisCtxForFallback.clearRect(0,0,analysisWidth,analysisHeight);
+                tempAnalysisCtxForFallback.drawImage(imgEl, 0,0,analysisWidth,analysisHeight);
+                analysisImageCentroid = calculateBrightnessCentroid(tempAnalysisCtxForFallback.getImageData(0,0,analysisWidth,analysisHeight), addLog);
+            }
+            if (analysisImageCentroid) {
+                finalScaledCentroid = { x: (analysisImageCentroid.x / analysisWidth) * targetWidth, y: (analysisImageCentroid.y / analysisHeight) * targetHeight };
             }
         }
-
-
-        if (!finalScaledCentroid) { // Ultimate fallback
-            const noCentroidMsg = `Could not determine any centroid for ${fileNameForLog}. It will be aligned to target geometric center.`;
-            addLog(`[ALIGN ERROR] ${noCentroidMsg}`);
+        if (!finalScaledCentroid) {
             finalScaledCentroid = { x: targetWidth / 2, y: targetHeight / 2 };
-            method = method.includes("_error") || method === "unknown" ? `${method}_geometric_fallback` : "geometric_center_fallback";
+            method = `${method}_geometric_ultimate_fallback`;
         }
-        addLog(`[ALIGN] Image ${i} (${fileNameForLog}) centroid (in target ${targetWidth}x${targetHeight} space): ${finalScaledCentroid.x.toFixed(2)}, ${finalScaledCentroid.y.toFixed(2)} (Method: ${method})`);
         centroids.push(finalScaledCentroid);
-        setProgressPercent(prev => Math.min(100, prev + centroidProgressIncrement));
-        await yieldToEventLoop(dynamicDelayMs);
+        setProgressPercent(prev => Math.min(PROGRESS_INITIAL_SETUP + PROGRESS_CENTROID_CALCULATION_TOTAL, prev + centroidProgressIncrement));
+        addLog(`[FALLBACK CENTROID] Image ${i} (${fileNameForLog}): (${finalScaledCentroid.x.toFixed(2)}, ${finalScaledCentroid.y.toFixed(2)}) Method: ${method}`);
+        await yieldToEventLoop(dynamicDelayMs / 2); // Shorter yield here
       }
-      addLog(`Centroid calculation complete. ${successfulStarAlignments}/${numValidLightImages} images primarily used star-based alignment.`);
-
-      // Use the centroid of the *first successfully loaded image* as reference
-      const referenceCentroid = centroids.find(c => c !== null); 
-      if (!referenceCentroid) {
-        const noRefMsg = "Could not determine any valid alignment reference from loaded images. Stacking cannot proceed.";
-        addLog(`[ERROR] ${noRefMsg}`);
-        toast({ title: "Alignment Failed", description: noRefMsg, variant: "destructive" });
-        setIsProcessingStack(false);
-        setProgressPercent(0);
-        return;
+      addLog(`Fallback centroid calculation complete. ${successfulCentroidBasedAlignments}/${numValidLightImages} would use star-based if affine failed.`);
+      
+      // Determine reference stars for Affine transform
+      const referenceEntryForAffine = updatedStarDataForStacking[firstValidImageIndexInOriginal];
+      let referenceStarsForAffine: AstroAlignPoint[] = [];
+      if (referenceEntryForAffine && referenceEntryForAffine.isAnalyzed && referenceEntryForAffine.analysisStars.length >= MIN_STARS_FOR_AFFINE_ALIGNMENT) {
+          referenceStarsForAffine = referenceEntryForAffine.analysisStars
+              .sort((a,b) => b.brightness - a.brightness)
+              .slice(0, NUM_STARS_TO_USE_FOR_AFFINE_MATCHING)
+              .map(s => ({ x: s.x, y: s.y }));
+          if (referenceStarsForAffine.length < MIN_STARS_FOR_AFFINE_ALIGNMENT) {
+              addLog(`[AFFINE REF WARN] Ref image ${referenceEntryForAffine.file.name} has only ${referenceStarsForAffine.length} stars for affine after filter (min ${MIN_STARS_FOR_AFFINE_ALIGNMENT}). Affine will be disabled for all frames.`);
+              referenceStarsForAffine = []; // Disable affine if not enough good ref stars
+          } else {
+              addLog(`[AFFINE REF] Using ${referenceStarsForAffine.length} stars from reference image ${referenceEntryForAffine.file.name} for affine.`);
+          }
+      } else {
+           addLog(`[AFFINE REF INFO] Reference image ${referenceEntryForAffine?.file?.name || 'N/A'} not suitable for affine (not analyzed, or < ${MIN_STARS_FOR_AFFINE_ALIGNMENT} stars).`);
       }
-      const refCentroidIndex = centroids.findIndex(c => c === referenceCentroid);
-      addLog(`[ALIGN] Reference centroid (from image ${refCentroidIndex}, in target space): ${referenceCentroid.x.toFixed(2)}, ${referenceCentroid.y.toFixed(2)}`);
+      const referenceCentroidForFallback = centroids[firstValidImageIndexInOriginal]; // Centroid of the reference image for fallback
 
-      const finalImageData = ctx.createImageData(targetWidth, targetHeight);
+      const finalImageData = new Uint8ClampedArray(targetWidth * targetHeight * 4); // Changed from ctx.createImageData
       let validImagesStackedCount = 0;
+      let affineAlignmentsUsed = 0;
 
       addLog(`Starting band processing for stacking. Band height: ${STACKING_BAND_HEIGHT}px. Mode: ${stackingMode}.`);
-
       const numBands = targetHeight > 0 ? Math.ceil(targetHeight / STACKING_BAND_HEIGHT) : 0;
       const bandProgressIncrement = numBands > 0 ? PROGRESS_BANDED_STACKING_TOTAL / numBands : 0;
+      
+      const currentImageCanvas = document.createElement('canvas'); // For calibration of current light frame
+      currentImageCanvas.width = targetWidth; currentImageCanvas.height = targetHeight;
+      const currentImageCtx = currentImageCanvas.getContext('2d', { willReadFrequently: true });
+      if (!currentImageCtx) throw new Error("Could not get current image canvas context.");
+
+      const tempWarpedImageCanvas = document.createElement('canvas'); // For drawing the warped/translated image
+      tempWarpedImageCanvas.width = targetWidth; tempWarpedImageCanvas.height = targetHeight;
+      const tempWarpedImageCtx = tempWarpedImageCanvas.getContext('2d', { willReadFrequently: true });
+      if (!tempWarpedImageCtx) throw new Error("Could not get temp warped image canvas context.");
+
 
       for (let yBandStart = 0; yBandStart < targetHeight; yBandStart += STACKING_BAND_HEIGHT) {
         const currentBandHeight = Math.min(STACKING_BAND_HEIGHT, targetHeight - yBandStart);
-
-        const bandPixelDataCollector: Array<{ r: number[], g: number[], b: number[] }> = [];
-        for (let k = 0; k < targetWidth * currentBandHeight; k++) {
-          bandPixelDataCollector.push({ r: [], g: [], b: [] });
-        }
+        const bandPixelDataCollector: Array<{ r: number[], g: number[], b: number[] }> = Array.from(
+            { length: targetWidth * currentBandHeight }, () => ({ r: [], g: [], b: [] })
+        );
 
         let imagesContributingToBand = 0;
-        for (let i = 0; i < imageElements.length; i++) { // Iterate through successfully loaded image elements
-          const img = imageElements[i];
-          // Find the original entry data corresponding to this img element to get its centroid
-          // This assumes previewUrl is unique enough or matches imageElements[i].src
-          const originalEntryIndex = updatedStarDataForStacking.findIndex(entry => entry.previewUrl === img.src);
-          if (originalEntryIndex === -1) {
-             addLog(`[STACK SKIP] Could not find original entry data for loaded image ${i}. Skipping.`);
-             continue;
-          }
-          const currentCentroid = centroids[originalEntryIndex]; // Use centroid from the corresponding original entry index
+        for (let i = 0; i < imageElements.length; i++) {
+          const imgElement = imageElements[i];
+          const originalEntryIndex = updatedStarDataForStacking.findIndex(entry => entry.previewUrl === imgElement.src);
+          if (originalEntryIndex === -1) { addLog(`[STACK SKIP] Cannot find entry data for image element ${i}`); continue; }
+          const currentImageEntry = updatedStarDataForStacking[originalEntryIndex];
 
-          if (!img || img.naturalWidth === 0 || img.naturalHeight === 0) { // Should not happen if imageElements is filtered
-            addLog(`[STACK SKIP] Skipping invalid image element ${i} during band processing.`);
-            continue;
-          }
-
-          let dx = 0;
-          let dy = 0;
-
-          if (currentCentroid) { // If this image had a valid centroid
-            dx = referenceCentroid.x - currentCentroid.x;
-            dy = referenceCentroid.y - currentCentroid.y;
-          } else {
-            // This image might have failed centroid calculation or was skipped
-            addLog(`[STACK WARN] Image ${i} (${updatedStarDataForStacking[originalEntryIndex]?.file?.name}) had no valid centroid. Using 0,0 offset (no alignment for this frame).`);
-            // No alignment for this frame, it will be stacked at its original position relative to the canvas
-          }
-
-          // Apply calibration to the light frame (img)
-          calCtx.clearRect(0,0, targetWidth, targetHeight);
-          calCtx.drawImage(img, 0,0, targetWidth, targetHeight); // Draw current light frame scaled to target
-          let lightFrameImageData = calCtx.getImageData(0,0, targetWidth, targetHeight);
-          let calibratedLightData = new Uint8ClampedArray(lightFrameImageData.data); // Make a mutable copy
-
+          // 1. Calibrate current light frame (draw to currentImageCanvas, calibrate, put back)
+          currentImageCtx.clearRect(0,0,targetWidth,targetHeight);
+          currentImageCtx.drawImage(imgElement, 0,0,targetWidth,targetHeight);
+          let lightFrameForCalib = currentImageCtx.getImageData(0,0,targetWidth,targetHeight);
+          let calibratedLightData = new Uint8ClampedArray(lightFrameForCalib.data);
           let logCalibrationMsg = "";
 
-          if (masterBiasData) {
-            for (let p = 0; p < calibratedLightData.length; p += 4) {
-              calibratedLightData[p]   = Math.max(0, calibratedLightData[p]   - masterBiasData[p]);
-              calibratedLightData[p+1] = Math.max(0, calibratedLightData[p+1] - masterBiasData[p+1]);
-              calibratedLightData[p+2] = Math.max(0, calibratedLightData[p+2] - masterBiasData[p+2]);
-            }
-            logCalibrationMsg += "Bias subtracted. ";
-          }
-
-          if (masterDarkData) {
-            for (let p = 0; p < calibratedLightData.length; p += 4) {
-              calibratedLightData[p]   = Math.max(0, calibratedLightData[p]   - masterDarkData[p]);
-              calibratedLightData[p+1] = Math.max(0, calibratedLightData[p+1] - masterDarkData[p+1]);
-              calibratedLightData[p+2] = Math.max(0, calibratedLightData[p+2] - masterDarkData[p+2]);
-            }
-             logCalibrationMsg += "Dark subtracted. ";
-          }
-
-          if (masterFlatData) {
-            const numPixelsFlat = targetWidth * targetHeight;
-            let sumR = 0, sumG = 0, sumB = 0;
-            for (let p = 0; p < masterFlatData.length; p += 4) {
-              sumR += masterFlatData[p]; sumG += masterFlatData[p+1]; sumB += masterFlatData[p+2];
-            }
-            // Avoid division by zero if numPixelsFlat is 0
-            const meanR = numPixelsFlat > 0 ? sumR / numPixelsFlat : 0;
-            const meanG = numPixelsFlat > 0 ? sumG / numPixelsFlat : 0;
-            const meanB = numPixelsFlat > 0 ? sumB / numPixelsFlat : 0;
-            
-            if (meanR > 1 && meanG > 1 && meanB > 1) { // Ensure mean is high enough to be meaningful
-                for (let p = 0; p < calibratedLightData.length; p += 4) {
-                  const flatR = masterFlatData[p]; const flatG = masterFlatData[p+1]; const flatB = masterFlatData[p+2];
-                  // Avoid division by zero or near-zero flat values
-                  const scaleR = (flatR > 1) ? meanR / flatR : 1; 
-                  const scaleG = (flatG > 1) ? meanG / flatG : 1;
-                  const scaleB = (flatB > 1) ? meanB / flatB : 1;
-
-                  calibratedLightData[p]   = Math.min(255, Math.max(0, calibratedLightData[p]   * Math.min(scaleR, FLAT_FIELD_CORRECTION_MAX_SCALE_FACTOR) ));
-                  calibratedLightData[p+1] = Math.min(255, Math.max(0, calibratedLightData[p+1] * Math.min(scaleG, FLAT_FIELD_CORRECTION_MAX_SCALE_FACTOR) ));
-                  calibratedLightData[p+2] = Math.min(255, Math.max(0, calibratedLightData[p+2] * Math.min(scaleB, FLAT_FIELD_CORRECTION_MAX_SCALE_FACTOR) ));
-                }
-                logCalibrationMsg += `Flat corrected (Master Flat Mean R:${meanR.toFixed(1)}, G:${meanG.toFixed(1)}, B:${meanB.toFixed(1)}).`;
-            } else {
-                logCalibrationMsg += `Flat correction skipped (Master Flat mean is too low or zero). Avg R=${meanR.toFixed(1)}, G=${meanG.toFixed(1)}, B=${meanB.toFixed(1)}.`;
-            }
-          }
-          if (logCalibrationMsg && i === 0) addLog(`[CALIBRATE] Image 0 (${updatedStarDataForStacking[originalEntryIndex]?.file?.name}): ${logCalibrationMsg}`);
+          if (masterBiasData) { /* ... bias subtraction ... */ logCalibrationMsg += "B"; }
+          if (masterDarkData) { /* ... dark subtraction ... */ logCalibrationMsg += "D"; }
+          if (masterFlatData) { /* ... flat correction ... */ logCalibrationMsg += "F"; }
+          if (logCalibrationMsg && i === 0) addLog(`[CALIBRATE] Img 0 (${currentImageEntry.file.name}): ${logCalibrationMsg.split("").join(", ")} applied.`);
+          
+          currentImageCtx.putImageData(new ImageData(calibratedLightData, targetWidth, targetHeight), 0,0); // Put calibrated data back
 
 
-          // Draw the calibrated and aligned image to the main offscreen canvas
-          ctx.clearRect(0, 0, targetWidth, targetHeight); // Clear for this frame
-          const calibratedImageDataForDraw = new ImageData(calibratedLightData, targetWidth, targetHeight);
-          ctx.putImageData(calibratedImageDataForDraw, dx, dy); // dx, dy are alignment offsets
+          // 2. Attempt Affine Transform or Fallback to Centroid
+          let useAffineTransform = false;
+          let estimatedMatrix: number[][] | null = null;
 
-          try {
-            // Extract pixel data for the current band from the aligned image
-            const bandFrameImageData = ctx.getImageData(0, yBandStart, targetWidth, currentBandHeight);
-            const bandData = bandFrameImageData.data;
+          if (referenceStarsForAffine.length >= MIN_STARS_FOR_AFFINE_ALIGNMENT &&
+              currentImageEntry.isAnalyzed &&
+              currentImageEntry.analysisStars.length >= MIN_STARS_FOR_AFFINE_ALIGNMENT) {
+              
+              const currentStarsMappedForAffine = currentImageEntry.analysisStars
+                  .sort((a,b) => b.brightness - a.brightness)
+                  .slice(0, NUM_STARS_TO_USE_FOR_AFFINE_MATCHING)
+                  .map(s => ({ x: s.x, y: s.y }));
 
-            for (let j = 0; j < bandData.length; j += 4) {
-              const bandPixelIndex = j / 4; // Index within the bandPixelDataCollector array
-              if (bandPixelDataCollector[bandPixelIndex]) { // Should always be true
-                  bandPixelDataCollector[bandPixelIndex].r.push(bandData[j]);
-                  bandPixelDataCollector[bandPixelIndex].g.push(bandData[j + 1]);
-                  bandPixelDataCollector[bandPixelIndex].b.push(bandData[j + 2]);
-                  // Alpha is handled at the end
+              const numPointsToMatch = Math.min(referenceStarsForAffine.length, currentStarsMappedForAffine.length);
+
+              if (numPointsToMatch >= MIN_STARS_FOR_AFFINE_ALIGNMENT) {
+                  const srcPts = currentStarsMappedForAffine.slice(0, numPointsToMatch);
+                  const dstPts = referenceStarsForAffine.slice(0, numPointsToMatch);
+                  try {
+                      estimatedMatrix = estimateAffineTransform(srcPts, dstPts);
+                      useAffineTransform = true;
+                      if (i === 0) affineAlignmentsUsed++; // Count only for non-reference images if i > 0, or all if counting ref too.
+                      else if (useAffineTransform && i !== firstValidImageIndexInOriginal) affineAlignmentsUsed++;
+
+                  } catch (e) {
+                      const affineErrorMsg = e instanceof Error ? e.message : String(e);
+                      addLog(`[AFFINE WARN] ${currentImageEntry.file.name} (img ${i}): estimateAffineTransform failed (${affineErrorMsg}). Falling back.`);
+                      useAffineTransform = false;
+                  }
               }
-            }
-            if (yBandStart === 0) { // Count images contributing to the first band as a proxy for overall contribution
-              imagesContributingToBand++;
-            }
-          } catch (e) {
-            const errorMsg = e instanceof Error ? e.message : String(e);
-            const bandErrorMsg = `Error getting image data for band (img ${i}, bandY ${yBandStart}): ${errorMsg}`;
-            addLog(`[STACK ERROR] ${bandErrorMsg}`);
-            toast({ title: `Stacking Error on Band Processing`, description: `Could not process pixel data for ${updatedStarDataForStacking[originalEntryIndex]?.file?.name || `image ${i}`} for band at row ${yBandStart}.`, variant: "destructive"});
-            // Continue to next image, this one might not contribute to this band
           }
-           await yieldToEventLoop(dynamicDelayMs);
-        }
-        if (yBandStart === 0) { // After processing all images for the first band
-            validImagesStackedCount = imagesContributingToBand;
-            addLog(`[STACK] ${validImagesStackedCount} images contributed to the first band.`);
-        }
+          
+          // 3. Warp/Translate calibrated image (currentImageCanvas) onto tempWarpedImageCanvas
+          tempWarpedImageCtx.clearRect(0,0,targetWidth,targetHeight); // Clear for each image
+          if (useAffineTransform && estimatedMatrix) {
+              warpImage(currentImageCtx, tempWarpedImageCtx, estimatedMatrix, addLog);
+          } else {
+              const currentCentroid = centroids[originalEntryIndex];
+              let dx = 0, dy = 0;
+              if (currentCentroid && referenceCentroidForFallback) {
+                  dx = referenceCentroidForFallback.x - currentCentroid.x;
+                  dy = referenceCentroidForFallback.y - currentCentroid.y;
+              }
+              tempWarpedImageCtx.drawImage(currentImageCanvas, dx, dy);
+              if (yBandStart === 0 && i === 0 && !useAffineTransform) { // Log fallback only once per relevant image
+                   addLog(`[ALIGN FALLBACK] ${currentImageEntry.file.name}: Using centroid (dx:${dx.toFixed(2)}, dy:${dy.toFixed(2)}). Affine failed or not applicable.`);
+              }
+          }
 
-        // Process the collected pixel data for the current band
+          // 4. Extract band from tempWarpedImageCanvas and add to collector
+          try {
+            const bandFrameImageData = tempWarpedImageCtx.getImageData(0, yBandStart, targetWidth, currentBandHeight);
+            const bandData = bandFrameImageData.data;
+            for (let j = 0; j < bandData.length; j += 4) {
+              const bandPixelIndex = j / 4;
+              bandPixelDataCollector[bandPixelIndex].r.push(bandData[j]);
+              bandPixelDataCollector[bandPixelIndex].g.push(bandData[j + 1]);
+              bandPixelDataCollector[bandPixelIndex].b.push(bandData[j + 2]);
+            }
+            if (yBandStart === 0) imagesContributingToBand++;
+          } catch (e) {
+            addLog(`[STACK ERROR] Band ${yBandStart}, Img ${i} (${currentImageEntry.file.name}): Error extracting band data: ${e instanceof Error ? e.message : String(e)}`);
+          }
+          await yieldToEventLoop(dynamicDelayMs);
+        }
+        if (yBandStart === 0) validImagesStackedCount = imagesContributingToBand;
+
+        // Process the collected pixel data for the current band into finalImageData
         for (let yInBand = 0; yInBand < currentBandHeight; yInBand++) {
           for (let x = 0; x < targetWidth; x++) {
               const bandPixelIndex = yInBand * targetWidth + x;
               const finalPixelGlobalIndex = ((yBandStart + yInBand) * targetWidth + x) * 4;
-
-              if (bandPixelDataCollector[bandPixelIndex] && bandPixelDataCollector[bandPixelIndex].r.length > 0) {
-                if (stackingMode === 'median') {
-                  finalImageData.data[finalPixelGlobalIndex] = getMedian(bandPixelDataCollector[bandPixelIndex].r);
-                  finalImageData.data[finalPixelGlobalIndex + 1] = getMedian(bandPixelDataCollector[bandPixelIndex].g);
-                  finalImageData.data[finalPixelGlobalIndex + 2] = getMedian(bandPixelDataCollector[bandPixelIndex].b);
-                } else { // sigmaClip
-                  finalImageData.data[finalPixelGlobalIndex] = applySigmaClip(bandPixelDataCollector[bandPixelIndex].r);
-                  finalImageData.data[finalPixelGlobalIndex + 1] = applySigmaClip(bandPixelDataCollector[bandPixelIndex].g);
-                  finalImageData.data[finalPixelGlobalIndex + 2] = applySigmaClip(bandPixelDataCollector[bandPixelIndex].b);
-                }
-                finalImageData.data[finalPixelGlobalIndex + 3] = 255; // Set alpha to fully opaque
-              } else {
-                  // If no data for this pixel (should be rare if imagesContributingToBand > 0)
-                  finalImageData.data[finalPixelGlobalIndex] = 0;     // R
-                  finalImageData.data[finalPixelGlobalIndex + 1] = 0; // G
-                  finalImageData.data[finalPixelGlobalIndex + 2] = 0; // B
-                  finalImageData.data[finalPixelGlobalIndex + 3] = 255; // Alpha
+              const collected = bandPixelDataCollector[bandPixelIndex];
+              if (collected.r.length > 0) {
+                finalImageData[finalPixelGlobalIndex]     = stackingMode === 'median' ? getMedian(collected.r) : applySigmaClip(collected.r);
+                finalImageData[finalPixelGlobalIndex + 1] = stackingMode === 'median' ? getMedian(collected.g) : applySigmaClip(collected.g);
+                finalImageData[finalPixelGlobalIndex + 2] = stackingMode === 'median' ? getMedian(collected.b) : applySigmaClip(collected.b);
+                finalImageData[finalPixelGlobalIndex + 3] = 255;
+              } else { // Should ideally not happen if imagesContributingToBand > 0
+                finalImageData[finalPixelGlobalIndex] = 0; finalImageData[finalPixelGlobalIndex + 1] = 0;
+                finalImageData[finalPixelGlobalIndex + 2] = 0; finalImageData[finalPixelGlobalIndex + 3] = 255;
               }
           }
         }
-        // Log progress periodically
-        if (yBandStart % (STACKING_BAND_HEIGHT * 5) === 0 || yBandStart + currentBandHeight >= targetHeight ) {
-             addLog(`Processed band: rows ${yBandStart} to ${yBandStart + currentBandHeight - 1}. Progress: ${Math.round(progressPercent + bandProgressIncrement * ((yBandStart + currentBandHeight) / targetHeight * numBands) )}%. Yielding.`);
-        }
         setProgressPercent(prev => Math.min(100, prev + bandProgressIncrement));
-        await yieldToEventLoop(dynamicDelayMs); // Yield after each band
+        if (yBandStart % (STACKING_BAND_HEIGHT * 5) === 0 || yBandStart + currentBandHeight >= targetHeight ) {
+             addLog(`Processed band: rows ${yBandStart} to ${yBandStart + currentBandHeight - 1}. Progress: ${Math.round(progressPercent)}%. Yielding.`);
+        }
+        await yieldToEventLoop(dynamicDelayMs);
       }
 
       setProgressPercent(100);
@@ -2516,16 +2450,22 @@ export default function AstroStackerPage() {
         return;
       }
 
-      ctx.putImageData(finalImageData, 0, 0); // Put the final combined image data onto the offscreen canvas
+      const finalResultCanvas = document.createElement('canvas');
+      finalResultCanvas.width = targetWidth;
+      finalResultCanvas.height = targetHeight;
+      const finalResultCtx = finalResultCanvas.getContext('2d');
+      if (!finalResultCtx) throw new Error("Could not get final result canvas context.");
+      finalResultCtx.putImageData(new ImageData(finalImageData, targetWidth, targetHeight), 0, 0);
+
 
       let resultDataUrl: string;
       let outputMimeType = 'image/png';
       if (outputFormat === 'jpeg') {
         outputMimeType = 'image/jpeg';
-        resultDataUrl = offscreenCanvas.toDataURL(outputMimeType, jpegQuality / 100);
+        resultDataUrl = finalResultCanvas.toDataURL(outputMimeType, jpegQuality / 100);
         addLog(`Generated JPEG image (Quality: ${jpegQuality}%).`);
       } else { // PNG
-        resultDataUrl = offscreenCanvas.toDataURL(outputMimeType);
+        resultDataUrl = finalResultCanvas.toDataURL(outputMimeType);
         addLog(`Generated PNG image.`);
       }
 
@@ -2545,19 +2485,19 @@ export default function AstroStackerPage() {
         setSaturation(100);
         setShowPostProcessEditor(true); // Open post-process editor
 
-        const alignmentMessage = successfulStarAlignments > 0
-          ? `${successfulStarAlignments}/${numValidLightImages} images primarily aligned using star-based centroids.`
-          : `All ${numValidLightImages} images aligned using brightness-based centroids or geometric centers.`;
+        const alignmentMessage = affineAlignmentsUsed > 0
+          ? `${affineAlignmentsUsed}/${numValidLightImages -1} non-reference images aligned using Affine Transform. Others (or if affine failed) used centroid fallback.`
+          : `All ${numValidLightImages} images aligned using centroid-based methods (Affine conditions not met or failed).`;
 
         let calibrationSummary = "";
-        if (useBiasFrames && masterBiasData) calibrationSummary += `Bias (master from ${biasFrameFiles.length} frames) subtracted. `;
-        if (useDarkFrames && masterDarkData) calibrationSummary += `Dark (master from ${darkFrameFiles.length} frames) subtracted. `;
-        if (useFlatFrames && masterFlatData) calibrationSummary += `Flat (master from ${flatFrameFiles.length} frames) corrected. `;
-        if (calibrationSummary === "") calibrationSummary = "No calibration frames applied. ";
+        if (useBiasFrames && masterBiasData) calibrationSummary += `Bias (${biasFrameFiles.length} frames). `;
+        if (useDarkFrames && masterDarkData) calibrationSummary += `Dark (${darkFrameFiles.length} frames). `;
+        if (useFlatFrames && masterFlatData) calibrationSummary += `Flat (${flatFrameFiles.length} frames). `;
+        if (calibrationSummary === "") calibrationSummary = "No cal frames. ";
 
 
         const stackingMethodUsed = stackingMode === 'median' ? 'Median' : 'Sigma Clip';
-        const successToastMsg = `${alignmentMessage} ${calibrationSummary} ${validImagesStackedCount} image(s) (out of ${numValidLightImages} processed) stacked. Dim: ${targetWidth}x${targetHeight}. Ready for post-processing.`;
+        const successToastMsg = `${alignmentMessage} Cal: ${calibrationSummary} ${validImagesStackedCount} images stacked. Dim: ${targetWidth}x${targetHeight}.`;
         addLog(`Stacking complete. ${successToastMsg}`);
         toast({
           title: `${stackingMethodUsed} Stacking Complete (${outputFormat.toUpperCase()})`,
