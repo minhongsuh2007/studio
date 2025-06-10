@@ -90,6 +90,9 @@ const MAX_DIMENSION_DOWNSCALED = 2048;
 const FLAT_FIELD_CORRECTION_MAX_SCALE_FACTOR = 5;
 const ASPECT_RATIO_TOLERANCE = 0.01;
 
+const PRE_ANALYSIS_GAUSSIAN_BLUR_SIGMA = 1.0;
+const PRE_ANALYSIS_GAUSSIAN_BLUR_KERNEL_SIZE = 5; // Should be odd
+
 const yieldToEventLoop = async (delayMs: number) => {
   await new Promise(resolve => setTimeout(resolve, delayMs));
 };
@@ -156,6 +159,149 @@ const applyImageAdjustmentsToDataURL = async (
 };
 
 
+// PSF related types and functions from user
+type NumericImage = number[][];
+
+interface PSFConfig {
+  sigma: number;  // standard deviation of the PSF
+  size: number;   // kernel size (odd number)
+}
+
+function generateGaussianPSF({ sigma, size }: PSFConfig): number[][] {
+  const kernel: number[][] = [];
+  const center = Math.floor(size / 2);
+  const sigma2 = 2 * sigma * sigma;
+  let sum = 0;
+
+  for (let y = 0; y < size; y++) {
+    kernel[y] = [];
+    for (let x = 0; x < size; x++) {
+      const dx = x - center;
+      const dy = y - center;
+      const value = Math.exp(-(dx * dx + dy * dy) / sigma2);
+      kernel[y][x] = value;
+      sum += value;
+    }
+  }
+
+  // Normalize kernel
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      kernel[y][x] /= sum;
+    }
+  }
+  return kernel;
+}
+
+function convolveImage(image: NumericImage, kernel: number[][], addLog?: (message: string) => void): NumericImage {
+  const height = image.length;
+  const width = image[0]?.length || 0; // Handle empty image case
+  if (width === 0 || height === 0) {
+    addLog?.("[CONVOLVE WARN] convolveImage called with empty image.");
+    return [];
+  }
+
+  const kSize = kernel.length;
+  const kHalf = Math.floor(kSize / 2);
+  const result: NumericImage = Array.from({ length: height }, () => Array(width).fill(0));
+
+  // addLog?.(`[CONVOLVE] Starting convolution. Image: ${width}x${height}, Kernel: ${kSize}x${kSize}.`);
+  // const startTime = performance.now();
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      let sum = 0;
+      for (let ky = 0; ky < kSize; ky++) {
+        for (let kx = 0; kx < kSize; kx++) {
+          const iy = y + ky - kHalf;
+          const ix = x + kx - kHalf;
+          // Simple edge handling: replicate border pixel
+          const clampedY = Math.max(0, Math.min(height - 1, iy));
+          const clampedX = Math.max(0, Math.min(width - 1, ix));
+          
+          if (image[clampedY] && image[clampedY][clampedX] !== undefined) {
+            sum += image[clampedY][clampedX] * kernel[ky][kx];
+          }
+        }
+      }
+      if (result[y]) {
+        result[y][x] = sum;
+      }
+    }
+  }
+  // const endTime = performance.now();
+  // addLog?.(`[CONVOLVE] Convolution took ${(endTime - startTime).toFixed(2)} ms.`);
+  return result;
+}
+
+
+function imageDataToGrayscaleArray(imageData: ImageData, addLog?: (message: string) => void): NumericImage {
+  const { data, width, height } = imageData;
+  const grayscaleArray: NumericImage = [];
+  // addLog?.(`[GRAYSCALE] Converting ImageData ${width}x${height} to grayscale array.`);
+
+  for (let y = 0; y < height; y++) {
+    grayscaleArray[y] = [];
+    for (let x = 0; x < width; x++) {
+      const i = (y * width + x) * 4;
+      const r = data[i];
+      const g = data[i + 1];
+      const b = data[i + 2];
+      // Using luminance formula
+      grayscaleArray[y][x] = 0.299 * r + 0.587 * g + 0.114 * b;
+    }
+  }
+  // addLog?.("[GRAYSCALE] Conversion to grayscale array complete.");
+  return grayscaleArray;
+}
+
+function grayscaleArrayToImageData(grayscaleArray: NumericImage, width: number, height: number, addLog?: (message: string) => void): ImageData {
+  const imageData = new ImageData(width, height);
+  const data = imageData.data;
+  // addLog?.(`[GRAYSCALE_TO_IMGDATA] Converting grayscale array ${width}x${height} back to ImageData.`);
+
+  let minVal = Infinity;
+  let maxVal = -Infinity;
+
+  if (height > 0 && width > 0 && grayscaleArray[0] !== undefined) {
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const val = grayscaleArray[y]?.[x] || 0;
+        if (val < minVal) minVal = val;
+        if (val > maxVal) maxVal = val;
+      }
+    }
+  } else {
+    minVal = 0; maxVal = 0; // Handle empty or malformed array
+     addLog?.("[GRAYSCALE_TO_IMGDATA WARN] Input grayscaleArray is empty or malformed. Outputting black image.");
+  }
+
+  const range = maxVal - minVal;
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = (y * width + x) * 4;
+      let val = grayscaleArray[y]?.[x] || 0;
+      
+      let normalizedVal = 0;
+      if (range > 0) {
+        normalizedVal = ((val - minVal) / range) * 255;
+      } else if (maxVal > 0) { // If range is 0 but there's some value (e.g. all pixels are 100)
+        normalizedVal = (val / maxVal) * 255; // Normalize assuming min is 0
+      } // Else, it remains 0 if all values are 0 or minVal = maxVal = 0.
+
+
+      data[i] = normalizedVal;     // R
+      data[i + 1] = normalizedVal; // G
+      data[i + 2] = normalizedVal; // B
+      data[i + 3] = 255;           // Alpha
+    }
+  }
+  // addLog?.("[GRAYSCALE_TO_IMGDATA] Conversion to ImageData complete.");
+  return imageData;
+}
+
+
 function detectStars(
   imageData: ImageData,
   addLog: (message: string) => void,
@@ -195,7 +341,6 @@ function detectStars(
         const avgNeighborBrightness = neighborSumBrightness / neighborCount;
 
         if (currentPixelBrightness > avgNeighborBrightness * localContrastFactor) {
-          // Initial candidate found at (x, y)
           let refinedX = x;
           let refinedY = y;
 
@@ -214,16 +359,13 @@ function detectStars(
               const localCentroid = calculateLocalBrightnessCentroid(
                   imageData,
                   { x: cropRectX, y: cropRectY, width: cropRectWidth, height: cropRectHeight },
-                  addLog, // Pass addLog for detailed logging from centroid function
+                  addLog,
                   AUTO_DETECT_STAR_REFINEMENT_BRIGHTNESS_THRESHOLD
               );
 
               if (localCentroid) {
                   refinedX = cropRectX + localCentroid.x;
                   refinedY = cropRectY + localCentroid.y;
-                  // addLog(`[DETECT DEBUG] Star at (${x},${y}) refined to (${refinedX.toFixed(1)},${refinedY.toFixed(1)})`);
-              } else {
-                  // addLog(`[DETECT DEBUG] No local centroid for star at (${x},${y}), using original. Area: ${cropRectX},${cropRectY},${cropRectWidth},${cropRectHeight}`);
               }
           }
           stars.push({ x: refinedX, y: refinedY, brightness: currentPixelBrightness });
@@ -334,8 +476,8 @@ function calculateLocalBrightnessCentroid(
   const { x: cropOriginX, y: cropOriginY, width: cropW, height: cropH } = cropRect;
 
   let totalBrightnessVal = 0;
-  let weightedXSum = 0; // X relative to cropRect.x
-  let weightedYSum = 0; // Y relative to cropRect.y
+  let weightedXSum = 0;
+  let weightedYSum = 0;
   let brightPixelCount = 0;
 
   if (cropW <= 0 || cropH <= 0) {
@@ -348,20 +490,19 @@ function calculateLocalBrightnessCentroid(
       const currentFullImageX = cropOriginX + xInCrop;
       const currentFullImageY = cropOriginY + yInCrop;
 
-      // Boundary checks for full image coordinates
       if (currentFullImageX < 0 || currentFullImageX >= fullWidth || currentFullImageY < 0 || currentFullImageY >= fullHeight) {
-        continue; // Skip pixels outside the bounds of the full image data
+        continue;
       }
 
       const pixelStartIndex = (currentFullImageY * fullWidth + currentFullImageX) * 4;
       const r = fullData[pixelStartIndex];
       const g = fullData[pixelStartIndex + 1];
       const b = fullData[pixelStartIndex + 2];
-      const pixelBrightness = 0.299 * r + 0.587 * g + 0.114 * b; // Grayscale brightness
+      const pixelBrightness = 0.299 * r + 0.587 * g + 0.114 * b;
 
       if (pixelBrightness > brightnessThreshold) {
-        weightedXSum += xInCrop * pixelBrightness; // xInCrop is relative to the crop window's origin
-        weightedYSum += yInCrop * pixelBrightness; // yInCrop is relative to the crop window's origin
+        weightedXSum += xInCrop * pixelBrightness;
+        weightedYSum += yInCrop * pixelBrightness;
         totalBrightnessVal += pixelBrightness;
         brightPixelCount++;
       }
@@ -374,8 +515,8 @@ function calculateLocalBrightnessCentroid(
   }
   
   return {
-    x: weightedXSum / totalBrightnessVal, // Centroid X relative to the crop window's origin
-    y: weightedYSum / totalBrightnessVal, // Centroid Y relative to the crop window's origin
+    x: weightedXSum / totalBrightnessVal,
+    y: weightedYSum / totalBrightnessVal,
   };
 }
 
@@ -1041,10 +1182,17 @@ export default function AstroStackerPage() {
       tempAnalysisCanvas.width = analysisWidth;
       tempAnalysisCanvas.height = analysisHeight;
       tempAnalysisCtx.drawImage(imgEl, 0, 0, analysisWidth, analysisHeight);
-      const analysisImageData = tempAnalysisCtx.getImageData(0, 0, analysisWidth, analysisHeight);
+      let analysisImageData = tempAnalysisCtx.getImageData(0, 0, analysisWidth, analysisHeight);
+      
+      addLog(`[PRE-ANALYSIS] Applying Gaussian blur (Sigma: ${PRE_ANALYSIS_GAUSSIAN_BLUR_SIGMA}, Kernel: ${PRE_ANALYSIS_GAUSSIAN_BLUR_KERNEL_SIZE}x${PRE_ANALYSIS_GAUSSIAN_BLUR_KERNEL_SIZE}) to ${currentEntry.file.name} before star detection.`);
+      const grayscaleImgArray = imageDataToGrayscaleArray(analysisImageData, addLog);
+      const psfKernel = generateGaussianPSF({ sigma: PRE_ANALYSIS_GAUSSIAN_BLUR_SIGMA, size: PRE_ANALYSIS_GAUSSIAN_BLUR_KERNEL_SIZE });
+      const convolvedGrayscaleImgArray = convolveImage(grayscaleImgArray, psfKernel, addLog);
+      const blurredAnalysisImageData = grayscaleArrayToImageData(convolvedGrayscaleImgArray, analysisWidth, analysisHeight, addLog);
+      addLog(`[PRE-ANALYSIS] Gaussian blur applied. Proceeding with star detection on blurred image.`);
 
-      const detectedStars = detectStars(analysisImageData, addLog);
-      addLog(`Auto-detected ${detectedStars.length} stars in ${currentEntry.file.name} (at ${analysisWidth}x${analysisHeight}).`);
+      const detectedStars = detectStars(blurredAnalysisImageData, addLog); // Use blurred image for detection
+      addLog(`Auto-detected ${detectedStars.length} stars in ${currentEntry.file.name} (at ${analysisWidth}x${analysisHeight}, after blur).`);
 
       setAllImageStarData(prev => prev.map((entry, idx) => {
         if (idx === imageIndex) {
@@ -1123,7 +1271,7 @@ export default function AstroStackerPage() {
     const currentEntry = allImageStarData[imageIndex];
     if (!currentEntry) return;
 
-    setCurrentEditingImageData(null); // Clear previous image data if any
+    setCurrentEditingImageData(null); 
 
     let entryForEditing = {...currentEntry};
 
@@ -1140,7 +1288,6 @@ export default function AstroStackerPage() {
       await yieldToEventLoop(10);
     }
 
-    // Re-fetch entry from state after potential update
     const updatedEntryForAnalysisCheck = allImageStarData.find(e => e.id === entryForEditing.id) || entryForEditing;
 
     if (!updatedEntryForAnalysisCheck.isAnalyzed && !updatedEntryForAnalysisCheck.isAnalyzing) {
@@ -1149,13 +1296,12 @@ export default function AstroStackerPage() {
       if (!analysisSuccess) {
         return;
       }
-      await yieldToEventLoop(100); // Allow state to update post-analysis
+      await yieldToEventLoop(100); 
     } else if (updatedEntryForAnalysisCheck.isAnalyzing) {
       toast({title: "Analysis in Progress", description: `Still analyzing ${updatedEntryForAnalysisCheck.file.name}. Please wait.`});
       return;
     }
 
-    // Fetch the latest entry data again, especially analysisDimensions which are set by analyzeImageForStars
     const finalEntryForEditing = allImageStarData.find(e => e.id === updatedEntryForAnalysisCheck.id);
 
     if (finalEntryForEditing && finalEntryForEditing.isAnalyzed && finalEntryForEditing.analysisDimensions) {
@@ -1169,11 +1315,9 @@ export default function AstroStackerPage() {
           idx === imageIndex ? {...e, analysisStars: starsToEdit, starSelectionMode: 'manual' } : e
       ));
       
-      // Load ImageData for local centroid calculation
       const imgToEdit = new Image();
       imgToEdit.onload = () => {
           const tempCanvas = document.createElement('canvas');
-          // Use analysisDimensions as these are the dimensions the star coordinates relate to
           tempCanvas.width = finalEntryForEditing.analysisDimensions.width;
           tempCanvas.height = finalEntryForEditing.analysisDimensions.height;
           const tempCtx = tempCanvas.getContext('2d', { willReadFrequently: true });
@@ -1194,9 +1338,9 @@ export default function AstroStackerPage() {
           setCurrentEditingImageData(null);
           addLog(`[ERROR] Failed to load image ${finalEntryForEditing.file.name} for ImageData preparation for editor.`);
           toast({title: "Editor Error", description: `Could not load image ${finalEntryForEditing.file.name} for editing stars.`, variant: "destructive"});
-          setIsStarEditingMode(false); // Don't open editor if image can't load
+          setIsStarEditingMode(false);
       };
-      imgToEdit.src = finalEntryForEditing.previewUrl; // This should be the URL corresponding to analysisDimensions
+      imgToEdit.src = finalEntryForEditing.previewUrl;
 
     } else {
        console.warn(`Cannot edit stars for ${finalEntryForEditing?.file?.name || 'image'}: Analysis data, dimension data, or preview URL might be incomplete or loading failed.`);
@@ -1259,7 +1403,7 @@ export default function AstroStackerPage() {
       if (idx === currentEditingImageIndex) {
         let starFoundAndRemoved = false;
         const updatedStars = item.analysisStars.filter(star => {
-          const dx = star.x - finalStarX; // Use refined coordinates for checking
+          const dx = star.x - finalStarX;
           const dy = star.y - finalStarY;
           const distSq = dx * dx + dy * dy;
           if (distSq < dynamicClickToleranceSquared) {
@@ -1272,9 +1416,9 @@ export default function AstroStackerPage() {
 
         if (!starFoundAndRemoved) {
           const newStar: Star = {
-            x: finalStarX, // Use refined coordinates
+            x: finalStarX,
             y: finalStarY,
-            brightness: DEFAULT_STAR_BRIGHTNESS_THRESHOLD_COMBINED + 1, // Default brightness for manually added
+            brightness: DEFAULT_STAR_BRIGHTNESS_THRESHOLD_COMBINED + 1, 
             isManuallyAdded: true,
           };
           updatedStars.push(newStar);
@@ -1282,7 +1426,7 @@ export default function AstroStackerPage() {
         } else {
           addLog(`Total stars for ${item.file.name} after removal: ${updatedStars.length}`);
         }
-        return { ...item, analysisStars: updatedStars, userReviewed: false }; // Mark as not reviewed after edit
+        return { ...item, analysisStars: updatedStars, userReviewed: false };
       }
       return item;
     }));
@@ -1328,7 +1472,7 @@ export default function AstroStackerPage() {
     ));
     
     setIsStarEditingMode(false);
-    setCurrentEditingImageData(null); // Clear image data
+    setCurrentEditingImageData(null);
     toast({title: "Stars Confirmed", description: `Star selection saved for ${currentImageName}.`});
 
     if (allImageStarData.length > 1 && confirmedEntry.analysisStars && confirmedEntry.analysisDimensions) {
@@ -1340,7 +1484,7 @@ export default function AstroStackerPage() {
         });
         setShowApplyStarOptionsMenu(true);
     } else {
-      setCurrentEditingImageIndex(null); // No menu, so clear index
+      setCurrentEditingImageIndex(null);
     }
   };
 
@@ -1363,16 +1507,10 @@ export default function AstroStackerPage() {
       setIsStarEditingMode(false);
       setCurrentEditingImageData(null);
       setCurrentEditingImageIndex(null);
-      // If "Apply Stars" dialog should show for the last image as well, uncomment below
-      // if (allImageStarData.length > 1 && currentImageEntry.analysisStars && currentImageEntry.analysisDimensions) {
-      //   setSourceImageForApplyMenu({ /* ... */ });
-      //   setShowApplyStarOptionsMenu(true);
-      // }
       return;
     }
 
     const nextImageIndex = currentEditingImageIndex + 1;
-    // setCurrentEditingImageData(null) will be handled by handleEditStarsRequest for the next image
     await handleEditStarsRequest(nextImageIndex); 
   };
 
