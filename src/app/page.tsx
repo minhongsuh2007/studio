@@ -77,7 +77,7 @@ const STACKING_BAND_HEIGHT = 50;
 const SIGMA_CLIP_THRESHOLD = 2.0;
 const SIGMA_CLIP_ITERATIONS = 2;
 const MIN_STARS_FOR_CENTROID_ALIGNMENT = 3;
-const MIN_STARS_FOR_AFFINE_ALIGNMENT = 5; 
+const MIN_STARS_FOR_AFFINE_ALIGNMENT = 5;
 const NUM_STARS_TO_USE_FOR_AFFINE_MATCHING = 10;
 const AUTO_ALIGN_TARGET_STAR_COUNT = 10;
 
@@ -1191,18 +1191,30 @@ export default function AstroStackerPage() {
   const handleRemoveCalibrationFrame = (
     indexToRemove: number,
     frameType: 'dark' | 'flat' | 'bias',
-    setFilesState: React.Dispatch<React.SetStateAction<File[]>>,
-    setPreviewUrlsState: React.Dispatch<React.SetStateAction<string[]>>,
-    setOriginalDimensionsListState: React.Dispatch<React.SetStateAction<Array<{ width: number; height: number } | null>>>
+    dispatchFiles: React.Dispatch<React.SetStateAction<File[]>>,
+    dispatchPreviews: React.Dispatch<React.SetStateAction<string[]>>,
+    dispatchDimensions: React.Dispatch<React.SetStateAction<Array<{ width: number; height: number } | null>>>
   ) => {
-    const fileName = setFilesState(prev => {
-        const file = prev[indexToRemove];
-        return file ? file.name : `frame at index ${indexToRemove}`;
-    }); 
-    addLog(`Removing ${frameType} frame: ${fileName} at index ${indexToRemove}`);
-    setFilesState(prev => prev.filter((_, index) => index !== indexToRemove));
-    setPreviewUrlsState(prev => prev.filter((_, index) => index !== indexToRemove));
-    setOriginalDimensionsListState(prev => prev.filter((_, index) => index !== indexToRemove));
+    let fileNameForLog = `frame at index ${indexToRemove}`;
+    let currentFiles: File[] = [];
+
+    if (frameType === 'dark') {
+      currentFiles = darkFrameFiles;
+    } else if (frameType === 'flat') {
+      currentFiles = flatFrameFiles;
+    } else if (frameType === 'bias') {
+      currentFiles = biasFrameFiles;
+    }
+
+    if (indexToRemove >= 0 && indexToRemove < currentFiles.length && currentFiles[indexToRemove]) {
+      fileNameForLog = currentFiles[indexToRemove].name;
+    }
+  
+    addLog(`Removing ${frameType} frame: ${fileNameForLog} (index ${indexToRemove})`);
+  
+    dispatchFiles(prev => prev.filter((_, index) => index !== indexToRemove));
+    dispatchPreviews(prev => prev.filter((_, index) => index !== indexToRemove));
+    dispatchDimensions(prev => prev.filter((_, index) => index !== indexToRemove));
   };
 
   const handleRemoveDarkFrame = (index: number) => handleRemoveCalibrationFrame(index, 'dark', setDarkFrameFiles, setDarkFramePreviewUrls, setOriginalDarkFrameDimensionsList);
@@ -1237,9 +1249,6 @@ const analyzeImageForStars = async (
   entryToAnalyze: ImageStarEntry,
   localAddLog: (message: string) => void
 ): Promise<ImageStarEntry> => {
-  let finalUpdatedEntry = { ...entryToAnalyze }; // Local mutable copy
-
-  // 1. Immediate global state update to indicate analysis start
   setAllImageStarData(prevData =>
     prevData.map(e =>
       e.id === entryToAnalyze.id
@@ -1247,8 +1256,14 @@ const analyzeImageForStars = async (
         : e
     )
   );
-  finalUpdatedEntry.isAnalyzing = true;
-  finalUpdatedEntry.isAnalyzed = false;
+
+  let finalUpdatedEntry: ImageStarEntry = {
+    ...entryToAnalyze,
+    isAnalyzing: true,
+    isAnalyzed: false,
+    analysisStars: [],
+    initialAutoStars: [],
+  };
 
   try {
     localAddLog(`[ANALYZE START] For: ${entryToAnalyze.file.name} (ID: ${entryToAnalyze.id})`);
@@ -1280,7 +1295,7 @@ const analyzeImageForStars = async (
     const detectedPoints: DetectedStarPoint[] = detectStarsWithNewPipeline(grayscaleImageArray, localAddLog);
     localAddLog(`[ANALYZE DETECTED] ${detectedPoints.length} potential star points in ${entryToAnalyze.file.name}.`);
     
-    const detectedStars: Star[] = detectedPoints.map(pStar => ({
+    const detectedStarsResult: Star[] = detectedPoints.map(pStar => ({
       x: pStar.x, 
       y: pStar.y, 
       brightness: pStar.value, 
@@ -1288,17 +1303,20 @@ const analyzeImageForStars = async (
       isManuallyAdded: false,
     }));
 
-    finalUpdatedEntry.initialAutoStars = [...detectedStars];
+    finalUpdatedEntry.initialAutoStars = [...detectedStarsResult];
     if (finalUpdatedEntry.starSelectionMode === 'auto') {
-      finalUpdatedEntry.analysisStars = [...detectedStars];
+      finalUpdatedEntry.analysisStars = [...detectedStarsResult];
     } else { 
        if(!finalUpdatedEntry.analysisStars || finalUpdatedEntry.analysisStars.filter(s => s.isManuallyAdded).length === 0){
-           finalUpdatedEntry.analysisStars = [...detectedStars];
+           finalUpdatedEntry.analysisStars = [...detectedStarsResult];
+       } else {
+           // Keep existing manually added/reviewed stars if in manual mode and they exist
+           finalUpdatedEntry.analysisStars = [...finalUpdatedEntry.analysisStars.filter(s => s.isManuallyAdded)];
        }
     }
     
     localAddLog(`[ANALYZE SUCCESS] For ${entryToAnalyze.file.name}. InitialAutoStars: ${finalUpdatedEntry.initialAutoStars.length}, AnalysisStars (mode dependent): ${finalUpdatedEntry.analysisStars.length}.`);
-    finalUpdatedEntry.isAnalyzed = true; // Mark as analyzed *if successful*
+    finalUpdatedEntry.isAnalyzed = true;
 
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -1306,14 +1324,13 @@ const analyzeImageForStars = async (
     toast({ title: `Analysis Failed for ${entryToAnalyze.file.name}`, description: errorMessage, variant: "destructive" });
     finalUpdatedEntry.analysisStars = []; 
     finalUpdatedEntry.initialAutoStars = [];
-    finalUpdatedEntry.isAnalyzed = false; // Explicitly false on error
+    finalUpdatedEntry.isAnalyzed = false;
   } finally {
-    // 2. Guaranteed final global state update
-    finalUpdatedEntry.isAnalyzing = false; // Always set analyzing to false
-    // isAnalyzed is set based on try/catch outcome above
+    finalUpdatedEntry.isAnalyzing = false;
+    finalUpdatedEntry.isAnalyzed = true; // Mark as analyzed attempt completed
     
     setAllImageStarData(prevData =>
-      prevData.map(e => (e.id === finalUpdatedEntry.id ? { ...finalUpdatedEntry } : e)) // Spread the final local copy
+      prevData.map(e => (e.id === finalUpdatedEntry.id ? { ...finalUpdatedEntry } : e))
     );
     localAddLog(`[ANALYZE FINAL STATE UPDATE] For ${finalUpdatedEntry.file.name}: isAnalyzed=${finalUpdatedEntry.isAnalyzed}, isAnalyzing=${finalUpdatedEntry.isAnalyzing}, AutoStars=${finalUpdatedEntry.initialAutoStars.length}, AnalysisStars=${finalUpdatedEntry.analysisStars.length}`);
   }
@@ -1352,10 +1369,7 @@ const analyzeImageForStars = async (
         }
         setAllImageStarData(prev => prev.map(e => e.id === imageId ? updatedEntry : e));
         
-        // After setting the mode to manual, if the image hasn't been analyzed, trigger analysis.
-        // We use a slight delay to ensure the state update for mode change is processed.
         setTimeout(async () => {
-            // Read the latest state directly before deciding to analyze
             const currentGlobalState = allImageStarData.find(e => e.id === imageId);
             if (currentGlobalState && !currentGlobalState.isAnalyzed && !currentGlobalState.isAnalyzing) {
                 addLog(`Image ${currentGlobalState.file.name} switched to manual mode, and needs analysis. Analyzing now...`);
@@ -1385,7 +1399,6 @@ const analyzeImageForStars = async (
         }
         
         entryForEditing = { ...entryForEditing, ...updatedFields };
-        // Update global state immediately for the mode change
         setAllImageStarData(prev => prev.map((e, idx) => idx === imageIndex ? entryForEditing : e));
     }
 
@@ -1393,7 +1406,7 @@ const analyzeImageForStars = async (
     if (!entryForEditing.isAnalyzed && !entryForEditing.isAnalyzing) {
         addLog(`Analyzing ${entryForEditing.file.name} before editing stars (was not analyzed).`);
         const processedEntry = await analyzeImageForStars(entryForEditing, addLog); 
-        entryForEditing = processedEntry; // Use the direct result from analysis
+        entryForEditing = processedEntry;
         if (processedEntry.analysisStars.length === 0) {
              toast({ title: "Analysis Note", description: `Analysis for ${entryForEditing.file.name} found 0 stars. You can add them manually.`, variant: "default" });
         }
@@ -1402,7 +1415,6 @@ const analyzeImageForStars = async (
         return;
     }
     
-    // Use the potentially updated entryForEditing from analysis
     const finalEntryForEditing = entryForEditing; 
 
     if (finalEntryForEditing && finalEntryForEditing.isAnalyzed && finalEntryForEditing.analysisDimensions && finalEntryForEditing.analysisDimensions.width > 0) {
@@ -1410,19 +1422,17 @@ const analyzeImageForStars = async (
         if (starsToEdit.length === 0 && finalEntryForEditing.initialAutoStars.length > 0) {
             starsToEdit = [...finalEntryForEditing.initialAutoStars];
             addLog(`Populating editor for ${finalEntryForEditing.file.name} with ${starsToEdit.length} auto-detected stars as a base for manual editing.`);
-             // Update the global state if we repopulate analysisStars from initialAutoStars
             const updatedEntryWithAutoStars = { ...finalEntryForEditing, analysisStars: starsToEdit };
             setAllImageStarData(prev => prev.map((e, idx) =>
                 idx === imageIndex ? updatedEntryWithAutoStars : e
             ));
-             // And ensure our local copy for the editor also has these stars
             entryForEditing = updatedEntryWithAutoStars; 
         }
       
         const imgToEdit = new Image();
         imgToEdit.onload = () => {
             const tempCanvas = document.createElement('canvas');
-            tempCanvas.width = entryForEditing.analysisDimensions.width; // Use entryForEditing which might have been updated
+            tempCanvas.width = entryForEditing.analysisDimensions.width;
             tempCanvas.height = entryForEditing.analysisDimensions.height;
             const tempCtx = tempCanvas.getContext('2d', { willReadFrequently: true });
             if (tempCtx) {
@@ -1786,30 +1796,28 @@ const analyzeImageForStars = async (
           addLog(`Found ${imagesRequiringAnalysis.length} images requiring analysis.`);
           for (const imageEntry of imagesRequiringAnalysis) {
               addLog(`Analyzing image ${imageEntry.file.name} (ID: ${imageEntry.id}) for stacking process.`);
-              await analyzeImageForStars(imageEntry, addLog); // This updates global state internally
+              await analyzeImageForStars(imageEntry, addLog); 
           }
       } else {
           addLog("No images require pre-stack analysis at this time.");
       }
   
-      // Optional cleanup for any images stuck in 'isAnalyzing' from a previous, interrupted run
-      // This ensures that if an image wasn't in `imagesRequiringAnalysis` but was somehow stuck, it gets reset.
       let stateWasModifiedByCleanup = false;
       const cleanedGlobalData = allImageStarData.map(entry => {
-        if (entry.isAnalyzing) { // Check global state
+        if (entry.isAnalyzing) { 
           addLog(`[STACK PREP CLEANUP] Forcing ${entry.file.name} out of 'isAnalyzing' before stacking. Current isAnalyzed: ${entry.isAnalyzed}`);
           stateWasModifiedByCleanup = true;
-          return { ...entry, isAnalyzing: false }; // Only change isAnalyzing
+          return { ...entry, isAnalyzing: false }; 
         }
         return entry;
       });
+
       if (stateWasModifiedByCleanup) {
           setAllImageStarData(cleanedGlobalData);
-          await yieldToEventLoop(50); // Give React a moment if state was modified
+          await yieldToEventLoop(50); 
       }
       addLog("Pre-stack analysis/preparation phase complete.");
   
-      // CRUCIAL: Re-read allImageStarData to get the latest state after all analyses are done
       const currentImageEntriesForStacking = [...allImageStarData];
 
 
@@ -2215,32 +2223,35 @@ const analyzeImageForStars = async (
 
                 try {
                     if (srcPts.some(pt => isNaN(pt.x) || isNaN(pt.y)) || dstPts.some(pt => isNaN(pt.x) || isNaN(pt.y))) {
-                      addLog(`[AFFINE WARN] ${currentImageEntry.file.name} (img ${i}): NaN coordinates found in star points. Falling back.`);
+                      addLog(`[AFFINE WARN] ${currentImageEntry.file.name} (img ${i}): NaN coordinates found in star points. Falling back to centroid.`);
                       useAffineTransform = false;
                       estimatedMatrix = null;
                     } else {
                       estimatedMatrix = estimateAffineTransform(srcPts, dstPts);
-                      // Secondary check for NaN/Infinity in the matrix itself
                       if (estimatedMatrix && estimatedMatrix.flat().some(val => !isFinite(val))) {
-                          addLog(`[AFFINE ERROR] ${currentImageEntry.file.name}: Matrix contains non-finite values. ${JSON.stringify(estimatedMatrix)}. Falling back.`);
+                          addLog(`[AFFINE ERROR] ${currentImageEntry.file.name}: Matrix contains non-finite values after calculation. ${JSON.stringify(estimatedMatrix)}. Falling back to centroid.`);
                           useAffineTransform = false;
                           estimatedMatrix = null;
-                      } else {
+                      } else if (estimatedMatrix) {
                           useAffineTransform = true;
                           if (yBandStart === 0) { 
                               affineAlignmentsUsed++;
                               addLog(`[AFFINE SUCCESS] Matrix for ${currentImageEntry.file.name}: ${JSON.stringify(estimatedMatrix?.map(row => row.map(val => val.toFixed(3))))}`);
                           }
+                      } else { // Should not happen if estimateAffineTransform throws on error
+                          addLog(`[AFFINE WARN] ${currentImageEntry.file.name}: estimateAffineTransform returned null/undefined unexpectedly. Falling back to centroid.`);
+                          useAffineTransform = false;
+                          estimatedMatrix = null;
                       }
                     }
                 } catch (e) {
                     const affineErrorMsg = e instanceof Error ? e.message : String(e);
-                    addLog(`[AFFINE FAIL] ${currentImageEntry.file.name} (img ${i}): estimateAffineTransform failed (${affineErrorMsg}). Falling back.`);
+                    addLog(`[AFFINE FAIL] ${currentImageEntry.file.name} (img ${i}): estimateAffineTransform failed ('${affineErrorMsg}'). Falling back to centroid.`);
                     useAffineTransform = false;
                     estimatedMatrix = null;
                 }
             } else {
-                if (yBandStart === 0) addLog(`[AFFINE INFO] ${currentImageEntry.file.name} (img ${i}): Not enough matching FWHM-filtered points (${numPointsToMatch}) for affine. Need ${MIN_STARS_FOR_AFFINE_ALIGNMENT}. Falling back.`);
+                if (yBandStart === 0) addLog(`[AFFINE INFO] ${currentImageEntry.file.name} (img ${i}): Not enough matching FWHM-filtered points (${numPointsToMatch}) for affine. Need ${MIN_STARS_FOR_AFFINE_ALIGNMENT}. Falling back to centroid.`);
                 useAffineTransform = false;
             }
         } else {
@@ -2905,6 +2916,7 @@ const analyzeImageForStars = async (
     
 
       
+
 
 
 
