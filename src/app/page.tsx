@@ -77,9 +77,9 @@ const STACKING_BAND_HEIGHT = 50;
 const SIGMA_CLIP_THRESHOLD = 2.0;
 const SIGMA_CLIP_ITERATIONS = 2;
 const MIN_STARS_FOR_CENTROID_ALIGNMENT = 3;
-const MIN_STARS_FOR_AFFINE_ALIGNMENT = 5; // Increased from 3
+const MIN_STARS_FOR_AFFINE_ALIGNMENT = 5;
 const NUM_STARS_TO_USE_FOR_AFFINE_MATCHING = 10;
-const AUTO_ALIGN_TARGET_STAR_COUNT = 10; // Reduced from 25
+const AUTO_ALIGN_TARGET_STAR_COUNT = 10;
 
 
 const BRIGHTNESS_CENTROID_FALLBACK_THRESHOLD_GRAYSCALE_EQUIVALENT = 30;
@@ -99,8 +99,8 @@ const PROGRESS_CENTROID_CALCULATION_TOTAL = 35;
 const PROGRESS_BANDED_STACKING_TOTAL = 60;
 
 // Constants for filtering stars used in Affine Alignment
-const ALIGNMENT_STAR_MIN_FWHM = 2.0; // Tightened from 1.8
-const ALIGNMENT_STAR_MAX_FWHM = 4.0; // Tightened from 4.5
+const ALIGNMENT_STAR_MIN_FWHM = 2.0;
+const ALIGNMENT_STAR_MAX_FWHM = 4.0;
 
 
 // ==== New Star Detector (Self-Contained) Configuration ====
@@ -108,7 +108,7 @@ const DETECTOR_MIN_CONTRAST = 20;
 const DETECTOR_MIN_BRIGHTNESS = 40;
 const DETECTOR_MAX_BRIGHTNESS = 220; // Condition uses >, so effectively 219.99...
 const DETECTOR_MIN_DISTANCE = 6;
-const DETECTOR_MAX_STARS = 10; 
+const DETECTOR_MAX_STARS = 10;
 const DETECTOR_MIN_FWHM = 1.5;
 const DETECTOR_MAX_FWHM = 5.0;
 const DETECTOR_ANNULUS_INNER_RADIUS = 4;
@@ -397,6 +397,7 @@ function detectStarsWithNewPipeline(
       const fwhm = estimateFWHM(grayscaleImage, x, y, DETECTOR_FWHM_PROFILE_HALF_WIDTH, addLog);
       if (fwhm < DETECTOR_MIN_FWHM || fwhm > DETECTOR_MAX_FWHM) {
         // if (addLog && fwhm !==0) addLog(`[DETECTOR REJECT] (${x},${y}) FWHM ${fwhm.toFixed(1)} out of range [${DETECTOR_MIN_FWHM}-${DETECTOR_MAX_FWHM}]`);
+        // else if (addLog && fwhm === 0 && DETECTOR_MIN_FWHM > 0) addLog(`[DETECTOR REJECT] (${x},${y}) FWHM is 0, less than MIN_FWHM ${DETECTOR_MIN_FWHM}`);
         continue;
       }
       passedFWHM++;
