@@ -99,6 +99,10 @@ const MAX_DIMENSION_DOWNSCALED = 2048;
 const FLAT_FIELD_CORRECTION_MAX_SCALE_FACTOR = 5;
 const ASPECT_RATIO_TOLERANCE = 0.01;
 
+const PROGRESS_INITIAL_SETUP = 5;
+const PROGRESS_CENTROID_CALCULATION_TOTAL = 35;
+const PROGRESS_BANDED_STACKING_TOTAL = 60;
+
 
 const yieldToEventLoop = async (delayMs: number) => {
   await new Promise(resolve => setTimeout(resolve, delayMs));
