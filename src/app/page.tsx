@@ -8,7 +8,6 @@ import { useToast } from '@/hooks/use-toast';
 import { fileToDataURL } from '@/lib/utils';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { estimateAffineTransform, warpImage, type Point as AstroAlignPoint } from '@/lib/astro-align';
-// Removed: import initLibRaw, { type LibRaw } from 'libraw-js';
 
 
 import { AppHeader } from '@/components/astrostacker/AppHeader';
@@ -357,6 +356,7 @@ function detectStarsWithNewPipeline(
 ): DetectedStarPoint[] {
   const height = grayscaleImage.length;
   const width = grayscaleImage[0]?.length || 0;
+  let loggedFwhmSortInfo = false;
 
   if (height === 0 || width === 0) {
     addLog("[DETECTOR ERROR] Input grayscale image is empty. Cannot detect stars.");
@@ -422,8 +422,26 @@ function detectStarsWithNewPipeline(
   }
   addLog(`[DETECTOR STATS] Considered: ${consideredPixels}, Passed Brightness: ${passedBrightness}, Contrast: ${passedContrast}, FWHM: ${passedFWHMCount}, Flatness/LocalMax: ${passedFlatnessAndLocalMax}, Initial Candidates: ${candidates.length}`);
 
-  // Stable sort by significance (brightness * contrast)
-  candidates.sort((a, b) => (b.value * b.contrast) - (a.value * a.contrast));
+  // New sorting: Prioritize stars with FWHM in the ALIGNMENT range, then by significance.
+  candidates.sort((a, b) => {
+    const a_is_prime_fwhm = a.fwhm >= ALIGNMENT_STAR_MIN_FWHM && a.fwhm <= ALIGNMENT_STAR_MAX_FWHM;
+    const b_is_prime_fwhm = b.fwhm >= ALIGNMENT_STAR_MIN_FWHM && b.fwhm <= ALIGNMENT_STAR_MAX_FWHM;
+
+    if (a_is_prime_fwhm && !b_is_prime_fwhm) {
+      return -1; // a comes first
+    }
+    if (!a_is_prime_fwhm && b_is_prime_fwhm) {
+      return 1;  // b comes first
+    }
+    // If both are prime OR both are not prime, sort by original significance (value * contrast)
+    return (b.value * b.contrast) - (a.value * a.contrast);
+  });
+  
+  if (!loggedFwhmSortInfo && candidates.length > 0) {
+      addLog(`[DETECTOR SORT] Candidates sorted. Priority to FWHM between ${ALIGNMENT_STAR_MIN_FWHM} and ${ALIGNMENT_STAR_MAX_FWHM}, then by (brightness*contrast).`);
+      loggedFwhmSortInfo = true; 
+  }
+
 
   const stars: DetectedStarPoint[] = [];
   for (const cand of candidates) {
@@ -1202,12 +1220,12 @@ export default function AstroStackerPage() {
   const handleRemoveCalibrationFrame = (
     indexToRemove: number,
     frameType: 'dark' | 'flat' | 'bias',
-    filesStateFunction: () => File[], // Pass a function that returns the current state array
+    filesStateFunction: () => File[], 
     setFilesState: React.Dispatch<React.SetStateAction<File[]>>,
     setPreviewUrlsState: React.Dispatch<React.SetStateAction<string[]>>,
     setOriginalDimensionsListState: React.Dispatch<React.SetStateAction<Array<{ width: number; height: number } | null>>>
   ) => {
-    const currentFiles = filesStateFunction(); // Get current files
+    const currentFiles = filesStateFunction(); 
     let fileNameForLog = `frame at index ${indexToRemove}`;
     if (indexToRemove >= 0 && indexToRemove < currentFiles.length && currentFiles[indexToRemove]) {
       fileNameForLog = currentFiles[indexToRemove].name;
@@ -2919,6 +2937,7 @@ const analyzeImageForStars = async (
     
 
       
+
 
 
 
