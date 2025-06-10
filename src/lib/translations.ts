@@ -1,5 +1,5 @@
 
-export type Locale = 'en' | 'ko' | 'zh' | 'ja';
+export type Locale = 'en' | 'ko' | 'zh';
 
 interface TranslationMessages {
   [key: string]: string;
@@ -9,7 +9,6 @@ interface Translations {
   en: TranslationMessages;
   ko: TranslationMessages;
   zh: TranslationMessages;
-  ja: TranslationMessages;
 }
 
 export const translations: Translations = {
@@ -22,7 +21,6 @@ export const translations: Translations = {
     switchToEnglish: 'EN',
     switchToKorean: 'KO',
     switchToChinese: 'ZH',
-    switchToJapanese: 'JA',
     stackImagesButton: 'Stack Images ({count})',
     stackingButtonInProgress: 'Stacking...',
     finalizeAndDownload: 'Finalize & Download Image',
@@ -103,7 +101,6 @@ export const translations: Translations = {
     switchToEnglish: '영',
     switchToKorean: '한',
     switchToChinese: '중',
-    switchToJapanese: '일',
     stackImagesButton: '이미지 스태킹 ({count}개)',
     stackingButtonInProgress: '스태킹 중...',
     finalizeAndDownload: '이미지 확정 및 다운로드',
@@ -184,7 +181,6 @@ export const translations: Translations = {
     switchToEnglish: '英',
     switchToKorean: '韩',
     switchToChinese: '中',
-    switchToJapanese: '日',
     stackImagesButton: '叠加图像 ({count})',
     stackingButtonInProgress: '叠加中...',
     finalizeAndDownload: '完成并下载图像',
@@ -255,87 +251,6 @@ export const translations: Translations = {
     logDarkFrameLoaded: "暗场 {fileName} 已加载 ({width}x{height})。",
     logFlatFrameLoaded: "平场 {fileName} 已加载 ({width}x{height})。",
     logBiasFrameLoaded: "偏置场 {fileName} 已加载 ({width}x{height})。",
-  },
-  ja: { // Placeholder Japanese translations
-    appTitle: '[JA] AstroStacker',
-    uploadAndConfigure: '[JA] Upload & Configure Images',
-    cardDescription: "[JA] Add PNG, JPG, GIF, WEBP, or FITS files. FITS files are processed using a built-in parser. Images are aligned using star centroids or brightness. Optionally downscale large images on upload. Stacking uses processed resolution. Median or Sigma Clip methods available. DNG files may require manual pre-conversion. TIFF processing is currently disabled.",
-    creditsLine1: '[JA] AstroStacker © {year}',
-    creditsLine2Part1: '[JA] Created by Min Hong Seo (암흑광자) with invaluable help from 천관사, Saturn, 구구, Flec, Latte, 얼음세상, 뉴비, 오르트, 지민, 모닥별, 배추빙수, 응애, Kangwoo, and many others.',
-    switchToEnglish: '[JA] EN',
-    switchToKorean: '[JA] KO',
-    switchToChinese: '[JA] ZH',
-    switchToJapanese: '[JA] JA',
-    stackImagesButton: '[JA] Stack Images ({count})',
-    stackingButtonInProgress: '[JA] Stacking...',
-    finalizeAndDownload: '[JA] Finalize & Download Image',
-    imageQueueCount: '[JA] Image Queue ({count})',
-    stackingMode: '[JA] Stacking Mode',
-    previewFit: '[JA] Preview Fit',
-    fitContain: '[JA] Contain',
-    fitCover: '[JA] Cover',
-    outputFormat: '[JA] Output Format',
-    jpgQuality: '[JA] JPG Quality: {jpegQuality}%',
-    editStarsFor: '[JA] Edit Stars for: {fileName}',
-    editStarsDescription: '[JA] Click on stars to add/remove. Current: {starCount} stars. Image Dim: {width}x{height}.',
-    resetToAuto: '[JA] Reset to Auto',
-    wipeAllStars: '[JA] Wipe All Stars',
-    confirmAndClose: '[JA] Confirm & Close',
-    confirmAndNext: '[JA] Confirm & Next',
-    cancelEditing: '[JA] Cancel Editing',
-    processingLogs: '[JA] Processing Logs',
-    
-    applyStarOptionsMenuTitle: '[JA] Apply Star Selection to Others',
-    applyStarOptionsMenuDesc: "[JA] You've set {starCount} stars for '{fileName}' ({width}x{height}px). How would you like to apply this selection to other images in the queue?",
-    applyToMatchingDimensionsBtn: '[JA] To {count} images with matching dimensions',
-    applyProportionallyBtn: '[JA] Proportionally to {count} images with similar aspect ratio',
-    dontApplyToOthersBtn: "[JA] Don't Apply to Others",
-    
-    toastStarsAppliedMatchingDimTitle: "[JA] Stars Applied (Matching Dimensions)",
-    toastStarsAppliedMatchingDimDesc: "[JA] The selected stars have been applied to other images with matching dimensions.",
-    toastProportionalApplySkippedTitle: "[JA] Proportional Apply Skipped",
-    toastProportionalApplySkippedDesc: "[JA] Source image '{fileName}' has no stars selected. Proportional application skipped.",
-    toastProportionalApplyDoneTitle: "[JA] Stars Applied (Proportionally)",
-    toastProportionalApplyDoneDesc: "[JA] Stars proportionally applied to images with matching aspect ratios.",
-
-    downscalePrompt: "[JA] Image '{fileName}' ({width}x{height}px) is large. Downscaling it to max {maxSize}px (maintaining aspect ratio) can improve stability and speed. Downscale it?",
-    stackingProgress: '[JA] Stacking: {progressPercent}%',
-
-    darkFramesUploadTitle: '[JA] Dark Frames (Optional)',
-    darkFramesUploadDescription: '[JA] Upload one or more dark frames (JPG/PNG/WEBP/FITS). They will be averaged into a master dark, then subtracted from each light frame to reduce thermal noise. Ensure similar dimensions.',
-    useDarkFramesLabel: '[JA] Enable Dark Frame Subtraction',
-    darkFramesPreviewTitle: '[JA] Dark Frames Preview ({count})',
-    darkFramesMissing: "[JA] Dark frame subtraction enabled, but no dark frames uploaded or they failed to load.",
-    darkFramesMissingTitle: "[JA] Dark Frames Missing",
-    logLoadingDarkFrames: "[JA] Loading {count} Dark Frame(s)...",
-    logMasterDarkCreated: "[JA] Master Dark Frame created from {count} frames.",
-    logMasterDarkFailed: "[JA] Failed to create Master Dark Frame (no valid darks processed).",
-    logBiasSubtractedFromDark: "[JA] Bias (if any) subtracted from dark frame: {darkFrameName}",
-    
-    flatFramesUploadTitle: '[JA] Flat Frames (Optional)',
-    flatFramesUploadDescription: '[JA] Upload one or more flat frames (JPG/PNG/WEBP/FITS). Averaged into a master flat, then used to correct for sensor dust, vignetting, etc. Ensure similar dimensions.',
-    useFlatFramesLabel: '[JA] Enable Flat Field Correction',
-    flatFramesPreviewTitle: '[JA] Flat Frames Preview ({count})',
-    flatFramesMissing: "[JA] Flat field correction enabled, but no flat frames uploaded or they failed to load.",
-    flatFramesMissingTitle: "[JA] Flat Frames Missing",
-    logLoadingFlatFrames: "[JA] Loading {count} Flat Frame(s)...",
-    logMasterFlatCreated: "[JA] Master Flat Frame created from {count} frames.",
-    logMasterFlatFailed: "[JA] Failed to create Master Flat Frame (no valid flats processed).",
-    logBiasSubtractedFromFlat: "[JA] Bias (if any) subtracted from flat frame: {flatFrameName}",
-
-    biasFramesUploadTitle: '[JA] Bias Frames (Optional)',
-    biasFramesUploadDescription: '[JA] Upload one or more bias frames (JPG/PNG/WEBP/FITS). Averaged into a master bias, representing camera read-out noise. Subtracted from Light, Dark, and Flat frames if used. Ensure similar dimensions.',
-    useBiasFramesLabel: '[JA] Enable Bias Frame Subtraction',
-    biasFramesPreviewTitle: '[JA] Bias Frames Preview ({count})',
-    biasFramesMissing: "[JA] Bias frame subtraction enabled, but no bias frames uploaded or they failed to load.",
-    biasFramesMissingTitle: "[JA] Bias Frames Missing",
-    logLoadingBiasFrames: "[JA] Loading {count} Bias Frame(s)...",
-    logMasterBiasCreated: "[JA] Master Bias Frame created from {count} frames.",
-    logMasterBiasFailed: "[JA] Failed to create Master Bias Frame (no valid biases processed).",
-
-    logDarkFrameLoaded: "[JA] Dark frame {fileName} loaded ({width}x{height}).",
-    logFlatFrameLoaded: "[JA] Flat frame {fileName} loaded ({width}x{height}).",
-    logBiasFrameLoaded: "[JA] Bias frame {fileName} loaded ({width}x{height}).",
   }
 };
 
