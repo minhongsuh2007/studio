@@ -20,7 +20,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
 import { Slider } from "@/components/ui/slider";
-import { StarAnnotationCanvas, type Star } from '@/components/astrostacker/StarAnnotationCanvas';
+import { StarAnnotationCanvas } from '@/components/astrostacker/StarAnnotationCanvas';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Switch } from '@/components/ui/switch';
@@ -34,6 +34,14 @@ interface LogEntry {
 }
 
 export type StarSelectionMode = 'auto' | 'manual';
+
+// Application-wide Star interface
+export interface Star {
+  x: number;
+  y: number;
+  brightness: number;
+  isManuallyAdded?: boolean;
+}
 
 export interface ImageStarEntry {
   id: string;
@@ -72,17 +80,20 @@ const PROGRESS_INITIAL_SETUP = 5;
 const PROGRESS_CENTROID_CALCULATION_TOTAL = 30;
 const PROGRESS_BANDED_STACKING_TOTAL = 65;
 
-const DEFAULT_STAR_BRIGHTNESS_THRESHOLD_COMBINED = 200;
-const DEFAULT_STAR_LOCAL_CONTRAST_FACTOR = 1.6;
+// Constants for PSF-based star detection pipeline
+const DEFAULT_PSF_FWHM = 2.5;
+const DEFAULT_PSF_KERNEL_SIZE = 7; // Must be odd
+const DEFAULT_PSF_DETECTION_THRESHOLD = 50; // On convolved 0-255 grayscale image
+
 const BRIGHTNESS_CENTROID_FALLBACK_THRESHOLD_GRAYSCALE_EQUIVALENT = 30;
 
 const STAR_ANNOTATION_MAX_DISPLAY_WIDTH = 500;
 const STAR_CLICK_TOLERANCE_ON_DISPLAY_CANVAS_PX = 10;
-const MANUAL_STAR_CLICK_CENTROID_RADIUS = 10; // Pixels in analysis image space
-const MANUAL_STAR_CLICK_CENTROID_BRIGHTNESS_THRESHOLD = 30; // Grayscale brightness for local centroid
+const MANUAL_STAR_CLICK_CENTROID_RADIUS = 10; 
+const MANUAL_STAR_CLICK_CENTROID_BRIGHTNESS_THRESHOLD = 30; 
 
-const AUTO_DETECT_STAR_REFINEMENT_RADIUS = 5; // Pixels in analysis image space for auto-detection refinement
-const AUTO_DETECT_STAR_REFINEMENT_BRIGHTNESS_THRESHOLD = 30; // Grayscale brightness for auto-detection refinement
+const AUTO_DETECT_STAR_REFINEMENT_RADIUS = 5; 
+const AUTO_DETECT_STAR_REFINEMENT_BRIGHTNESS_THRESHOLD = 30; 
 
 const IS_LARGE_IMAGE_THRESHOLD_MP = 12;
 const MAX_DIMENSION_DOWNSCALED = 2048;
@@ -90,8 +101,6 @@ const MAX_DIMENSION_DOWNSCALED = 2048;
 const FLAT_FIELD_CORRECTION_MAX_SCALE_FACTOR = 5;
 const ASPECT_RATIO_TOLERANCE = 0.01;
 
-const PRE_ANALYSIS_GAUSSIAN_BLUR_SIGMA = 1.0;
-const PRE_ANALYSIS_GAUSSIAN_BLUR_KERNEL_SIZE = 5; // Should be odd
 
 const yieldToEventLoop = async (delayMs: number) => {
   await new Promise(resolve => setTimeout(resolve, delayMs));
@@ -159,16 +168,18 @@ const applyImageAdjustmentsToDataURL = async (
 };
 
 
-// PSF related types and functions from user
-type NumericImage = number[][];
+// --- New PSF Star Detection Pipeline Functions ---
+type DetectedPSFStar = { x: number; y: number; value: number }; // Local type for the new pipeline
+type GrayscaleImageArray = number[][];
 
-interface PSFConfig {
-  sigma: number;  // standard deviation of the PSF
-  size: number;   // kernel size (odd number)
-}
-
-function generateGaussianPSF({ sigma, size }: PSFConfig): number[][] {
-  const kernel: number[][] = [];
+function createPSF(
+  size: number,
+  fwhm: number,
+  amplitude = 1.0,
+  normalize = true
+): GrayscaleImageArray {
+  const sigma = fwhm / 2.3548;
+  const kernel: GrayscaleImageArray = [];
   const center = Math.floor(size / 2);
   const sigma2 = 2 * sigma * sigma;
   let sum = 0;
@@ -178,208 +189,132 @@ function generateGaussianPSF({ sigma, size }: PSFConfig): number[][] {
     for (let x = 0; x < size; x++) {
       const dx = x - center;
       const dy = y - center;
-      const value = Math.exp(-(dx * dx + dy * dy) / sigma2);
+      const value = amplitude * Math.exp(-(dx * dx + dy * dy) / sigma2);
       kernel[y][x] = value;
       sum += value;
     }
   }
 
-  // Normalize kernel
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      kernel[y][x] /= sum;
+  if (normalize) {
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        kernel[y][x] /= sum;
+      }
     }
   }
   return kernel;
 }
 
-function convolveImage(image: NumericImage, kernel: number[][], addLog?: (message: string) => void): NumericImage {
+function getGrayscaleImageDataFromContext(ctx: CanvasRenderingContext2D, addLog: (message: string) => void): GrayscaleImageArray {
+  const { width, height } = ctx.canvas;
+  addLog(`[PSF PIPE] Converting canvas ${width}x${height} to grayscale array.`);
+  const imgData = ctx.getImageData(0, 0, width, height).data;
+  const gray: GrayscaleImageArray = [];
+
+  for (let y = 0; y < height; y++) {
+    gray[y] = [];
+    for (let x = 0; x < width; x++) {
+      const i = (y * width + x) * 4;
+      const r = imgData[i];
+      const g = imgData[i + 1];
+      const b = imgData[i + 2];
+      gray[y][x] = 0.299 * r + 0.587 * g + 0.114 * b; // Luminance
+    }
+  }
+  addLog(`[PSF PIPE] Grayscale conversion complete.`);
+  return gray;
+}
+
+function convolveGrayscaleImage(image: GrayscaleImageArray, kernel: GrayscaleImageArray, addLog: (message: string) => void): GrayscaleImageArray {
   const height = image.length;
-  const width = image[0]?.length || 0; // Handle empty image case
+  const width = image[0]?.length || 0;
   if (width === 0 || height === 0) {
-    addLog?.("[CONVOLVE WARN] convolveImage called with empty image.");
+    addLog("[PSF PIPE WARN] convolveGrayscaleImage called with empty image.");
     return [];
   }
 
   const kSize = kernel.length;
   const kHalf = Math.floor(kSize / 2);
-  const result: NumericImage = Array.from({ length: height }, () => Array(width).fill(0));
+  const result: GrayscaleImageArray = Array.from({ length: height }, () => Array(width).fill(0));
 
-  // addLog?.(`[CONVOLVE] Starting convolution. Image: ${width}x${height}, Kernel: ${kSize}x${kSize}.`);
+  addLog(`[PSF PIPE] Starting convolution. Image: ${width}x${height}, Kernel: ${kSize}x${kSize}.`);
   // const startTime = performance.now();
 
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
+  for (let y = kHalf; y < height - kHalf; y++) {
+    for (let x = kHalf; x < width - kHalf; x++) {
       let sum = 0;
       for (let ky = 0; ky < kSize; ky++) {
         for (let kx = 0; kx < kSize; kx++) {
           const iy = y + ky - kHalf;
           const ix = x + kx - kHalf;
-          // Simple edge handling: replicate border pixel
-          const clampedY = Math.max(0, Math.min(height - 1, iy));
-          const clampedX = Math.max(0, Math.min(width - 1, ix));
-          
-          if (image[clampedY] && image[clampedY][clampedX] !== undefined) {
-            sum += image[clampedY][clampedX] * kernel[ky][kx];
-          }
+          // This assumes iy, ix are within bounds of `image` due to outer loop limits
+          sum += image[iy][ix] * kernel[ky][kx];
         }
       }
-      if (result[y]) {
-        result[y][x] = sum;
-      }
+      result[y][x] = sum;
     }
   }
   // const endTime = performance.now();
-  // addLog?.(`[CONVOLVE] Convolution took ${(endTime - startTime).toFixed(2)} ms.`);
+  addLog(`[PSF PIPE] Convolution complete.`); // Took ${(endTime - startTime).toFixed(2)} ms.`);
   return result;
 }
 
-
-function imageDataToGrayscaleArray(imageData: ImageData, addLog?: (message: string) => void): NumericImage {
-  const { data, width, height } = imageData;
-  const grayscaleArray: NumericImage = [];
-  // addLog?.(`[GRAYSCALE] Converting ImageData ${width}x${height} to grayscale array.`);
-
-  for (let y = 0; y < height; y++) {
-    grayscaleArray[y] = [];
-    for (let x = 0; x < width; x++) {
-      const i = (y * width + x) * 4;
-      const r = data[i];
-      const g = data[i + 1];
-      const b = data[i + 2];
-      // Using luminance formula
-      grayscaleArray[y][x] = 0.299 * r + 0.587 * g + 0.114 * b;
-    }
-  }
-  // addLog?.("[GRAYSCALE] Conversion to grayscale array complete.");
-  return grayscaleArray;
-}
-
-function grayscaleArrayToImageData(grayscaleArray: NumericImage, width: number, height: number, addLog?: (message: string) => void): ImageData {
-  const imageData = new ImageData(width, height);
-  const data = imageData.data;
-  // addLog?.(`[GRAYSCALE_TO_IMGDATA] Converting grayscale array ${width}x${height} back to ImageData.`);
-
-  let minVal = Infinity;
-  let maxVal = -Infinity;
-
-  if (height > 0 && width > 0 && grayscaleArray[0] !== undefined) {
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        const val = grayscaleArray[y]?.[x] || 0;
-        if (val < minVal) minVal = val;
-        if (val > maxVal) maxVal = val;
-      }
-    }
-  } else {
-    minVal = 0; maxVal = 0; // Handle empty or malformed array
-     addLog?.("[GRAYSCALE_TO_IMGDATA WARN] Input grayscaleArray is empty or malformed. Outputting black image.");
-  }
-
-  const range = maxVal - minVal;
-
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      const i = (y * width + x) * 4;
-      let val = grayscaleArray[y]?.[x] || 0;
-      
-      let normalizedVal = 0;
-      if (range > 0) {
-        normalizedVal = ((val - minVal) / range) * 255;
-      } else if (maxVal > 0) { // If range is 0 but there's some value (e.g. all pixels are 100)
-        normalizedVal = (val / maxVal) * 255; // Normalize assuming min is 0
-      } // Else, it remains 0 if all values are 0 or minVal = maxVal = 0.
-
-
-      data[i] = normalizedVal;     // R
-      data[i + 1] = normalizedVal; // G
-      data[i + 2] = normalizedVal; // B
-      data[i + 3] = 255;           // Alpha
-    }
-  }
-  // addLog?.("[GRAYSCALE_TO_IMGDATA] Conversion to ImageData complete.");
-  return imageData;
-}
-
-
-function detectStars(
-  imageData: ImageData,
-  addLog: (message: string) => void,
-  brightnessThresholdCombined: number = DEFAULT_STAR_BRIGHTNESS_THRESHOLD_COMBINED,
-  localContrastFactor: number = DEFAULT_STAR_LOCAL_CONTRAST_FACTOR
-): Star[] {
-  const stars: Star[] = [];
-  const { data, width, height } = imageData;
+function detectStarsFromConvolvedImage(image: GrayscaleImageArray, threshold: number, addLog: (message: string) => void): DetectedPSFStar[] {
+  const stars: DetectedPSFStar[] = [];
+  const height = image.length;
+  const width = image[0]?.length || 0;
 
   if (width === 0 || height === 0) {
-    addLog("[DETECT WARN] detectStars called with zero-dimension imageData.");
-    return stars;
+    addLog("[PSF PIPE WARN] detectStarsFromConvolvedImage called with empty image.");
+    return [];
   }
+  addLog(`[PSF PIPE] Detecting stars from convolved image ${width}x${height} with threshold ${threshold}.`);
 
-  for (let y = 1; y < height - 1; y++) {
+  for (let y = 1; y < height - 1; y++) { // Iterate within borders to allow neighbor checks
     for (let x = 1; x < width - 1; x++) {
-      const i = (y * width + x) * 4;
-      const r = data[i];
-      const g = data[i + 1];
-      const b = data[i + 2];
-      const currentPixelBrightness = r + g + b;
-
-      if (currentPixelBrightness > brightnessThresholdCombined) {
-        let neighborSumBrightness = 0;
-        let neighborCount = 0;
-        for (let dy = -1; dy <= 1; dy++) {
-          for (let dx = -1; dx <= 1; dx++) {
-            if (dx === 0 && dy === 0) continue;
-            const ni = ((y + dy) * width + (x + dx)) * 4;
-            if (ni >= 0 && ni < data.length -3) {
-                neighborSumBrightness += data[ni] + data[ni + 1] + data[ni + 2];
-                neighborCount++;
-            }
-          }
-        }
-        if (neighborCount === 0) continue;
-        const avgNeighborBrightness = neighborSumBrightness / neighborCount;
-
-        if (currentPixelBrightness > avgNeighborBrightness * localContrastFactor) {
-          let refinedX = x;
-          let refinedY = y;
-
-          const cropRectX = Math.max(0, x - AUTO_DETECT_STAR_REFINEMENT_RADIUS);
-          const cropRectY = Math.max(0, y - AUTO_DETECT_STAR_REFINEMENT_RADIUS);
-          const cropRectWidth = Math.min(
-              width - cropRectX,
-              AUTO_DETECT_STAR_REFINEMENT_RADIUS * 2
-          );
-          const cropRectHeight = Math.min(
-              height - cropRectY,
-              AUTO_DETECT_STAR_REFINEMENT_RADIUS * 2
-          );
-
-          if (cropRectWidth > 0 && cropRectHeight > 0) {
-              const localCentroid = calculateLocalBrightnessCentroid(
-                  imageData,
-                  { x: cropRectX, y: cropRectY, width: cropRectWidth, height: cropRectHeight },
-                  addLog,
-                  AUTO_DETECT_STAR_REFINEMENT_BRIGHTNESS_THRESHOLD
-              );
-
-              if (localCentroid) {
-                  refinedX = cropRectX + localCentroid.x;
-                  refinedY = cropRectY + localCentroid.y;
-              }
-          }
-          stars.push({ x: refinedX, y: refinedY, brightness: currentPixelBrightness });
-        }
+      const value = image[y][x];
+      if (
+        value > threshold &&
+        image[y-1] && image[y+1] && image[y][x-1] !== undefined && image[y][x+1] !== undefined && // Ensure neighbors exist
+        value > image[y - 1][x] &&
+        value > image[y + 1][x] &&
+        value > image[y][x - 1] &&
+        value > image[y][x + 1]
+      ) {
+        stars.push({ x, y, value });
       }
     }
   }
-   if (stars.length > 1000) {
-    addLog(`[DETECT WARN] Detected a large number of stars (${stars.length}) during analysis. Refinement applied.`);
-  } else if (stars.length === 0) {
-    addLog(`[DETECT WARN] No stars detected with current parameters (Combined Threshold: ${brightnessThresholdCombined}, Contrast Factor: ${localContrastFactor}).`);
-  }
+  addLog(`[PSF PIPE] Detected ${stars.length} raw star candidates using local maxima.`);
   return stars;
 }
+
+function findStarsFromCanvas(
+  ctx: CanvasRenderingContext2D,
+  addLog: (message: string) => void,
+  fwhm = DEFAULT_PSF_FWHM,
+  psfSize = DEFAULT_PSF_KERNEL_SIZE,
+  detectionThreshold = DEFAULT_PSF_DETECTION_THRESHOLD
+): DetectedPSFStar[] {
+  addLog(`[PSF PIPE] Starting findStarsFromCanvas. FWHM: ${fwhm}, PSF Size: ${psfSize}, Det. Threshold: ${detectionThreshold}.`);
+  const grayscale = getGrayscaleImageDataFromContext(ctx, addLog);
+  if (grayscale.length === 0 || grayscale[0].length === 0) {
+    addLog("[PSF PIPE ERROR] Grayscale conversion resulted in an empty image.");
+    return [];
+  }
+  const psf = createPSF(psfSize, fwhm);
+  addLog(`[PSF PIPE] PSF kernel ${psfSize}x${psfSize} created.`);
+  const convolved = convolveGrayscaleImage(grayscale, psf, addLog);
+  if (convolved.length === 0 || convolved[0].length === 0) {
+    addLog("[PSF PIPE ERROR] Convolution resulted in an empty image.");
+    return [];
+  }
+  const stars = detectStarsFromConvolvedImage(convolved, detectionThreshold, addLog);
+  addLog(`[PSF PIPE] findStarsFromCanvas finished, found ${stars.length} candidates.`);
+  return stars;
+}
+// --- End of New PSF Star Detection Pipeline Functions ---
+
 
 function calculateStarArrayCentroid(starsInput: Star[], addLog: (message: string) => void): { x: number; y: number } | null {
   if (starsInput.length < MIN_STARS_FOR_ALIGNMENT) {
@@ -1167,7 +1102,7 @@ export default function AstroStackerPage() {
     if (!currentEntry || currentEntry.isAnalyzing) return false;
 
     setAllImageStarData(prev => prev.map((entry, idx) => idx === imageIndex ? { ...entry, isAnalyzing: true } : entry));
-    addLog(`Starting star analysis for: ${currentEntry.file.name} (from previewUrl)...`);
+    addLog(`Starting star analysis for: ${currentEntry.file.name} using PSF pipeline...`);
 
     try {
       const imgEl = await loadImage(currentEntry.previewUrl, currentEntry.file.name);
@@ -1182,29 +1117,73 @@ export default function AstroStackerPage() {
       tempAnalysisCanvas.width = analysisWidth;
       tempAnalysisCanvas.height = analysisHeight;
       tempAnalysisCtx.drawImage(imgEl, 0, 0, analysisWidth, analysisHeight);
-      let analysisImageData = tempAnalysisCtx.getImageData(0, 0, analysisWidth, analysisHeight);
       
-      addLog(`[PRE-ANALYSIS] Applying Gaussian blur (Sigma: ${PRE_ANALYSIS_GAUSSIAN_BLUR_SIGMA}, Kernel: ${PRE_ANALYSIS_GAUSSIAN_BLUR_KERNEL_SIZE}x${PRE_ANALYSIS_GAUSSIAN_BLUR_KERNEL_SIZE}) to ${currentEntry.file.name} before star detection.`);
-      const grayscaleImgArray = imageDataToGrayscaleArray(analysisImageData, addLog);
-      const psfKernel = generateGaussianPSF({ sigma: PRE_ANALYSIS_GAUSSIAN_BLUR_SIGMA, size: PRE_ANALYSIS_GAUSSIAN_BLUR_KERNEL_SIZE });
-      const convolvedGrayscaleImgArray = convolveImage(grayscaleImgArray, psfKernel, addLog);
-      const blurredAnalysisImageData = grayscaleArrayToImageData(convolvedGrayscaleImgArray, analysisWidth, analysisHeight, addLog);
-      addLog(`[PRE-ANALYSIS] Gaussian blur applied. Proceeding with star detection on blurred image.`);
+      // Use the new PSF-based star detection pipeline
+      const psfDetectedStarsRaw = findStarsFromCanvas(
+        tempAnalysisCtx, 
+        addLog, 
+        DEFAULT_PSF_FWHM, 
+        DEFAULT_PSF_KERNEL_SIZE, 
+        DEFAULT_PSF_DETECTION_THRESHOLD
+      );
+      
+      addLog(`PSF pipeline found ${psfDetectedStarsRaw.length} candidates in ${currentEntry.file.name}. Refining positions...`);
 
-      const detectedStars = detectStars(blurredAnalysisImageData, addLog); // Use blurred image for detection
-      addLog(`Auto-detected ${detectedStars.length} stars in ${currentEntry.file.name} (at ${analysisWidth}x${analysisHeight}, after blur).`);
+      // Refine positions using local centroid for each detected star
+      const refinedStars: Star[] = [];
+      const analysisImageData = tempAnalysisCtx.getImageData(0, 0, analysisWidth, analysisHeight); // Get once for all refinements
+
+      for (const rawStar of psfDetectedStarsRaw) {
+        let refinedX = rawStar.x;
+        let refinedY = rawStar.y;
+
+        const cropRectX = Math.max(0, Math.round(rawStar.x) - AUTO_DETECT_STAR_REFINEMENT_RADIUS);
+        const cropRectY = Math.max(0, Math.round(rawStar.y) - AUTO_DETECT_STAR_REFINEMENT_RADIUS);
+        const cropRectWidth = Math.min(
+            analysisWidth - cropRectX,
+            AUTO_DETECT_STAR_REFINEMENT_RADIUS * 2
+        );
+        const cropRectHeight = Math.min(
+            analysisHeight - cropRectY,
+            AUTO_DETECT_STAR_REFINEMENT_RADIUS * 2
+        );
+
+        if (cropRectWidth > 0 && cropRectHeight > 0) {
+            const localCentroid = calculateLocalBrightnessCentroid(
+                analysisImageData, // Use the full image data for local centroid
+                { x: cropRectX, y: cropRectY, width: cropRectWidth, height: cropRectHeight },
+                addLog, // Pass addLog
+                AUTO_DETECT_STAR_REFINEMENT_BRIGHTNESS_THRESHOLD
+            );
+
+            if (localCentroid) {
+                refinedX = cropRectX + localCentroid.x;
+                refinedY = cropRectY + localCentroid.y;
+            }
+        }
+        refinedStars.push({ x: refinedX, y: refinedY, brightness: rawStar.value });
+      }
+      
+      addLog(`Auto-detected and refined ${refinedStars.length} stars in ${currentEntry.file.name} (at ${analysisWidth}x${analysisHeight}).`);
+      
+      if (refinedStars.length > 1000) {
+        addLog(`[DETECT WARN] Detected a large number of stars (${refinedStars.length}) after PSF pipeline and refinement.`);
+      } else if (refinedStars.length === 0) {
+        addLog(`[DETECT WARN] No stars detected with current PSF pipeline parameters (FWHM: ${DEFAULT_PSF_FWHM}, Kernel: ${DEFAULT_PSF_KERNEL_SIZE}, Threshold: ${DEFAULT_PSF_DETECTION_THRESHOLD}).`);
+      }
+
 
       setAllImageStarData(prev => prev.map((entry, idx) => {
         if (idx === imageIndex) {
           const newEntry = {
             ...entry,
-            initialAutoStars: [...detectedStars],
+            initialAutoStars: [...refinedStars], // Store the refined stars
             analysisDimensions: { width: analysisWidth, height: analysisHeight },
             isAnalyzed: true,
             isAnalyzing: false,
           };
           if (newEntry.starSelectionMode === 'auto' || (newEntry.starSelectionMode === 'manual' && !newEntry.userReviewed)) {
-            newEntry.analysisStars = [...detectedStars];
+            newEntry.analysisStars = [...refinedStars];
           }
           return newEntry;
         }
@@ -1418,7 +1397,7 @@ export default function AstroStackerPage() {
           const newStar: Star = {
             x: finalStarX,
             y: finalStarY,
-            brightness: DEFAULT_STAR_BRIGHTNESS_THRESHOLD_COMBINED + 1, 
+            brightness: DEFAULT_PSF_DETECTION_THRESHOLD + 1, // Use a default brightness, can be refined
             isManuallyAdded: true,
           };
           updatedStars.push(newStar);
@@ -1646,7 +1625,7 @@ export default function AstroStackerPage() {
     addLog(`Dark Frames: ${useDarkFrames && darkFrameFiles.length > 0 ? `${darkFrameFiles.length} frame(s)` : 'Not Used'}.`);
     addLog(`Flat Frames: ${useFlatFrames && flatFrameFiles.length > 0 ? `${flatFrameFiles.length} frame(s)` : 'Not Used'}.`);
     addLog(`Star Alignment: Min Stars = ${MIN_STARS_FOR_ALIGNMENT}, Auto Target Count = ${AUTO_ALIGN_TARGET_STAR_COUNT}.`);
-    addLog(`Star Detection Params: Combined Brightness Threshold = ${DEFAULT_STAR_BRIGHTNESS_THRESHOLD_COMBINED}, Local Contrast Factor = ${DEFAULT_STAR_LOCAL_CONTRAST_FACTOR}.`);
+    addLog(`Star Detection (PSF Pipeline): FWHM=${DEFAULT_PSF_FWHM}, KernelSize=${DEFAULT_PSF_KERNEL_SIZE}, DetThreshold=${DEFAULT_PSF_DETECTION_THRESHOLD}.`);
     addLog(`Auto-Detect Refinement: Radius = ${AUTO_DETECT_STAR_REFINEMENT_RADIUS}px, Threshold = ${AUTO_DETECT_STAR_REFINEMENT_BRIGHTNESS_THRESHOLD}.`);
     addLog(`Brightness Centroid Fallback Threshold: ${BRIGHTNESS_CENTROID_FALLBACK_THRESHOLD_GRAYSCALE_EQUIVALENT} (grayscale equivalent).`);
 
@@ -2726,5 +2705,6 @@ export default function AstroStackerPage() {
     </div>
   );
 }
-
     
+
+      
