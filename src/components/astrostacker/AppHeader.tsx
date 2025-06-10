@@ -46,8 +46,18 @@ export function AppHeader() {
           >
             {t('switchToChinese')}
           </Button>
+          <Button
+            variant={language === 'ja' ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => handleLanguageChange('ja')}
+            className="text-xs px-2 py-1 h-auto"
+          >
+            {t('switchToJapanese')}
+          </Button>
         </div>
       </div>
     </header>
   );
 }
+
+    
