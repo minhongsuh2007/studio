@@ -1,6 +1,7 @@
 
 "use client";
 
+import type React from 'react'; // Ensure React is imported if JSX is used
 import Image from 'next/image';
 import { X, Edit3, Loader2, CheckCircle, Orbit, Settings2, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -13,13 +14,13 @@ interface ImageQueueItemProps {
   id: string;
   file: File;
   previewUrl: string;
-  isAnalyzing: boolean;
+  isAnalyzing: boolean; // This will now directly reflect the entry's isAnalyzing state
   isReviewed: boolean; 
   starSelectionMode: StarSelectionMode;
   onRemove: () => void;
   onEditStars: () => void;
   onToggleStarSelectionMode: () => void;
-  isProcessing: boolean; 
+  isProcessing: boolean; // Overall app processing state (e.g., stacking)
   isAnalyzed: boolean;
   analysisDimensions: { width: number; height: number };
 }
@@ -28,13 +29,13 @@ export function ImageQueueItem({
   id,
   file,
   previewUrl,
-  isAnalyzing,
+  isAnalyzing, // Simplified: directly use the isAnalyzing prop from the parent
   isReviewed,
   starSelectionMode,
   onRemove,
   onEditStars,
   onToggleStarSelectionMode,
-  isProcessing,
+  isProcessing, // General processing lock
   isAnalyzed,
   analysisDimensions
 }: ImageQueueItemProps) {
@@ -68,7 +69,7 @@ export function ImageQueueItem({
                 <CheckCircle className="h-3 w-3" />
             </div>
         )}
-         {isAnalyzing && (
+         {isAnalyzing && ( // Directly use the isAnalyzing prop
              <div className="absolute bottom-1 left-1 bg-background/80 text-foreground p-1 rounded-sm text-xs flex items-center">
                 <Loader2 className="mr-1 h-3 w-3 animate-spin" /> Analyzing...
              </div>
@@ -103,16 +104,16 @@ export function ImageQueueItem({
             variant="outline"
             size="sm"
             onClick={onEditStars}
-            disabled={isProcessing || isAnalyzing || !analysisDimensions } // Disable if no dimensions yet
+            disabled={isProcessing || isAnalyzing || (!isAnalyzed && !isAnalyzing) } // Only disable if truly not analyzed OR currently analyzing.
             className="w-full"
             title={isAnalyzing ? "Analyzing..." : (isManualMode ? (isReviewed ? "Re-edit Manual Stars" : "Edit Manual Stars") : "Review/Edit (Switches to Manual)")}
           >
-            {isAnalyzing && starSelectionMode === 'manual' ? ( 
+            {isAnalyzing ? ( 
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
             ) : (
                 <Edit3 className="mr-2 h-4 w-4" />
             )}
-            {isAnalyzing && starSelectionMode === 'manual' ? "Analyzing..." : (isManualMode ? (isReviewed ? "Re-Edit" : "Edit Stars") : "Review/Edit")}
+            {isAnalyzing ? "Analyzing..." : (isManualMode ? (isReviewed ? "Re-Edit" : "Edit Stars") : "Review/Edit")}
           </Button>
       </CardFooter>
     </Card>

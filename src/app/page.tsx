@@ -108,7 +108,7 @@ const DETECTOR_MIN_CONTRAST = 20;
 const DETECTOR_MIN_BRIGHTNESS = 40;
 const DETECTOR_MAX_BRIGHTNESS = 220; // Stars brighter than this might be saturated or too large
 const DETECTOR_MIN_DISTANCE = 6; // Minimum pixels between star centers
-const DETECTOR_MAX_STARS = 10; // Reduced for performance, was 75
+const DETECTOR_MAX_STARS = 10; 
 const DETECTOR_MIN_FWHM = 1.5;
 const DETECTOR_MAX_FWHM = 5.0;
 const DETECTOR_ANNULUS_INNER_RADIUS = 4; // For background estimation
@@ -1234,9 +1234,10 @@ export default function AstroStackerPage() {
 
 
   const analyzeImageForStars = async (
-    entryToAnalyze: ImageStarEntry,
+    entryToAnalyze: ImageStarEntry, // This is a snapshot
     localAddLog: (message: string) => void
   ): Promise<ImageStarEntry> => {
+    // Mark as analyzing and clear previous analyzed state FOR THIS ITEM
     setAllImageStarData(prev =>
       prev.map(e =>
         e.id === entryToAnalyze.id
@@ -1246,11 +1247,11 @@ export default function AstroStackerPage() {
     );
   
     let processedEntryData: Partial<ImageStarEntry> = {
-      analysisStars: [...entryToAnalyze.analysisStars],
-      initialAutoStars: [...entryToAnalyze.initialAutoStars],
+      analysisStars: [], 
+      initialAutoStars: [], 
       analysisDimensions: entryToAnalyze.analysisDimensions || { width: 0, height: 0 },
-      userReviewed: entryToAnalyze.userReviewed,
-      starSelectionMode: entryToAnalyze.starSelectionMode,
+      userReviewed: entryToAnalyze.userReviewed, 
+      starSelectionMode: entryToAnalyze.starSelectionMode, 
     };
   
     try {
@@ -1293,12 +1294,17 @@ export default function AstroStackerPage() {
       }));
   
       processedEntryData.initialAutoStars = [...finalStars];
-      processedEntryData.analysisDimensions = { width: analysisWidth, height: analysisHeight }; // ensure dimensions are updated
+      processedEntryData.analysisDimensions = { width: analysisWidth, height: analysisHeight }; 
       
       if (entryToAnalyze.starSelectionMode === 'auto') {
         processedEntryData.analysisStars = [...finalStars];
+      } else { 
+         if(entryToAnalyze.analysisStars && entryToAnalyze.analysisStars.length > 0){
+             processedEntryData.analysisStars = [...entryToAnalyze.analysisStars];
+         } else { 
+             processedEntryData.analysisStars = [...finalStars];
+         }
       }
-      // If manual mode, analysisStars are preserved unless explicitly changed by user later.
       
       processedEntryData.isAnalyzed = true;
       localAddLog(`[ANALYZE] Analysis successful for ${entryToAnalyze.file.name}. isAnalyzed set to true.`);
@@ -1307,19 +1313,19 @@ export default function AstroStackerPage() {
       const errorMessage = error instanceof Error ? error.message : String(error);
       localAddLog(`[ANALYZE ERROR] Analysis failed for ${entryToAnalyze.file.name}: ${errorMessage}`);
       toast({ title: `Analysis Failed for ${entryToAnalyze.file.name}`, description: errorMessage, variant: "destructive" });
-      processedEntryData.isAnalyzed = false;
+      processedEntryData.isAnalyzed = false; 
     }
     
     const finalUpdatedEntry: ImageStarEntry = {
-      ...entryToAnalyze,
-      ...processedEntryData,
+      ...entryToAnalyze, 
+      ...processedEntryData, 
       isAnalyzing: false, 
     };
     
     setAllImageStarData(prev => prev.map(e => (e.id === finalUpdatedEntry.id ? finalUpdatedEntry : e)));
     
     localAddLog(`[ANALYZE FINAL STATE] For ${finalUpdatedEntry.file.name}: isAnalyzed=${finalUpdatedEntry.isAnalyzed}, isAnalyzing=${finalUpdatedEntry.isAnalyzing}, AutoStars=${finalUpdatedEntry.initialAutoStars.length}, AnalysisStars=${finalUpdatedEntry.analysisStars.length}`);
-    return finalUpdatedEntry;
+    return finalUpdatedEntry; 
   }
 
 
@@ -1345,21 +1351,20 @@ export default function AstroStackerPage() {
     };
 
     if (newMode === 'auto') {
-      updatedEntry.analysisStars = [...updatedEntry.initialAutoStars]; // Revert to auto-detected stars
+      updatedEntry.analysisStars = [...updatedEntry.initialAutoStars]; 
       setAllImageStarData(prev => prev.map(e => e.id === imageId ? updatedEntry : e));
-    } else { // Switching to manual
-        // If no manual stars yet, and auto stars exist, copy them as a starting point
+    } else { 
         if ((!updatedEntry.analysisStars || updatedEntry.analysisStars.length === 0) && updatedEntry.initialAutoStars.length > 0) {
            updatedEntry.analysisStars = [...updatedEntry.initialAutoStars];
         }
         setAllImageStarData(prev => prev.map(e => e.id === imageId ? updatedEntry : e));
         
-        // If switching to manual and it hasn't been analyzed yet (or analysis dimensions missing), trigger analysis.
-        if (!updatedEntry.isAnalyzed && !updatedEntry.isAnalyzing) {
-            addLog(`Image ${updatedEntry.file.name} switched to manual mode, and needs analysis. Analyzing now...`);
-            // Use the state from setAllImageStarData for consistency if it's quick, or re-fetch from allImageStarData
-            const freshEntry = allImageStarData.find(e => e.id === imageId) || updatedEntry;
-            await analyzeImageForStars(freshEntry, addLog);
+        // It's important to get the entry *after* the state update if we are to pass it to analyzeImageForStars
+        // Or, ensure `updatedEntry` is the one passed.
+        const entryAfterModeToggle = allImageStarData.find(e => e.id === imageId) || updatedEntry;
+        if (!entryAfterModeToggle.isAnalyzed && !entryAfterModeToggle.isAnalyzing) {
+            addLog(`Image ${entryAfterModeToggle.file.name} switched to manual mode, and needs analysis. Analyzing now...`);
+            await analyzeImageForStars(entryAfterModeToggle, addLog); // analyzeImageForStars updates global state
         }
     }
   };
@@ -1368,87 +1373,93 @@ export default function AstroStackerPage() {
     const currentEntryFromState = allImageStarData[imageIndex];
     if (!currentEntryFromState) return;
 
-    setCurrentEditingImageData(null); 
+    setCurrentEditingImageData(null);
 
-    let entryForEditing = {...currentEntryFromState};
+    let entryForEditing = { ...currentEntryFromState };
 
     if (entryForEditing.starSelectionMode === 'auto' ||
         (entryForEditing.starSelectionMode === 'manual' && !entryForEditing.userReviewed && entryForEditing.analysisStars.length === 0)) {
-      addLog(`Preparing ${entryForEditing.file.name} for manual editing (or unreviewed manual). Mode set to manual.`);
-      entryForEditing.starSelectionMode = 'manual'; 
-      if (entryForEditing.initialAutoStars.length > 0) { 
-          entryForEditing.analysisStars = [...entryForEditing.initialAutoStars]; 
-      }
-      entryForEditing.userReviewed = false; 
-      setAllImageStarData(prev => prev.map((e, idx) => idx === imageIndex ? entryForEditing : e));
-      entryForEditing = allImageStarData.find(e => e.id === entryForEditing.id) || entryForEditing;
+        addLog(`Preparing ${entryForEditing.file.name} for manual editing. Mode set to manual.`);
+        
+        const updatedFields: Partial<ImageStarEntry> = { starSelectionMode: 'manual', userReviewed: false };
+        if (entryForEditing.initialAutoStars.length > 0 && entryForEditing.analysisStars.length === 0) {
+            updatedFields.analysisStars = [...entryForEditing.initialAutoStars];
+        }
+        
+        setAllImageStarData(prev => prev.map((e, idx) => idx === imageIndex ? { ...e, ...updatedFields } : e));
+        // Ensure entryForEditing reflects these immediate changes for the next step
+        entryForEditing = { ...entryForEditing, ...updatedFields };
     }
-
 
     if (!entryForEditing.isAnalyzed && !entryForEditing.isAnalyzing) {
-      addLog(`Analyzing ${entryForEditing.file.name} before editing stars.`);
-      // Pass the entry *as it is currently in the state before this analysis call*
-      const entryBeforeAnalysis = allImageStarData.find(e => e.id === entryForEditing.id) || entryForEditing;
-      const processedEntry = await analyzeImageForStars({...entryBeforeAnalysis, starSelectionMode: 'manual'}, addLog);
-      
-      // After analysis, get the latest state of this entry from the global state
-      const finalEntryAfterAnalysis = allImageStarData.find(e => e.id === processedEntry.id);
-      if (!finalEntryAfterAnalysis || !finalEntryAfterAnalysis.isAnalyzed) {
-        toast({title: "Analysis Failed", description: `Could not analyze ${entryForEditing.file.name}. Cannot edit stars.`, variant: "destructive"});
-        return; 
-      }
-      entryForEditing = finalEntryAfterAnalysis; 
-
+        addLog(`Analyzing ${entryForEditing.file.name} before editing stars.`);
+        // Pass a snapshot that ensures mode is manual for analyzeImageForStars logic
+        const entrySnapshotForAnalysis = { ...entryForEditing, starSelectionMode: 'manual' as StarSelectionMode };
+        const processedEntry = await analyzeImageForStars(entrySnapshotForAnalysis, addLog);
+        
+        // Use the direct result from analyzeImageForStars as it's the most up-to-date
+        if (!processedEntry.isAnalyzed) {
+            toast({ title: "Analysis Failed", description: `Could not analyze ${entryForEditing.file.name}. Cannot edit stars.`, variant: "destructive" });
+            return;
+        }
+        entryForEditing = processedEntry; 
     } else if (entryForEditing.isAnalyzing) {
-      toast({title: "Analysis in Progress", description: `Still analyzing ${entryForEditing.file.name}. Please wait.`});
-      return;
+        toast({ title: "Analysis in Progress", description: `Still analyzing ${entryForEditing.file.name}. Please wait.` });
+        return;
     }
     
-    // Get the absolute latest version of the entry for editing after any potential state updates
-    const finalEntryForEditing = allImageStarData.find(e => e.id === entryForEditing.id) || entryForEditing;
-
+    const finalEntryForEditing = entryForEditing; 
 
     if (finalEntryForEditing && finalEntryForEditing.isAnalyzed && finalEntryForEditing.analysisDimensions && finalEntryForEditing.analysisDimensions.width > 0) {
-      let starsToEdit = [...finalEntryForEditing.analysisStars];
-      if (finalEntryForEditing.starSelectionMode !== 'manual') {
-        setAllImageStarData(prev => prev.map((e, idx) =>
-            idx === imageIndex ? {...e, starSelectionMode: 'manual' } : e
-        ));
-      }
-      if (starsToEdit.length === 0 && finalEntryForEditing.initialAutoStars.length > 0) {
-          starsToEdit = [...finalEntryForEditing.initialAutoStars];
-          addLog(`Populating editor for ${finalEntryForEditing.file.name} with ${starsToEdit.length} auto-detected stars as a base for manual editing.`);
-          setAllImageStarData(prev => prev.map((e, idx) =>
-              idx === imageIndex ? {...e, analysisStars: starsToEdit } : e
-          ));
-      }
+        let starsToEdit = [...finalEntryForEditing.analysisStars];
+        let needsGlobalUpdateForEditPrep = false;
+        const updatedFieldsForEditPrep: Partial<ImageStarEntry> = {};
+
+        if (finalEntryForEditing.starSelectionMode !== 'manual') {
+            updatedFieldsForEditPrep.starSelectionMode = 'manual';
+            needsGlobalUpdateForEditPrep = true;
+        }
+        if (starsToEdit.length === 0 && finalEntryForEditing.initialAutoStars.length > 0) {
+            starsToEdit = [...finalEntryForEditing.initialAutoStars];
+            updatedFieldsForEditPrep.analysisStars = starsToEdit;
+            addLog(`Populating editor for ${finalEntryForEditing.file.name} with ${starsToEdit.length} auto-detected stars as a base for manual editing.`);
+            needsGlobalUpdateForEditPrep = true;
+        }
+
+        if (needsGlobalUpdateForEditPrep) {
+             setAllImageStarData(prev => prev.map((e, idx) =>
+                idx === imageIndex ? { ...e, ...updatedFieldsForEditPrep } : e
+            ));
+        }
       
-      const imgToEdit = new Image();
-      imgToEdit.onload = () => {
-          const tempCanvas = document.createElement('canvas');
-          tempCanvas.width = finalEntryForEditing.analysisDimensions.width;
-          tempCanvas.height = finalEntryForEditing.analysisDimensions.height;
-          const tempCtx = tempCanvas.getContext('2d', { willReadFrequently: true });
-          if (tempCtx) {
-              tempCtx.drawImage(imgToEdit, 0, 0, tempCanvas.width, tempCanvas.height);
-              setCurrentEditingImageData(tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height));
-              addLog(`Loaded ImageData (${tempCanvas.width}x${tempCanvas.height}) for ${finalEntryForEditing.file.name} for precise star editing.`);
-          } else {
-              setCurrentEditingImageData(null); 
-              addLog(`[WARN] Could not get canvas context to load ImageData for ${finalEntryForEditing.file.name}. Precise click refinement disabled.`);
-              toast({title: "Warning", description: `Could not prepare image data for ${finalEntryForEditing.file.name}. Precise click refinement disabled.`});
-          }
-          setCurrentEditingImageIndex(imageIndex);
-          setIsStarEditingMode(true);
-          addLog(`Opened star editor for ${finalEntryForEditing.file.name}. Mode: Manual. Initial stars for edit: ${starsToEdit.length}. Dim: ${finalEntryForEditing.analysisDimensions.width}x${finalEntryForEditing.analysisDimensions.height}`);
-      };
-      imgToEdit.onerror = () => {
-          setCurrentEditingImageData(null); 
-          addLog(`[ERROR] Failed to load image ${finalEntryForEditing.file.name} for ImageData preparation for editor.`);
-          toast({title: "Editor Error", description: `Could not load image ${finalEntryForEditing.file.name} for editing stars.`, variant: "destructive"});
-          setIsStarEditingMode(false); 
-      };
-      imgToEdit.src = finalEntryForEditing.previewUrl; 
+        const imgToEdit = new Image();
+        imgToEdit.onload = () => {
+            const tempCanvas = document.createElement('canvas');
+            // Use dimensions from finalEntryForEditing which should be correct after any analysis
+            tempCanvas.width = finalEntryForEditing.analysisDimensions.width;
+            tempCanvas.height = finalEntryForEditing.analysisDimensions.height;
+            const tempCtx = tempCanvas.getContext('2d', { willReadFrequently: true });
+            if (tempCtx) {
+                tempCtx.drawImage(imgToEdit, 0, 0, tempCanvas.width, tempCanvas.height);
+                setCurrentEditingImageData(tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height));
+                addLog(`Loaded ImageData (${tempCanvas.width}x${tempCanvas.height}) for ${finalEntryForEditing.file.name} for precise star editing.`);
+            } else {
+                setCurrentEditingImageData(null); 
+                addLog(`[WARN] Could not get canvas context to load ImageData for ${finalEntryForEditing.file.name}. Precise click refinement disabled.`);
+                toast({title: "Warning", description: `Could not prepare image data for ${finalEntryForEditing.file.name}. Precise click refinement disabled.`});
+            }
+            setCurrentEditingImageIndex(imageIndex);
+            setIsStarEditingMode(true);
+            // Use starsToEdit which reflects the correct stars for the editor
+            addLog(`Opened star editor for ${finalEntryForEditing.file.name}. Mode: Manual. Initial stars for edit: ${starsToEdit.length}. Dim: ${finalEntryForEditing.analysisDimensions.width}x${finalEntryForEditing.analysisDimensions.height}`);
+        };
+        imgToEdit.onerror = () => {
+            setCurrentEditingImageData(null); 
+            addLog(`[ERROR] Failed to load image ${finalEntryForEditing.file.name} for ImageData preparation for editor.`);
+            toast({title: "Editor Error", description: `Could not load image ${finalEntryForEditing.file.name} for editing stars.`, variant: "destructive"});
+            setIsStarEditingMode(false); 
+        };
+        imgToEdit.src = finalEntryForEditing.previewUrl; 
 
     } else {
        console.warn(`Cannot edit stars for ${finalEntryForEditing?.file?.name || 'image'}: Analysis data (isAnalyzed=${finalEntryForEditing?.isAnalyzed}), dimension data (${finalEntryForEditing?.analysisDimensions?.width}x${finalEntryForEditing?.analysisDimensions?.height}), or preview URL might be incomplete or loading failed.`);
@@ -1779,38 +1790,50 @@ export default function AstroStackerPage() {
     }
 
     try {
-    setProgressPercent(PROGRESS_INITIAL_SETUP);
-    addLog(`Initial setup complete. Progress: ${PROGRESS_INITIAL_SETUP}%.`);
-
-    addLog(`Starting pre-stack analysis if needed...`);
-    const idsThatNeedAnalysis = allImageStarData
-        .filter(entry => !entry.isAnalyzed && !entry.isAnalyzing)
-        .map(entry => entry.id);
-
-    if (idsThatNeedAnalysis.length > 0) {
-        addLog(`Found ${idsThatNeedAnalysis.length} images requiring analysis: ${idsThatNeedAnalysis.join(', ')}`);
-        for (const imageId of idsThatNeedAnalysis) {
-            // Find the entry from the most current state in case previous analyses in this loop updated it.
-            const entryToAnalyze = allImageStarData.find(e => e.id === imageId);
-            if (entryToAnalyze) { 
-                addLog(`Analyzing image ${entryToAnalyze.file.name} (ID: ${entryToAnalyze.id}) for stacking process.`);
-                await analyzeImageForStars(entryToAnalyze, addLog); 
-            }
-        }
-    }  else {
-        addLog("No images require pre-stack analysis.");
-    }
-    
-    // Cleanup: Ensure no image is stuck in 'isAnalyzing' state from a previous, unrelated run.
-    // This primarily addresses UI state rather than data for the current stack.
-    setAllImageStarData(prevData => prevData.map(entry => {
-        if (entry.isAnalyzing && !idsThatNeedAnalysis.includes(entry.id)) { // Check if it was part of the current batch
-            addLog(`[STACK PREP] Clearing stale 'isAnalyzing' flag for ${entry.file.name}. It was not part of the current analysis batch.`);
-            return { ...entry, isAnalyzing: false }; 
-        }
-        return entry;
-    }));
-    addLog("Pre-stack analysis/preparation phase complete.");
+      setProgressPercent(PROGRESS_INITIAL_SETUP);
+      addLog(`Initial setup complete. Progress: ${PROGRESS_INITIAL_SETUP}%.`);
+  
+      addLog(`Starting pre-stack analysis if needed...`);
+      
+      // Step 1: Identify images needing analysis based on the current global state.
+      const imagesRequiringAnalysis = allImageStarData.filter(
+          entry => !entry.isAnalyzed && !entry.isAnalyzing
+      );
+  
+      if (imagesRequiringAnalysis.length > 0) {
+          addLog(`Found ${imagesRequiringAnalysis.length} images requiring analysis.`);
+          // Mark them as "analyzing" in the global state for immediate UI feedback.
+          setAllImageStarData(prevData =>
+              prevData.map(entry =>
+                  imagesRequiringAnalysis.find(imgToAnalyze => imgToAnalyze.id === entry.id)
+                      ? { ...entry, isAnalyzing: true, isAnalyzed: false } // Reset isAnalyzed here
+                      : entry
+              )
+          );
+  
+          // Step 2: Analyze each identified image. analyzeImageForStars will update the global state for each.
+          for (const imageEntry of imagesRequiringAnalysis) {
+              addLog(`Analyzing image ${imageEntry.file.name} (ID: ${imageEntry.id}) for stacking process.`);
+              // Pass the most current version from global state (or the snapshot from imagesRequiringAnalysis)
+              const currentVersionOfEntry = allImageStarData.find(e => e.id === imageEntry.id) || imageEntry;
+              await analyzeImageForStars(currentVersionOfEntry, addLog);
+          }
+      } else {
+          addLog("No images require pre-stack analysis at this time.");
+      }
+  
+      // Step 3: Cleanup. Ensure no image is stuck in 'isAnalyzing' from a previous run if it wasn't part of the current batch.
+      setAllImageStarData(prevData =>
+          prevData.map(entry => {
+              if (entry.isAnalyzing && !imagesRequiringAnalysis.find(analyzedImg => analyzedImg.id === entry.id)) {
+                  addLog(`[STACK PREP] Clearing stale 'isAnalyzing' flag for ${entry.file.name}.`);
+                  return { ...entry, isAnalyzing: false }; 
+              }
+              return entry;
+          })
+      );
+      addLog("Pre-stack analysis/preparation phase complete.");
+  
 
     // Use a fresh reference to allImageStarData which should now reflect all analyses.
     const currentImageEntriesForStacking = [...allImageStarData];
@@ -2021,7 +2044,7 @@ export default function AstroStackerPage() {
       let method = "unknown_fallback";
       
       let starsForCentroidCalc: Star[] = [];
-      // Use initialAutoStars for 'auto' mode, and analysisStars for 'manual' (which could be user-edited or copied from auto)
+      
       if (entryData.starSelectionMode === 'auto') { 
           starsForCentroidCalc = [...entryData.initialAutoStars].sort((a,b) => b.brightness - a.brightness).slice(0, AUTO_ALIGN_TARGET_STAR_COUNT);
       } else { 
@@ -2386,7 +2409,6 @@ export default function AstroStackerPage() {
   } finally {
     setIsProcessingStack(false);
     setProgressPercent(0);
-    // Don't reset isAnalyzing globally here; analyzeImageForStars handles its own item.
     addLog("Image stacking process finished.");
   }
 };
@@ -2488,7 +2510,7 @@ export default function AstroStackerPage() {
                                 id={entry.id}
                                 file={entry.file}
                                 previewUrl={entry.previewUrl}
-                                isAnalyzing={entry.isAnalyzing || (currentEditingImageIndex === index && (allImageStarData.find((e,i)=>i===currentEditingImageIndex)?.isAnalyzing))}
+                                isAnalyzing={entry.isAnalyzing}
                                 isReviewed={entry.userReviewed}
                                 starSelectionMode={entry.starSelectionMode}
                                 onRemove={() => handleRemoveImage(entry.id)}
@@ -2893,4 +2915,5 @@ export default function AstroStackerPage() {
     
 
       
+
 
