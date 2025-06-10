@@ -43,14 +43,15 @@ export interface Star {
   y: number;
   brightness: number;
   isManuallyAdded?: boolean;
+  fwhm?: number; // Added FWHM from detector
 }
 
 export interface ImageStarEntry {
   id: string;
   file: File;
   previewUrl: string;
-  analysisStars: Star[]; // Uses the application-wide Star interface
-  initialAutoStars: Star[]; // Stores stars from auto-detection, also uses application-wide Star interface
+  analysisStars: Star[]; // Uses the application-wide Star interface, now with FWHM
+  initialAutoStars: Star[]; // Stores stars from auto-detection, also uses application-wide Star interface, now with FWHM
   analysisDimensions: { width: number; height: number };
   userReviewed: boolean;
   isAnalyzed: boolean;
@@ -61,7 +62,7 @@ export interface ImageStarEntry {
 interface SourceImageForApplyMenu {
   id: string;
   fileName: string;
-  stars: Star[]; // Uses the application-wide Star interface
+  stars: Star[];
   dimensions: { width: number; height: number };
 }
 
@@ -75,13 +76,12 @@ const STACKING_BAND_HEIGHT = 50;
 
 const SIGMA_CLIP_THRESHOLD = 2.0;
 const SIGMA_CLIP_ITERATIONS = 2;
-const MIN_STARS_FOR_CENTROID_ALIGNMENT = 3; // For old centroid method
-const MIN_STARS_FOR_AFFINE_ALIGNMENT = 3; // For new affine transform
-const NUM_STARS_TO_USE_FOR_AFFINE_MATCHING = 10; // Number of brightest stars to attempt to match for affine
-const AUTO_ALIGN_TARGET_STAR_COUNT = 10; // Matched to DETECTOR_MAX_STARS
+const MIN_STARS_FOR_CENTROID_ALIGNMENT = 3;
+const MIN_STARS_FOR_AFFINE_ALIGNMENT = 3;
+const NUM_STARS_TO_USE_FOR_AFFINE_MATCHING = 10;
+const AUTO_ALIGN_TARGET_STAR_COUNT = 10;
 
 
-// Constants for manual star click refinement (still used)
 const BRIGHTNESS_CENTROID_FALLBACK_THRESHOLD_GRAYSCALE_EQUIVALENT = 30;
 const STAR_ANNOTATION_MAX_DISPLAY_WIDTH = 500;
 const STAR_CLICK_TOLERANCE_ON_DISPLAY_CANVAS_PX = 10;
@@ -98,21 +98,24 @@ const PROGRESS_INITIAL_SETUP = 5;
 const PROGRESS_CENTROID_CALCULATION_TOTAL = 35;
 const PROGRESS_BANDED_STACKING_TOTAL = 60;
 
+// Constants for filtering stars used in Affine Alignment
+const ALIGNMENT_STAR_MIN_FWHM = 1.8;
+const ALIGNMENT_STAR_MAX_FWHM = 4.5;
+
 
 // ==== New Star Detector (Self-Contained) Configuration ====
-// These values are updated based on the latest user script
 const DETECTOR_MIN_CONTRAST = 20;
 const DETECTOR_MIN_BRIGHTNESS = 40;
-const DETECTOR_MAX_BRIGHTNESS = 220; // Pixels > this are considered saturated/plateaued and rejected (was 240)
-const DETECTOR_MIN_DISTANCE = 6;     // Min distance between detected stars (was 5)
-const DETECTOR_MAX_STARS = 10;       // Max stars to return, sorted by significance (user requested 10)
+const DETECTOR_MAX_BRIGHTNESS = 220;
+const DETECTOR_MIN_DISTANCE = 6;
+const DETECTOR_MAX_STARS = 10;
 const DETECTOR_MIN_FWHM = 1.5;
 const DETECTOR_MAX_FWHM = 5.0;
-const DETECTOR_ANNULUS_INNER_RADIUS = 4; // Was 3
-const DETECTOR_ANNULUS_OUTER_RADIUS = 8; // Was 6
-const DETECTOR_FWHM_PROFILE_HALF_WIDTH = 5; // For 1D profile, e.g. -5 to +5 around peak
-const DETECTOR_MARGIN = 6; // Margin from image edge to avoid processing border pixels
-const DETECTOR_FLATNESS_TOLERANCE = 2; // New constant from latest script for plateau check
+const DETECTOR_ANNULUS_INNER_RADIUS = 4;
+const DETECTOR_ANNULUS_OUTER_RADIUS = 8;
+const DETECTOR_FWHM_PROFILE_HALF_WIDTH = 5;
+const DETECTOR_MARGIN = 6;
+const DETECTOR_FLATNESS_TOLERANCE = 2;
 
 // Type for the new detector
 type DetectedStarPoint = { x: number; y: number; value: number; contrast: number; fwhm: number };
@@ -143,6 +146,9 @@ const applyImageAdjustmentsToDataURL = async (
         reject(new Error("Could not get canvas context for image adjustments."));
         return;
       }
+      
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
 
       ctx.drawImage(img, 0, 0);
       const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
@@ -203,7 +209,7 @@ function getGrayscaleArrayFromCanvas(ctx: CanvasRenderingContext2D, addLog?: (me
       const r = imgData[i];
       const g = imgData[i + 1];
       const b = imgData[i + 2];
-      gray[y][x] = 0.299 * r + 0.587 * g + 0.114 * b; // Luminance
+      gray[y][x] = 0.299 * r + 0.587 * g + 0.114 * b;
     }
   }
   if (addLog) addLog(`[DETECTOR CANVAS] Grayscale data extraction complete for ${width}x${height}.`);
@@ -214,12 +220,12 @@ function estimateLocalBackground(
   image: number[][],
   x: number,
   y: number,
-  innerRadius = DETECTOR_ANNULUS_INNER_RADIUS, // Uses updated global constant
-  outerRadius = DETECTOR_ANNULUS_OUTER_RADIUS, // Uses updated global constant
+  innerRadius = DETECTOR_ANNULUS_INNER_RADIUS,
+  outerRadius = DETECTOR_ANNULUS_OUTER_RADIUS,
   addLog?: (message: string) => void
 ): number {
   const height = image.length;
-  const width = image[0]?.length || 0; // Handle potentially empty image
+  const width = image[0]?.length || 0;
   let sum = 0;
   let count = 0;
 
@@ -234,7 +240,7 @@ function estimateLocalBackground(
       if (dist >= innerRadius && dist <= outerRadius) {
         const px = x + dx;
         const py = y + dy;
-        if (px >= 0 && px < width && py >= 0 && py < height && image[py] !== undefined) { // Add check for image[py]
+        if (px >= 0 && px < width && py >= 0 && py < height && image[py] !== undefined) {
           sum += image[py][px];
           count++;
         }
@@ -279,7 +285,7 @@ function estimateFWHM(
     if (px >= 0 && px < imageWidth) {
       profile.push(image[y][px]);
     } else {
-      profile.push(0); // Pad with zeros if out of bounds
+      profile.push(0);
     }
   }
 
@@ -297,26 +303,24 @@ function estimateFWHM(
 
   let left = -1, right = -1;
 
-  // Find left edge (interpolated)
   for (let i = 0; i < profile.length - 1; i++) {
       if (profile[i] >= halfMax && profile[i + 1] < halfMax) {
           left = i + (profile[i] - halfMax) / (profile[i] - profile[i + 1]);
           break;
       }
   }
-  if (left === -1 && profile[0] >= halfMax && profile.length > 1 && profile[0] > profile[1]) { // Edge case: starts high and decreasing
-      left = 0; // Consider it at the very edge
+  if (left === -1 && profile[0] >= halfMax && profile.length > 1 && profile[0] > profile[1]) {
+      left = 0;
   }
 
 
-  // Find right edge (interpolated)
   for (let i = profile.length - 1; i > 0; i--) {
       if (profile[i] >= halfMax && profile[i - 1] < halfMax) {
           right = i - (profile[i] - halfMax) / (profile[i] - profile[i - 1]);
           break;
       }
   }
-   if (right === -1 && profile[profile.length - 1] >= halfMax && profile.length > 1 && profile[profile.length - 1] > profile[profile.length - 2]) { // Edge case: ends high and increasing
+   if (right === -1 && profile[profile.length - 1] >= halfMax && profile.length > 1 && profile[profile.length - 1] > profile[profile.length - 2]) {
       right = profile.length - 1;
   }
 
@@ -335,7 +339,6 @@ function isFarEnough(stars: DetectedStarPoint[], x: number, y: number, minDistan
   return true;
 }
 
-// This is the main star detection pipeline function
 function detectStarsWithNewPipeline(
     grayscaleImage: number[][],
     addLog: (message: string) => void
@@ -344,7 +347,7 @@ function detectStarsWithNewPipeline(
   const width = grayscaleImage[0]?.length || 0;
 
   if (height === 0 || width === 0) {
-    addLog("[DETECTOR] Input grayscale image is empty. Cannot detect stars.");
+    addLog("[DETECTOR ERROR] Input grayscale image is empty. Cannot detect stars.");
     return [];
   }
   addLog(`[DETECTOR] Starting detection on ${width}x${height} grayscale image. Config: MinContrast=${DETECTOR_MIN_CONTRAST}, MinBright=${DETECTOR_MIN_BRIGHTNESS}, MaxBright=${DETECTOR_MAX_BRIGHTNESS}, MinDist=${DETECTOR_MIN_DISTANCE}, MaxStars=${DETECTOR_MAX_STARS}, MinFWHM=${DETECTOR_MIN_FWHM}, MaxFWHM=${DETECTOR_MAX_FWHM}, Margin=${DETECTOR_MARGIN}, FlatTol=${DETECTOR_FLATNESS_TOLERANCE}`);
@@ -362,30 +365,23 @@ function detectStarsWithNewPipeline(
       consideredPixels++;
       const value = grayscaleImage[y][x];
 
-      // 1. Brightness range check
       if (value < DETECTOR_MIN_BRIGHTNESS || value > DETECTOR_MAX_BRIGHTNESS) {
-        // if (value > DETECTOR_MAX_BRIGHTNESS && x%10===0 && y%10===0) addLog(`[DETECTOR REJECT BRIGHT] Pixel (${x},${y}) val ${value.toFixed(0)}.`);
         continue;
       }
       passedBrightness++;
 
-      // 2. Contrast check
       const contrast = getLocalContrast(grayscaleImage, x, y, addLog);
       if (contrast < DETECTOR_MIN_CONTRAST) {
-        // if (x%10===0 && y%10===0) addLog(`[DETECTOR REJECT CONTRAST] Pixel (${x},${y}) val ${value.toFixed(0)}, contrast ${contrast.toFixed(1)}.`);
         continue;
       }
       passedContrast++;
       
-      // 3. FWHM check
       const fwhm = estimateFWHM(grayscaleImage, x, y, DETECTOR_FWHM_PROFILE_HALF_WIDTH, addLog);
       if (fwhm < DETECTOR_MIN_FWHM || fwhm > DETECTOR_MAX_FWHM) {
-        // if (fwhm > 0 && x%10===0 && y%10===0) addLog(`[DETECTOR REJECT FWHM] Pixel (${x},${y}) val ${value.toFixed(0)}, FWHM ${fwhm.toFixed(1)}.`);
         continue;
       }
       passedFWHM++;
 
-      // 4. Plateau/flat top check AND Local maximum check
       const neighbors = [
         grayscaleImage[y - 1][x],
         grayscaleImage[y + 1][x],
@@ -394,11 +390,9 @@ function detectStarsWithNewPipeline(
       ];
       const tooFlat = neighbors.every(n => Math.abs(n - value) <= DETECTOR_FLATNESS_TOLERANCE);
       if (tooFlat) {
-        // if (x%10===0 && y%10===0) addLog(`[DETECTOR REJECT FLAT] Pixel (${x},${y}) val ${value.toFixed(0)}. Neighbors: ${neighbors.map(n => n.toFixed(0)).join(',')}`);
         continue;
       }
       if (!(value > neighbors[0] && value > neighbors[1] && value > neighbors[2] && value > neighbors[3])) {
-           // if (x%10===0 && y%10===0) addLog(`[DETECTOR REJECT NOTMAX] Pixel (${x},${y}) val ${value.toFixed(0)} not local maximum.`);
            continue;
       }
       passedFlatnessAndLocalMax++;
@@ -408,7 +402,6 @@ function detectStarsWithNewPipeline(
   }
   addLog(`[DETECTOR STATS] Considered: ${consideredPixels}, Passed Brightness: ${passedBrightness}, Passed Contrast: ${passedContrast}, Passed FWHM: ${passedFWHM}, Passed Flatness/LocalMax: ${passedFlatnessAndLocalMax}, Initial Candidates: ${candidates.length}`);
 
-  // Sort by a significance score (e.g., contrast * value)
   candidates.sort((a, b) => (b.value * b.contrast) - (a.value * a.contrast));
 
   const stars: DetectedStarPoint[] = [];
@@ -493,7 +486,7 @@ function calculateBrightnessCentroid(imageData: ImageData, addLog: (message: str
         const r = data[i];
         const g = data[i + 1];
         const b = data[i + 2];
-        const brightness = 0.299 * r + 0.587 * g + 0.114 * b; // Luminance
+        const brightness = 0.299 * r + 0.587 * g + 0.114 * b;
 
         if (brightness > brightnessThreshold) {
           weightedX += x * brightness;
@@ -518,7 +511,6 @@ function calculateBrightnessCentroid(imageData: ImageData, addLog: (message: str
     };
 }
 
-// This function is still used for manual star click refinement
 function calculateLocalBrightnessCentroid(
   fullImageData: ImageData,
   cropRect: { x: number; y: number; width: number; height: number },
@@ -554,8 +546,8 @@ function calculateLocalBrightnessCentroid(
       const pixelBrightness = 0.299 * r + 0.587 * g + 0.114 * b;
 
       if (pixelBrightness > brightnessThreshold) {
-        weightedXSum += xInCrop * pixelBrightness; // xInCrop is relative to cropRect origin
-        weightedYSum += yInCrop * pixelBrightness; // yInCrop is relative to cropRect origin
+        weightedXSum += xInCrop * pixelBrightness;
+        weightedYSum += yInCrop * pixelBrightness;
         totalBrightnessVal += pixelBrightness;
         brightPixelCount++;
       }
@@ -567,7 +559,6 @@ function calculateLocalBrightnessCentroid(
     return null;
   }
   
-  // Return coordinates relative to the cropRect origin
   return {
     x: weightedXSum / totalBrightnessVal,
     y: weightedYSum / totalBrightnessVal,
@@ -591,9 +582,9 @@ const calculateMean = (arr: number[]): number => {
 };
 
 const calculateStdDev = (arr: number[], meanVal?: number): number => {
-  if (arr.length < 2) return 0; // Standard deviation requires at least 2 points
+  if (arr.length < 2) return 0;
   const mean = meanVal === undefined ? calculateMean(arr) : meanVal;
-  const variance = arr.reduce((acc, val) => acc + Math.pow(val - mean, 2), 0) / (arr.length -1); // Use (n-1) for sample std dev
+  const variance = arr.reduce((acc, val) => acc + Math.pow(val - mean, 2), 0) / (arr.length -1);
   return Math.sqrt(variance);
 };
 
@@ -608,12 +599,12 @@ const applySigmaClip = (
   let currentValues = [...initialValues];
 
   for (let iter = 0; iter < maxIterations; iter++) {
-    if (currentValues.length < 2) break; // Need at least 2 values to calculate stddev
+    if (currentValues.length < 2) break;
 
     const mean = calculateMean(currentValues);
     const stdDev = calculateStdDev(currentValues, mean);
 
-    if (stdDev === 0) break; // No variation, or all values became identical
+    if (stdDev === 0) break;
 
     const lowerBound = mean - sigmaThreshold * stdDev;
     const upperBound = mean + sigmaThreshold * stdDev;
@@ -621,13 +612,11 @@ const applySigmaClip = (
     const nextValues = currentValues.filter(val => val >= lowerBound && val <= upperBound);
 
     if (nextValues.length === currentValues.length) {
-      // No values were clipped, convergence
       break;
     }
     currentValues = nextValues;
   }
 
-  // If all values were clipped, fall back to the mean of the original set
   if (!currentValues.length) {
     return calculateMean(initialValues);
   }
@@ -782,10 +771,10 @@ const processFitsFileToDataURL_custom = async (file: File, addLog: (message: str
     const imgData = ctx.createImageData(width, height);
     for (let i = 0; i < pixelCount; i++) {
       const val = normalizedPixels[i];
-      imgData.data[i * 4 + 0] = val; // R
-      imgData.data[i * 4 + 1] = val; // G
-      imgData.data[i * 4 + 2] = val; // B
-      imgData.data[i * 4 + 3] = 255; // Alpha
+      imgData.data[i * 4 + 0] = val;
+      imgData.data[i * 4 + 1] = val;
+      imgData.data[i * 4 + 2] = val;
+      imgData.data[i * 4 + 3] = 255;
     }
     ctx.putImageData(imgData, 0, 0);
     addLog(`[FITS] Image data rendered to canvas.`);
@@ -1270,6 +1259,7 @@ export default function AstroStackerPage() {
         x: pStar.x, 
         y: pStar.y, 
         brightness: pStar.value, 
+        fwhm: pStar.fwhm, // Store FWHM
         isManuallyAdded: false,
       }));
 
@@ -1501,6 +1491,7 @@ export default function AstroStackerPage() {
             x: finalStarX,
             y: finalStarY,
             brightness: 150, 
+            fwhm: 2.5, // Default FWHM for manually added star
             isManuallyAdded: true,
           };
           updatedStars.push(newStar);
@@ -1675,9 +1666,9 @@ export default function AstroStackerPage() {
       if (Math.abs(sourceAspectRatio - targetAspectRatio) < ASPECT_RATIO_TOLERANCE) {
         addLog(`Applying stars proportionally to ${targetEntry.file.name} (Matching aspect ratio: Source ${sourceAspectRatio.toFixed(2)}, Target ${targetAspectRatio.toFixed(2)})...`);
         const transformedStars = sourceStars.map(star => ({
+          ...star, // Preserve fwhm and other properties
           x: (star.x / sourceWidth) * targetWidth,
           y: (star.y / sourceHeight) * targetHeight,
-          brightness: star.brightness, 
           isManuallyAdded: true, 
         }));
   
@@ -1738,7 +1729,7 @@ export default function AstroStackerPage() {
     addLog(`Bias Frames: ${useBiasFrames && biasFrameFiles.length > 0 ? `${biasFrameFiles.length} frame(s)` : 'Not Used'}.`);
     addLog(`Dark Frames: ${useDarkFrames && darkFrameFiles.length > 0 ? `${darkFrameFiles.length} frame(s)` : 'Not Used'}.`);
     addLog(`Flat Frames: ${useFlatFrames && flatFrameFiles.length > 0 ? `${flatFrameFiles.length} frame(s)` : 'Not Used'}.`);
-    addLog(`Alignment: Affine (Min ${MIN_STARS_FOR_AFFINE_ALIGNMENT} stars, Match ${NUM_STARS_TO_USE_FOR_AFFINE_MATCHING}), Fallback Centroid (Min ${MIN_STARS_FOR_CENTROID_ALIGNMENT} stars, Auto Target ${AUTO_ALIGN_TARGET_STAR_COUNT}).`);
+    addLog(`Alignment: Affine (Min ${MIN_STARS_FOR_AFFINE_ALIGNMENT} stars, Match ${NUM_STARS_TO_USE_FOR_AFFINE_MATCHING}, Star FWHM Filter: ${ALIGNMENT_STAR_MIN_FWHM}-${ALIGNMENT_STAR_MAX_FWHM}), Fallback Centroid (Min ${MIN_STARS_FOR_CENTROID_ALIGNMENT} stars, Auto Target ${AUTO_ALIGN_TARGET_STAR_COUNT}).`);
     addLog(`Star Detection (Self-Contained): MinContrast=${DETECTOR_MIN_CONTRAST}, MinBright=${DETECTOR_MIN_BRIGHTNESS}, MaxBright=${DETECTOR_MAX_BRIGHTNESS}, MinDist=${DETECTOR_MIN_DISTANCE}, MaxStars=${DETECTOR_MAX_STARS}, MinFWHM=${DETECTOR_MIN_FWHM}, MaxFWHM=${DETECTOR_MAX_FWHM}, Margin=${DETECTOR_MARGIN}, FlatTol=${DETECTOR_FLATNESS_TOLERANCE}.`);
     addLog(`Brightness Centroid Fallback Threshold: ${BRIGHTNESS_CENTROID_FALLBACK_THRESHOLD_GRAYSCALE_EQUIVALENT} (grayscale equivalent).`);
 
@@ -1762,6 +1753,8 @@ export default function AstroStackerPage() {
             addLog(`Image ${entry.file.name} (${entry.id}) not analyzed. Analyzing now...`);
             setAllImageStarData(prev => prev.map((e) => e.id === entry.id ? {...e, isAnalyzing: true} : e));
             const analysisSuccess = await analyzeImageForStars(i); 
+            
+            // Fetch the latest version of the entry from state AFTER analysis
             const potentiallyUpdatedEntryFromState = allImageStarData.find(e => e.id === entry.id);
 
             if (analysisSuccess && potentiallyUpdatedEntryFromState && potentiallyUpdatedEntryFromState.isAnalyzed) {
@@ -1778,17 +1771,20 @@ export default function AstroStackerPage() {
              setAllImageStarData(prev => prev.map((e) => e.id === entry.id ? {...e, isAnalyzing: false, isAnalyzed: entry.isAnalyzed } : e));
         }
 
+        // Prepare analysisStars specifically for this stacking run, ensuring correct stars based on mode
         if (entry.starSelectionMode === 'auto') {
             const sortedAutoStars = [...entry.initialAutoStars].sort((a, b) => b.brightness - a.brightness);
-            const starsForAlignment = sortedAutoStars.slice(0, Math.max(NUM_STARS_TO_USE_FOR_AFFINE_MATCHING, AUTO_ALIGN_TARGET_STAR_COUNT)); // Use more stars for affine if available, fallback to centroid target count
+            // Use a consistent number of stars for alignment if in auto mode, potentially more than detector max if initialAutoStars was populated differently
+            const starsForAlignment = sortedAutoStars.slice(0, Math.max(NUM_STARS_TO_USE_FOR_AFFINE_MATCHING, AUTO_ALIGN_TARGET_STAR_COUNT));
             
-            if (JSON.stringify(entry.analysisStars) !== JSON.stringify(starsForAlignment)) { // Check if update is needed
+            if (JSON.stringify(entry.analysisStars) !== JSON.stringify(starsForAlignment)) {
                  updatedStarDataForStacking[i] = { ...entry, analysisStars: [...starsForAlignment] }; 
                  addLog(`For auto mode image ${entry.file.name}, set analysisStars to top ${starsForAlignment.length} auto-detected stars for alignment.`);
             }
         } else if (entry.starSelectionMode === 'manual') {
-            if (!entry.userReviewed) {
+            if (!entry.userReviewed) { // Manual mode, but stars not yet confirmed by user in editor
                 if ((!entry.analysisStars || entry.analysisStars.length === 0) && entry.initialAutoStars.length > 0) {
+                    // If manual but no user review and analysisStars is empty, use initialAutoStars as a base
                     const starsForAlignment = [...entry.initialAutoStars].sort((a,b) => b.brightness - a.brightness).slice(0, Math.max(NUM_STARS_TO_USE_FOR_AFFINE_MATCHING, AUTO_ALIGN_TARGET_STAR_COUNT));
                     updatedStarDataForStacking[i] = { ...entry, analysisStars: starsForAlignment };
                     addLog(`For unreviewed manual image ${entry.file.name}, using top ${starsForAlignment.length} initial auto-detected stars as analysisStars was empty.`);
@@ -1797,14 +1793,14 @@ export default function AstroStackerPage() {
                 } else {
                      addLog(`For unreviewed manual image ${entry.file.name}, no stars available. Will use fallback alignment.`);
                 }
-            } else {
+            } else { // Manual mode and user has reviewed/confirmed stars
                  addLog(`For reviewed manual image ${entry.file.name}, using its ${entry.analysisStars.length} user-confirmed stars.`);
             }
         }
          await yieldToEventLoop(10); 
     }
 
-    setAllImageStarData(updatedStarDataForStacking);
+    setAllImageStarData(updatedStarDataForStacking); // Update global state with prepared star lists before proceeding
     addLog("Pre-stack analysis and star-list preparation finished.");
     await yieldToEventLoop(100); 
 
@@ -2058,20 +2054,28 @@ export default function AstroStackerPage() {
       
       const referenceEntryForAffine = updatedStarDataForStacking[firstValidImageIndexInOriginal];
       let referenceStarsForAffine: AstroAlignPoint[] = [];
+
       if (referenceEntryForAffine && referenceEntryForAffine.isAnalyzed && referenceEntryForAffine.analysisStars.length >= MIN_STARS_FOR_AFFINE_ALIGNMENT) {
-          referenceStarsForAffine = referenceEntryForAffine.analysisStars
+          const goodFWHMRefStars = referenceEntryForAffine.analysisStars
+              .filter(s => s.fwhm !== undefined && s.fwhm >= ALIGNMENT_STAR_MIN_FWHM && s.fwhm <= ALIGNMENT_STAR_MAX_FWHM)
               .sort((a,b) => b.brightness - a.brightness)
-              .slice(0, NUM_STARS_TO_USE_FOR_AFFINE_MATCHING)
-              .map(s => ({ x: s.x, y: s.y }));
-          if (referenceStarsForAffine.length < MIN_STARS_FOR_AFFINE_ALIGNMENT) {
-              addLog(`[AFFINE REF WARN] Ref image ${referenceEntryForAffine.file.name} has only ${referenceStarsForAffine.length} stars for affine after filter (min ${MIN_STARS_FOR_AFFINE_ALIGNMENT}). Affine will be disabled for all frames.`);
-              referenceStarsForAffine = []; 
+              .slice(0, NUM_STARS_TO_USE_FOR_AFFINE_MATCHING);
+          
+          addLog(`[AFFINE REF PREP] Ref Image ${referenceEntryForAffine.file.name}: Total analysis stars: ${referenceEntryForAffine.analysisStars.length}. After FWHM filter (${ALIGNMENT_STAR_MIN_FWHM}-${ALIGNMENT_STAR_MAX_FWHM}): ${goodFWHMRefStars.length} stars.`);
+
+          if (goodFWHMRefStars.length >= MIN_STARS_FOR_AFFINE_ALIGNMENT) {
+              referenceStarsForAffine = goodFWHMRefStars.map(s => {
+                  addLog(`[AFFINE REF STAR] Using: x=${s.x.toFixed(2)}, y=${s.y.toFixed(2)}, fwhm=${s.fwhm?.toFixed(2)}, bright=${s.brightness.toFixed(0)}`);
+                  return { x: s.x, y: s.y };
+              });
+              addLog(`[AFFINE REF] Using ${referenceStarsForAffine.length} FWHM-filtered stars from reference image ${referenceEntryForAffine.file.name} for affine.`);
           } else {
-              addLog(`[AFFINE REF] Using ${referenceStarsForAffine.length} stars from reference image ${referenceEntryForAffine.file.name} for affine.`);
+              addLog(`[AFFINE REF WARN] Ref image ${referenceEntryForAffine.file.name} has only ${goodFWHMRefStars.length} stars after FWHM filter (min ${MIN_STARS_FOR_AFFINE_ALIGNMENT} needed). Affine will be disabled for all frames.`);
+              referenceStarsForAffine = []; 
           }
       } else {
-           addLog(`[AFFINE REF INFO] Reference image ${referenceEntryForAffine?.file?.name || 'N/A'} not suitable for affine (not analyzed, or < ${MIN_STARS_FOR_AFFINE_ALIGNMENT} stars). Affine alignment will be skipped for all images.`);
-           referenceStarsForAffine = []; // Ensure affine is skipped if reference is not suitable
+           addLog(`[AFFINE REF INFO] Reference image ${referenceEntryForAffine?.file?.name || 'N/A'} not suitable for affine (not analyzed, or < ${MIN_STARS_FOR_AFFINE_ALIGNMENT} stars before FWHM filter). Affine alignment will be skipped for all images.`);
+           referenceStarsForAffine = [];
       }
       const referenceCentroidForFallback = centroids[firstValidImageIndexInOriginal]; 
 
@@ -2087,11 +2091,16 @@ export default function AstroStackerPage() {
       currentImageCanvas.width = targetWidth; currentImageCanvas.height = targetHeight;
       const currentImageCtx = currentImageCanvas.getContext('2d', { willReadFrequently: true });
       if (!currentImageCtx) throw new Error("Could not get current image canvas context.");
+      currentImageCtx.imageSmoothingEnabled = true;
+      currentImageCtx.imageSmoothingQuality = 'high';
+
 
       const tempWarpedImageCanvas = document.createElement('canvas'); 
       tempWarpedImageCanvas.width = targetWidth; tempWarpedImageCanvas.height = targetHeight;
       const tempWarpedImageCtx = tempWarpedImageCanvas.getContext('2d', { willReadFrequently: true });
       if (!tempWarpedImageCtx) throw new Error("Could not get temp warped image canvas context.");
+      tempWarpedImageCtx.imageSmoothingEnabled = true;
+      tempWarpedImageCtx.imageSmoothingQuality = 'high';
 
 
       for (let yBandStart = 0; yBandStart < targetHeight; yBandStart += STACKING_BAND_HEIGHT) {
@@ -2110,7 +2119,7 @@ export default function AstroStackerPage() {
           currentImageCtx.clearRect(0,0,targetWidth,targetHeight);
           currentImageCtx.drawImage(imgElement, 0,0,targetWidth,targetHeight);
           let lightFrameForCalib = currentImageCtx.getImageData(0,0,targetWidth,targetHeight);
-          let calibratedLightDataArray = new Uint8ClampedArray(lightFrameForCalib.data); // Use array for direct manipulation
+          let calibratedLightDataArray = new Uint8ClampedArray(lightFrameForCalib.data);
           let logCalibrationMsg = "";
 
           if (masterBiasData) { 
@@ -2135,7 +2144,7 @@ export default function AstroStackerPage() {
             const avgFlatIntensityB = calculateMean(Array.from(masterFlatData).filter((_, idx) => idx % 4 === 2));
 
             for (let p = 0; p < calibratedLightDataArray.length; p += 4) {
-                const flatR = Math.max(1, masterFlatData[p]); // Avoid division by zero, ensure min 1
+                const flatR = Math.max(1, masterFlatData[p]);
                 const flatG = Math.max(1, masterFlatData[p+1]);
                 const flatB = Math.max(1, masterFlatData[p+2]);
 
@@ -2154,28 +2163,38 @@ export default function AstroStackerPage() {
           let estimatedMatrix: number[][] | null = null;
 
           if (referenceStarsForAffine.length >= MIN_STARS_FOR_AFFINE_ALIGNMENT &&
-              currentImageEntry.isAnalyzed && currentImageEntry.analysisStars && // Ensure analysisStars is not undefined
+              currentImageEntry.isAnalyzed && currentImageEntry.analysisStars &&
               currentImageEntry.analysisStars.length >= MIN_STARS_FOR_AFFINE_ALIGNMENT) {
               
-              const currentStarsForAffine = currentImageEntry.analysisStars
+              const goodFWHMCurrentStars = currentImageEntry.analysisStars
+                  .filter(s => s.fwhm !== undefined && s.fwhm >= ALIGNMENT_STAR_MIN_FWHM && s.fwhm <= ALIGNMENT_STAR_MAX_FWHM)
                   .sort((a,b) => b.brightness - a.brightness)
-                  .slice(0, NUM_STARS_TO_USE_FOR_AFFINE_MATCHING)
-                  .map(s => ({ x: s.x, y: s.y }));
+                  .slice(0, NUM_STARS_TO_USE_FOR_AFFINE_MATCHING);
+
+              if (yBandStart === 0) addLog(`[AFFINE CURR PREP] Img ${i} (${currentImageEntry.file.name}): Total analysis stars: ${currentImageEntry.analysisStars.length}. After FWHM filter: ${goodFWHMCurrentStars.length} stars.`);
+              
+              const currentStarsForAffine = goodFWHMCurrentStars.map(s => {
+                  if (yBandStart === 0 && i !== firstValidImageIndexInOriginal) addLog(`  [AFFINE CURR STAR] Using: x=${s.x.toFixed(2)}, y=${s.y.toFixed(2)}, fwhm=${s.fwhm?.toFixed(2)}, bright=${s.brightness.toFixed(0)}`);
+                  return { x: s.x, y: s.y };
+              });
+
 
               const numPointsToMatch = Math.min(referenceStarsForAffine.length, currentStarsForAffine.length);
 
               if (numPointsToMatch >= MIN_STARS_FOR_AFFINE_ALIGNMENT) {
                   const srcPts = currentStarsForAffine.slice(0, numPointsToMatch);
-                  const dstPts = referenceStarsForAffine.slice(0, numPointsToMatch); // Align to reference
+                  const dstPts = referenceStarsForAffine.slice(0, numPointsToMatch);
                   try {
-                      // Check for valid dimensions in points before passing to estimateAffineTransform
                       if (srcPts.some(pt => isNaN(pt.x) || isNaN(pt.y)) || dstPts.some(pt => isNaN(pt.x) || isNaN(pt.y))) {
                         addLog(`[AFFINE WARN] ${currentImageEntry.file.name} (img ${i}): NaN coordinates found in star points. Falling back.`);
                         useAffineTransform = false;
                       } else {
                         estimatedMatrix = estimateAffineTransform(srcPts, dstPts);
                         useAffineTransform = true;
-                        if (yBandStart === 0 && i !== firstValidImageIndexInOriginal) affineAlignmentsUsed++; // Count non-reference aligned images
+                        if (yBandStart === 0 && i !== firstValidImageIndexInOriginal) {
+                             affineAlignmentsUsed++;
+                             addLog(`[AFFINE SUCCESS] Matrix for ${currentImageEntry.file.name}: ${JSON.stringify(estimatedMatrix?.map(row => row.map(val => val.toFixed(3))))}`);
+                        }
                       }
                   } catch (e) {
                       const affineErrorMsg = e instanceof Error ? e.message : String(e);
@@ -2183,11 +2202,11 @@ export default function AstroStackerPage() {
                       useAffineTransform = false;
                   }
               } else {
-                  if (yBandStart === 0) addLog(`[AFFINE INFO] ${currentImageEntry.file.name} (img ${i}): Not enough matching points (${numPointsToMatch}) for affine. Need ${MIN_STARS_FOR_AFFINE_ALIGNMENT}. Falling back.`);
+                  if (yBandStart === 0) addLog(`[AFFINE INFO] ${currentImageEntry.file.name} (img ${i}): Not enough matching points (${numPointsToMatch}) after FWHM filter for affine. Need ${MIN_STARS_FOR_AFFINE_ALIGNMENT}. Falling back.`);
                   useAffineTransform = false;
               }
           } else {
-              if (yBandStart === 0) addLog(`[AFFINE INFO] ${currentImageEntry.file.name} (img ${i}): Conditions for affine not met (ref stars: ${referenceStarsForAffine.length}, current stars: ${currentImageEntry.analysisStars?.length || 0}). Falling back.`);
+              if (yBandStart === 0) addLog(`[AFFINE INFO] ${currentImageEntry.file.name} (img ${i}): Conditions for affine not met (ref stars: ${referenceStarsForAffine.length}, current stars after FWHM filter: ${currentImageEntry.analysisStars?.filter(s => s.fwhm !== undefined && s.fwhm >= ALIGNMENT_STAR_MIN_FWHM && s.fwhm <= ALIGNMENT_STAR_MAX_FWHM).length || 0}). Falling back.`);
               useAffineTransform = false;
           }
           
@@ -2222,7 +2241,7 @@ export default function AstroStackerPage() {
           } catch (e) {
             addLog(`[STACK ERROR] Band ${yBandStart}, Img ${i} (${currentImageEntry.file.name}): Error extracting band data: ${e instanceof Error ? e.message : String(e)}`);
           }
-          if (i % 5 === 0) await yieldToEventLoop(dynamicDelayMs); // Yield more frequently within the inner loop for very large images
+          if (i % 5 === 0) await yieldToEventLoop(dynamicDelayMs);
         }
         if (yBandStart === 0) validImagesStackedCount = imagesContributingToBand;
 
@@ -2266,6 +2285,8 @@ export default function AstroStackerPage() {
       finalResultCanvas.height = targetHeight;
       const finalResultCtx = finalResultCanvas.getContext('2d');
       if (!finalResultCtx) throw new Error("Could not get final result canvas context.");
+      finalResultCtx.imageSmoothingEnabled = true;
+      finalResultCtx.imageSmoothingQuality = 'high';
       finalResultCtx.putImageData(new ImageData(finalImageData, targetWidth, targetHeight), 0, 0);
 
 
@@ -2832,6 +2853,4 @@ export default function AstroStackerPage() {
     </div>
   );
 }
-    
-
     

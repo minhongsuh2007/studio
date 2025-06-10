@@ -35,19 +35,18 @@ export function estimateAffineTransform(
   
   let x_solution: number[];
   try {
-    // Lusolve returns a matrix (column vector)
     const solutionMatrix = math.lusolve(ATA, ATB);
-    // Ensure it's a column vector and extract elements
+    
     if (math.isMatrix(solutionMatrix) && (solutionMatrix as math.Matrix).size().length === 2 && (solutionMatrix as math.Matrix).size()[1] === 1) {
         x_solution = (solutionMatrix as math.Matrix).toArray().map(v => v[0]) as number[];
     } else if (Array.isArray(solutionMatrix) && solutionMatrix.every(arr => Array.isArray(arr) && arr.length === 1)) {
-        // Handle cases where it might return Array<Array<number>> for a column vector
         x_solution = solutionMatrix.map(v => v[0]) as number[];
-    }
-     else {
-        // Fallback or error if the shape is unexpected
+    } else if (Array.isArray(solutionMatrix) && solutionMatrix.every(n => typeof n === 'number')) {
+        // Handle if lusolve directly returns a flat array (e.g., for mathjs v11+)
+        x_solution = solutionMatrix as number[];
+    } else {
         console.error("Unexpected lusolve solution shape:", solutionMatrix);
-        throw new Error("Could not solve for affine parameters due to unexpected matrix shape.");
+        throw new Error("Could not solve for affine parameters due to unexpected matrix shape or content.");
     }
   } catch (e) {
     console.error("Error in LUSolve:", e);
@@ -93,23 +92,21 @@ export function warpImage(
 ) {
   if (matrix.length !== 2 || matrix[0].length !== 3 || matrix[1].length !== 3) {
     if(addLog) addLog(`[WARP ERROR] Invalid matrix format for warpImage. Matrix: ${JSON.stringify(matrix)}`);
-    // Draw un-warped as a fallback or throw error
     dstCtx.drawImage(srcCtx.canvas, 0, 0); 
     return;
   }
-  const [a, b, c] = matrix[0]; // x' = ax + by + c
-  const [d, e, f] = matrix[1]; // y' = dx + ey + f
+  const [a, b, c] = matrix[0];
+  const [d, e, f] = matrix[1];
 
-  // The transform matrix for canvas is set as (a, d, b, e, c, f)
-  // setTransform(m11, m12, m21, m22, dx, dy)
-  // m11 (a): horizontal scaling
-  // m12 (d): vertical skewing (d in our matrix)
-  // m21 (b): horizontal skewing (b in our matrix)
-  // m22 (e): vertical scaling
-  // dx  (c): horizontal translation
-  // dy  (f): vertical translation
+  if (addLog) {
+    addLog(`[WARP] Applying matrix: a=${a.toFixed(4)}, b=${b.toFixed(4)}, c=${c.toFixed(2)}, d=${d.toFixed(4)}, e=${e.toFixed(4)}, f=${f.toFixed(2)}`);
+  }
 
+  dstCtx.imageSmoothingEnabled = true;
+  dstCtx.imageSmoothingQuality = 'high';
+  
   dstCtx.setTransform(a, d, b, e, c, f);
   dstCtx.drawImage(srcCtx.canvas, 0, 0);
-  dstCtx.setTransform(1, 0, 0, 1, 0, 0); // reset transform
+  dstCtx.setTransform(1, 0, 0, 1, 0, 0); 
 }
+
