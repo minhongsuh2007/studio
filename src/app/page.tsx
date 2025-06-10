@@ -41,7 +41,7 @@ export type StarSelectionMode = 'auto' | 'manual';
 export interface Star {
   x: number;
   y: number;
-  brightness: number;
+  brightness: number; // This will now represent windowSumBrightness from DetectedStarPoint
   isManuallyAdded?: boolean;
   fwhm?: number;
 }
@@ -77,8 +77,8 @@ const STACKING_BAND_HEIGHT = 50;
 const SIGMA_CLIP_THRESHOLD = 2.0;
 const SIGMA_CLIP_ITERATIONS = 2;
 const MIN_STARS_FOR_CENTROID_ALIGNMENT = 3;
-const MIN_STARS_FOR_AFFINE_ALIGNMENT = 3; // Changed from 5 to 3 for more robustness if fewer good matches
-const NUM_STARS_TO_USE_FOR_AFFINE_MATCHING = 5; // Max stars to attempt to match for affine
+const MIN_STARS_FOR_AFFINE_ALIGNMENT = 3; 
+const NUM_STARS_TO_USE_FOR_AFFINE_MATCHING = 5; 
 const AUTO_ALIGN_TARGET_STAR_COUNT = 10;
 
 
@@ -109,21 +109,21 @@ const AFFINE_MATCHING_RADIUS_SQ = AFFINE_MATCHING_RADIUS_PIXELS * AFFINE_MATCHIN
 
 // ==== New Star Detector (Self-Contained) Configuration ====
 const DETECTOR_MIN_CONTRAST = 20;
-const DETECTOR_MIN_BRIGHTNESS = 40;
-const DETECTOR_MAX_BRIGHTNESS = 220; // Stars brighter than this might be saturated or too large
-const DETECTOR_MIN_DISTANCE = 6; // Minimum pixels between star centers
-const DETECTOR_MAX_STARS = 5; // Limit to 5 stars
+const DETECTOR_MIN_BRIGHTNESS = 40; // For the center pixel of a candidate
+// DETECTOR_MAX_BRIGHTNESS removed as per user request
+const DETECTOR_MIN_DISTANCE = 6; 
+const DETECTOR_MAX_STARS = 5; 
 const DETECTOR_MIN_FWHM = 1.5;
 const DETECTOR_MAX_FWHM = 5.0;
-const DETECTOR_ANNULUS_INNER_RADIUS = 4; // For background estimation
-const DETECTOR_ANNULUS_OUTER_RADIUS = 8; // For background estimation
-const DETECTOR_FWHM_PROFILE_HALF_WIDTH = 5; // Pixels to each side of center for FWHM profile
-const DETECTOR_MARGIN = 6; // Pixels from edge to ignore
-const DETECTOR_FLATNESS_TOLERANCE = 2; // Max diff between center and neighbor for "flat" rejection
+const DETECTOR_ANNULUS_INNER_RADIUS = 4; 
+const DETECTOR_ANNULUS_OUTER_RADIUS = 8; 
+const DETECTOR_FWHM_PROFILE_HALF_WIDTH = 5; 
+const DETECTOR_MARGIN = 6; 
+const DETECTOR_FLATNESS_TOLERANCE = 2; 
 
 
 // Type for the new detector
-type DetectedStarPoint = { x: number; y: number; value: number; contrast: number; fwhm: number };
+type DetectedStarPoint = { x: number; y: number; value: number; windowSumBrightness: number; contrast: number; fwhm: number };
 
 
 const yieldToEventLoop = async (delayMs: number) => {
@@ -333,7 +333,7 @@ function estimateFWHM(
 
   const fwhm = (left !== -1 && right !== -1 && right > left) ? Math.abs(right - left) : 0;
   
-  const logLevelThreshold = DETECTOR_MIN_BRIGHTNESS * 1.2; // Only log detailed FWHM for reasonably bright candidates
+  const logLevelThreshold = DETECTOR_MIN_BRIGHTNESS * 1.2; 
   if (addLog && peak > logLevelThreshold) {
     if (fwhm > 0) {
       addLog(`[FWHM EST] At (${x},${y}): Peak=${peak.toFixed(1)}, HM=${halfMax.toFixed(1)}, L=${left.toFixed(2)}, R=${right.toFixed(2)}, FWHM=${fwhm.toFixed(2)}`);
@@ -366,11 +366,11 @@ function detectStarsWithNewPipeline(
     addLog("[DETECTOR ERROR] Input grayscale image is empty. Cannot detect stars.");
     return [];
   }
-  addLog(`[DETECTOR] Starting detection on ${width}x${height} grayscale. Config: MinContrast=${DETECTOR_MIN_CONTRAST}, MinBright=${DETECTOR_MIN_BRIGHTNESS}, MaxBright=${DETECTOR_MAX_BRIGHTNESS}, MinDist=${DETECTOR_MIN_DISTANCE}, MaxStars=${DETECTOR_MAX_STARS}, MinFWHM=${DETECTOR_MIN_FWHM}, MaxFWHM=${DETECTOR_MAX_FWHM}, Margin=${DETECTOR_MARGIN}, FlatTol=${DETECTOR_FLATNESS_TOLERANCE}`);
+  addLog(`[DETECTOR] Starting detection on ${width}x${height} grayscale. Config: MinContrast=${DETECTOR_MIN_CONTRAST}, MinBright(CenterPx)=${DETECTOR_MIN_BRIGHTNESS}, MinDist=${DETECTOR_MIN_DISTANCE}, MaxStars=${DETECTOR_MAX_STARS}, MinFWHM=${DETECTOR_MIN_FWHM}, MaxFWHM=${DETECTOR_MAX_FWHM}, Margin=${DETECTOR_MARGIN}, FlatTol=${DETECTOR_FLATNESS_TOLERANCE}`);
 
   const candidates: DetectedStarPoint[] = [];
   let consideredPixels = 0;
-  let passedBrightness = 0;
+  let passedMinBrightness = 0;
   let passedContrast = 0;
   let passedFWHMCount = 0;
   let passedFlatnessAndLocalMax = 0;
@@ -378,55 +378,69 @@ function detectStarsWithNewPipeline(
   for (let y = DETECTOR_MARGIN; y < height - DETECTOR_MARGIN; y++) {
     for (let x = DETECTOR_MARGIN; x < width - DETECTOR_MARGIN; x++) {
       consideredPixels++;
-      const value = grayscaleImage[y][x];
+      const value = grayscaleImage[y][x]; // Center pixel value
 
-      // 1. Brightness check
-      if (value < DETECTOR_MIN_BRIGHTNESS || value > DETECTOR_MAX_BRIGHTNESS) {
-        if (value > DETECTOR_MAX_BRIGHTNESS && value > (DETECTOR_MIN_BRIGHTNESS * 1.1) && Math.random() < 0.02) addLog(`[DETECTOR REJECT BRIGHT] (${x},${y}) val ${value.toFixed(0)} > MAX_BRIGHTNESS ${DETECTOR_MAX_BRIGHTNESS}`);
-        else if (value < DETECTOR_MIN_BRIGHTNESS && value > 0  && Math.random() < 0.01) addLog(`[DETECTOR REJECT DIM] (${x},${y}) val ${value.toFixed(0)} < MIN_BRIGHTNESS ${DETECTOR_MIN_BRIGHTNESS}`);
+      // 1. Center Pixel Minimum Brightness check
+      if (value < DETECTOR_MIN_BRIGHTNESS) {
+        if (value > 0  && Math.random() < 0.01) addLog(`[DETECTOR REJECT DIM] Center (${x},${y}) val ${value.toFixed(0)} < MIN_BRIGHTNESS ${DETECTOR_MIN_BRIGHTNESS}`);
         continue;
       }
-      passedBrightness++;
+      // Max brightness check for center pixel is removed
+      passedMinBrightness++;
 
-      // 2. Contrast check
+      // 2. Contrast check (for center pixel)
       const contrast = getLocalContrast(grayscaleImage, x, y, addLog);
       if (contrast < DETECTOR_MIN_CONTRAST) {
-        if (value > (DETECTOR_MIN_BRIGHTNESS * 1.1) && Math.random() < 0.02) addLog(`[DETECTOR REJECT CONTRAST] (${x},${y}) val ${value.toFixed(0)}, contrast ${contrast.toFixed(1)} < MIN_CONTRAST ${DETECTOR_MIN_CONTRAST}`);
+        if (value > (DETECTOR_MIN_BRIGHTNESS * 1.1) && Math.random() < 0.02) addLog(`[DETECTOR REJECT CONTRAST] Center (${x},${y}) val ${value.toFixed(0)}, contrast ${contrast.toFixed(1)} < MIN_CONTRAST ${DETECTOR_MIN_CONTRAST}`);
         continue;
       }
       passedContrast++;
       
-      // 3. FWHM check
+      // 3. FWHM check (for center pixel)
       const fwhm = estimateFWHM(grayscaleImage, x, y, DETECTOR_FWHM_PROFILE_HALF_WIDTH, addLog);
       if (fwhm < DETECTOR_MIN_FWHM || fwhm > DETECTOR_MAX_FWHM) {
-        if (value > (DETECTOR_MIN_BRIGHTNESS*1.1) && fwhm !==0 && Math.random() < 0.02) addLog(`[DETECTOR REJECT FWHM] (${x},${y}) val ${value.toFixed(0)}, FWHM ${fwhm.toFixed(1)} out of [${DETECTOR_MIN_FWHM}-${DETECTOR_MAX_FWHM}]`);
-        else if (value > (DETECTOR_MIN_BRIGHTNESS*1.1) && fwhm === 0 && DETECTOR_MIN_FWHM > 0 && Math.random() < 0.02) addLog(`[DETECTOR REJECT FWHM ZERO] (${x},${y}) val ${value.toFixed(0)}, FWHM is 0, less than MIN_FWHM ${DETECTOR_MIN_FWHM}`);
+        if (value > (DETECTOR_MIN_BRIGHTNESS*1.1) && fwhm !==0 && Math.random() < 0.02) addLog(`[DETECTOR REJECT FWHM] Center (${x},${y}) val ${value.toFixed(0)}, FWHM ${fwhm.toFixed(1)} out of [${DETECTOR_MIN_FWHM}-${DETECTOR_MAX_FWHM}]`);
+        else if (value > (DETECTOR_MIN_BRIGHTNESS*1.1) && fwhm === 0 && DETECTOR_MIN_FWHM > 0 && Math.random() < 0.02) addLog(`[DETECTOR REJECT FWHM ZERO] Center (${x},${y}) val ${value.toFixed(0)}, FWHM is 0, less than MIN_FWHM ${DETECTOR_MIN_FWHM}`);
         continue;
       }
       passedFWHMCount++;
 
-      // 4. Local maximum and flatness check
+      // 4. Local maximum and flatness check (for center pixel)
       const neighbors = [
         grayscaleImage[y - 1][x], grayscaleImage[y + 1][x],
         grayscaleImage[y][x - 1], grayscaleImage[y][x + 1],
       ];
       const tooFlat = neighbors.every(n => Math.abs(n - value) <= DETECTOR_FLATNESS_TOLERANCE);
       if (tooFlat) {
-        if (value > (DETECTOR_MIN_BRIGHTNESS*1.1) && Math.random() < 0.02) addLog(`[DETECTOR REJECT FLAT] (${x},${y}) Too flat. Val: ${value.toFixed(0)}, N: ${neighbors.map(n=>n.toFixed(0)).join(',')}`);
+        if (value > (DETECTOR_MIN_BRIGHTNESS*1.1) && Math.random() < 0.02) addLog(`[DETECTOR REJECT FLAT] Center (${x},${y}) Too flat. Val: ${value.toFixed(0)}, N: ${neighbors.map(n=>n.toFixed(0)).join(',')}`);
         continue;
       }
       if (!(value > neighbors[0] && value > neighbors[1] && value > neighbors[2] && value > neighbors[3])) {
-         if (value > (DETECTOR_MIN_BRIGHTNESS*1.1) && Math.random() < 0.02) addLog(`[DETECTOR REJECT LOCALMAX] (${x},${y}) Not local max. Val: ${value.toFixed(0)}, N: ${neighbors.map(n=>n.toFixed(0)).join(',')}`);
+         if (value > (DETECTOR_MIN_BRIGHTNESS*1.1) && Math.random() < 0.02) addLog(`[DETECTOR REJECT LOCALMAX] Center (${x},${y}) Not local max. Val: ${value.toFixed(0)}, N: ${neighbors.map(n=>n.toFixed(0)).join(',')}`);
            continue;
       }
       passedFlatnessAndLocalMax++;
 
-      candidates.push({ x, y, value, contrast, fwhm });
+      // 5. Calculate 3x3 window sum of brightness
+      let windowSumBrightness = 0;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const ny = y + dy;
+          const nx = x + dx;
+          // Bounds check is implicitly handled by DETECTOR_MARGIN for the 3x3 window around a valid (x,y)
+          // but good to be explicit if grayscaleImage access might go out of bounds.
+          // Assuming (x,y) is already DETECTOR_MARGIN away from edges, (x-1, y-1) to (x+1,y+1) should be fine.
+          windowSumBrightness += grayscaleImage[ny][nx];
+        }
+      }
+
+      candidates.push({ x, y, value, windowSumBrightness, contrast, fwhm });
     }
   }
-  addLog(`[DETECTOR STATS] Considered: ${consideredPixels}, Passed Brightness: ${passedBrightness}, Contrast: ${passedContrast}, FWHM: ${passedFWHMCount}, Flatness/LocalMax: ${passedFlatnessAndLocalMax}, Initial Candidates: ${candidates.length}`);
+  addLog(`[DETECTOR STATS] Considered: ${consideredPixels}, Passed MinBrightness: ${passedMinBrightness}, Contrast: ${passedContrast}, FWHM: ${passedFWHMCount}, Flatness/LocalMax: ${passedFlatnessAndLocalMax}, Initial Candidates: ${candidates.length}`);
 
-  // New sorting: Prioritize stars with FWHM in the ALIGNMENT range, then by significance.
+  // Sorting: Prioritize stars with FWHM in the ALIGNMENT range,
+  // then by (windowSumBrightness * contrast).
   candidates.sort((a, b) => {
     const a_is_prime_fwhm = a.fwhm >= ALIGNMENT_STAR_MIN_FWHM && a.fwhm <= ALIGNMENT_STAR_MAX_FWHM;
     const b_is_prime_fwhm = b.fwhm >= ALIGNMENT_STAR_MIN_FWHM && b.fwhm <= ALIGNMENT_STAR_MAX_FWHM;
@@ -437,15 +451,14 @@ function detectStarsWithNewPipeline(
     if (!a_is_prime_fwhm && b_is_prime_fwhm) {
       return 1;  // b comes first
     }
-    // If both are prime OR both are not prime, sort by original significance (value * contrast)
-    return (b.value * b.contrast) - (a.value * a.contrast);
+    // If both are prime OR both are not prime, sort by new significance metric
+    return (b.windowSumBrightness * b.contrast) - (a.windowSumBrightness * a.contrast);
   });
   
   if (!loggedFwhmSortInfo && candidates.length > 0) {
-      addLog(`[DETECTOR SORT] Candidates sorted. Priority to FWHM between ${ALIGNMENT_STAR_MIN_FWHM} and ${ALIGNMENT_STAR_MAX_FWHM}, then by (brightness*contrast).`);
+      addLog(`[DETECTOR SORT] Candidates sorted. Priority to FWHM [${ALIGNMENT_STAR_MIN_FWHM}-${ALIGNMENT_STAR_MAX_FWHM}], then by (windowSumBrightness * contrast).`);
       loggedFwhmSortInfo = true; 
   }
-
 
   const stars: DetectedStarPoint[] = [];
   for (const cand of candidates) {
@@ -456,7 +469,8 @@ function detectStarsWithNewPipeline(
   }
 
   if (stars.length > 0) {
-    addLog(`[DETECTOR] Found ${stars.length} stars after all filters. Top star ex: (${stars[0]?.x.toFixed(0)}, ${stars[0]?.y.toFixed(0)}) Val:${stars[0]?.value.toFixed(1)} FWHM:${stars[0]?.fwhm.toFixed(1)} Contrast:${stars[0]?.contrast.toFixed(1)}`);
+    const topStar = stars[0];
+    addLog(`[DETECTOR] Found ${stars.length} stars after all filters. Top star ex: (${topStar?.x.toFixed(0)}, ${topStar?.y.toFixed(0)}) WinSumBr:${topStar?.windowSumBrightness.toFixed(1)} Contr:${topStar?.contrast.toFixed(1)} FWHM:${topStar?.fwhm.toFixed(1)} (CenterVal:${topStar?.value.toFixed(1)})`);
   } else {
     addLog(`[DETECTOR WARN] No stars found after all filters.`);
   }
@@ -484,7 +498,7 @@ function calculateStarArrayCentroid(starsInput: Star[], addLog: (message: string
   let weightedY = 0;
 
   for (const star of starsInput) {
-    weightedX += star.x * star.brightness;
+    weightedX += star.x * star.brightness; // Star.brightness now comes from windowSumBrightness
     weightedY += star.y * star.brightness;
     totalBrightness += star.brightness;
   }
@@ -1323,7 +1337,7 @@ const analyzeImageForStars = async (
     const detectedStarsResult: Star[] = detectedPoints.map(pStar => ({
       x: pStar.x, 
       y: pStar.y, 
-      brightness: pStar.value, 
+      brightness: pStar.windowSumBrightness, // Use windowSumBrightness for Star.brightness
       fwhm: pStar.fwhm,
       isManuallyAdded: false,
     }));
@@ -1352,7 +1366,7 @@ const analyzeImageForStars = async (
     finalUpdatedEntry.isAnalyzed = false;
   } finally {
     finalUpdatedEntry.isAnalyzing = false;
-    finalUpdatedEntry.isAnalyzed = true; // Mark as analyzed attempt completed
+    finalUpdatedEntry.isAnalyzed = true; 
     
     setAllImageStarData(prevData =>
       prevData.map(e => (e.id === finalUpdatedEntry.id ? { ...finalUpdatedEntry } : e))
@@ -1558,7 +1572,7 @@ const analyzeImageForStars = async (
           const newStar: Star = {
             x: finalStarX,
             y: finalStarY,
-            brightness: 150, 
+            brightness: 150, // Default brightness for manually added stars (windowSumBrightness equivalent)
             fwhm: 2.5, 
             isManuallyAdded: true,
           };
@@ -1798,7 +1812,7 @@ const analyzeImageForStars = async (
     addLog(`Dark Frames: ${useDarkFrames && darkFrameFiles.length > 0 ? `${darkFrameFiles.length} frame(s)` : 'Not Used'}.`);
     addLog(`Flat Frames: ${useFlatFrames && flatFrameFiles.length > 0 ? `${flatFrameFiles.length} frame(s)` : 'Not Used'}.`);
     addLog(`Alignment: Affine (Min ${MIN_STARS_FOR_AFFINE_ALIGNMENT} stars, Match ${NUM_STARS_TO_USE_FOR_AFFINE_MATCHING}, Star FWHM Filter: ${ALIGNMENT_STAR_MIN_FWHM}-${ALIGNMENT_STAR_MAX_FWHM}, Match Radius: ${AFFINE_MATCHING_RADIUS_PIXELS}px), Fallback Centroid (Min ${MIN_STARS_FOR_CENTROID_ALIGNMENT} stars, Auto Target ${AUTO_ALIGN_TARGET_STAR_COUNT}).`);
-    addLog(`Star Detection (Self-Contained): MinContrast=${DETECTOR_MIN_CONTRAST}, MinBright=${DETECTOR_MIN_BRIGHTNESS}, MaxBright=${DETECTOR_MAX_BRIGHTNESS}, MinDist=${DETECTOR_MIN_DISTANCE}, MaxStars=${DETECTOR_MAX_STARS}, MinFWHM=${DETECTOR_MIN_FWHM}, MaxFWHM=${DETECTOR_MAX_FWHM}, Margin=${DETECTOR_MARGIN}, FlatTol=${DETECTOR_FLATNESS_TOLERANCE}.`);
+    addLog(`Star Detection (Self-Contained): MinContrast=${DETECTOR_MIN_CONTRAST}, MinBright(CenterPx)=${DETECTOR_MIN_BRIGHTNESS}, MinDist=${DETECTOR_MIN_DISTANCE}, MaxStars=${DETECTOR_MAX_STARS}, MinFWHM=${DETECTOR_MIN_FWHM}, MaxFWHM=${DETECTOR_MAX_FWHM}, Margin=${DETECTOR_MARGIN}, FlatTol=${DETECTOR_FLATNESS_TOLERANCE}.`);
     addLog(`Brightness Centroid Fallback Threshold: ${BRIGHTNESS_CENTROID_FALLBACK_THRESHOLD_GRAYSCALE_EQUIVALENT} (grayscale equivalent).`);
 
     if (typeof window === 'undefined' || typeof document === 'undefined') {
@@ -2227,7 +2241,7 @@ const analyzeImageForStars = async (
             
             if (goodFWHMCurrentStarsRaw.length >= MIN_STARS_FOR_AFFINE_ALIGNMENT) {
                 const srcPtsMatched: AstroAlignPoint[] = [];
-                const dstPtsMatched: AstroAlignPoint[] = []; // These will be a subset of referenceStarsForAffine
+                const dstPtsMatched: AstroAlignPoint[] = []; 
                 const usedCurrentStarIndices = new Set<number>();
 
                 const originalEntryIndexInCentroids = currentImageEntriesForStacking.findIndex(e => e.id === currentImageEntry.id);
@@ -2240,9 +2254,9 @@ const analyzeImageForStars = async (
                     dyCentroid = referenceCentroidForFallback.y - currentCentroid.y;
                 }
 
-                for (const refStar of referenceStarsForAffine) { // refStar is from the reference image (a potential DstPt)
-                    const predictedXInCurrent = refStar.x - dxCentroid; // Expected X of this refStar in current image's original coord system
-                    const predictedYInCurrent = refStar.y - dyCentroid; // Expected Y of this refStar in current image's original coord system
+                for (const refStar of referenceStarsForAffine) { 
+                    const predictedXInCurrent = refStar.x - dxCentroid; 
+                    const predictedYInCurrent = refStar.y - dyCentroid; 
 
                     let bestMatchIndexInCurrent = -1;
                     let minDistanceSqToPredicted = AFFINE_MATCHING_RADIUS_SQ;
@@ -2264,7 +2278,7 @@ const analyzeImageForStars = async (
                         srcPtsMatched.push({ x: matchedCurrentStar.x, y: matchedCurrentStar.y });
                         dstPtsMatched.push({ x: refStar.x, y: refStar.y });
                         usedCurrentStarIndices.add(bestMatchIndexInCurrent);
-                        if (yBandStart === 0 && srcPtsMatched.length <= NUM_STARS_TO_USE_FOR_AFFINE_MATCHING && Math.random() < 0.3) { // Log some matches
+                        if (yBandStart === 0 && srcPtsMatched.length <= NUM_STARS_TO_USE_FOR_AFFINE_MATCHING && Math.random() < 0.3) { 
                             addLog(`[AFFINE MATCH] Ref(${refStar.x.toFixed(1)},${refStar.y.toFixed(1)}) to Curr(${matchedCurrentStar.x.toFixed(1)},${matchedCurrentStar.y.toFixed(1)}) via Pred(${predictedXInCurrent.toFixed(1)},${predictedYInCurrent.toFixed(1)}), dist ${Math.sqrt(minDistanceSqToPredicted).toFixed(1)}px`);
                         }
                     }
@@ -2298,7 +2312,7 @@ const analyzeImageForStars = async (
             } else {
                  if (yBandStart === 0) addLog(`[AFFINE INFO] ${currentImageEntry.file.name}: Not enough FWHM-ok stars (${goodFWHMCurrentStarsRaw.length}) for matching. Need ${MIN_STARS_FOR_AFFINE_ALIGNMENT}. Falling back.`);
             }
-        } else { // Conditions for affine not met (e.g. current is ref, or not enough stars in ref/current)
+        } else { 
             if (yBandStart === 0 && currentImageEntry.id !== referenceImageEntry.id) {
                 let reason = "Unknown";
                 if (referenceStarsForAffine.length < MIN_STARS_FOR_AFFINE_ALIGNMENT) reason = `ref stars ${referenceStarsForAffine.length} < min ${MIN_STARS_FOR_AFFINE_ALIGNMENT}`;
@@ -2326,7 +2340,7 @@ const analyzeImageForStars = async (
                 dx = referenceCentroidForFallback.x - currentCentroid.x;
                 dy = referenceCentroidForFallback.y - currentCentroid.y;
             } else if (currentImageEntry.id === referenceImageEntry.id) {
-                dx = 0; dy = 0; // Reference image doesn't move
+                dx = 0; dy = 0; 
             } else {
                if(yBandStart === 0) addLog(`[ALIGN FALLBACK WARN] ${currentImageEntry.file.name}: Centroid data missing for fallback translation or is ref. No translation if not ref.`);
             }
@@ -2975,3 +2989,6 @@ const analyzeImageForStars = async (
 
 
 
+
+
+    
