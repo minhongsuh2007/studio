@@ -35,7 +35,7 @@ interface LogEntry {
 
 export type StarSelectionMode = 'auto' | 'manual';
 
-// Application-wide Star interface
+// Application-wide Star interface (for UI and general use)
 export interface Star {
   x: number;
   y: number;
@@ -47,8 +47,8 @@ export interface ImageStarEntry {
   id: string;
   file: File;
   previewUrl: string;
-  analysisStars: Star[];
-  initialAutoStars: Star[];
+  analysisStars: Star[]; // Uses the application-wide Star interface
+  initialAutoStars: Star[]; // Stores stars from auto-detection, also uses application-wide Star interface
   analysisDimensions: { width: number; height: number };
   userReviewed: boolean;
   isAnalyzed: boolean;
@@ -59,7 +59,7 @@ export interface ImageStarEntry {
 interface SourceImageForApplyMenu {
   id: string;
   fileName: string;
-  stars: Star[];
+  stars: Star[]; // Uses the application-wide Star interface
   dimensions: { width: number; height: number };
 }
 
@@ -74,26 +74,25 @@ const STACKING_BAND_HEIGHT = 50;
 const SIGMA_CLIP_THRESHOLD = 2.0;
 const SIGMA_CLIP_ITERATIONS = 2;
 const MIN_STARS_FOR_ALIGNMENT = 3;
-const AUTO_ALIGN_TARGET_STAR_COUNT = 25;
+const AUTO_ALIGN_TARGET_STAR_COUNT = 25; // Number of brightest stars to use for alignment in auto mode
 
 const PROGRESS_INITIAL_SETUP = 5;
 const PROGRESS_CENTROID_CALCULATION_TOTAL = 30;
 const PROGRESS_BANDED_STACKING_TOTAL = 65;
 
-// Constants for PSF-based star detection pipeline
-const DEFAULT_PSF_FWHM = 2.5;
-const DEFAULT_PSF_KERNEL_SIZE = 7; // Must be odd
-const DEFAULT_PSF_DETECTION_THRESHOLD = 50; // On convolved 0-255 grayscale image
+// Constants for the new PSF Pipeline
+const PIPELINE_PSF_FWHM_FOR_BLUR = 2.0;     // FWHM for the PSF kernel used in findAndTrackStars for blurring
+const PIPELINE_PSF_KERNEL_SIZE = 7;        // Kernel size for createPSF called within findAndTrackStars
+const PIPELINE_DETECT_TOP_N_STARS = 75;    // The 'count' parameter for detectTopStars
+const PIPELINE_DETECT_MAX_FWHM = 7.0;      // The 'maxFWHM' parameter for detectTopStars
+const PIPELINE_ESTIMATE_CENTROID_WINDOW = 3; // The 'window' parameter for estimateCentroid
 
+// Constants for manual star click refinement (still used)
 const BRIGHTNESS_CENTROID_FALLBACK_THRESHOLD_GRAYSCALE_EQUIVALENT = 30;
-
 const STAR_ANNOTATION_MAX_DISPLAY_WIDTH = 500;
 const STAR_CLICK_TOLERANCE_ON_DISPLAY_CANVAS_PX = 10;
-const MANUAL_STAR_CLICK_CENTROID_RADIUS = 10; 
-const MANUAL_STAR_CLICK_CENTROID_BRIGHTNESS_THRESHOLD = 30; 
-
-const AUTO_DETECT_STAR_REFINEMENT_RADIUS = 5; 
-const AUTO_DETECT_STAR_REFINEMENT_BRIGHTNESS_THRESHOLD = 30; 
+const MANUAL_STAR_CLICK_CENTROID_RADIUS = 10;
+const MANUAL_STAR_CLICK_CENTROID_BRIGHTNESS_THRESHOLD = 30;
 
 const IS_LARGE_IMAGE_THRESHOLD_MP = 12;
 const MAX_DIMENSION_DOWNSCALED = 2048;
@@ -168,18 +167,24 @@ const applyImageAdjustmentsToDataURL = async (
 };
 
 
-// --- New PSF Star Detection Pipeline Functions ---
-type DetectedPSFStar = { x: number; y: number; value: number }; // Local type for the new pipeline
-type GrayscaleImageArray = number[][];
+// --- New PSF Star Detection Pipeline (User Provided) ---
+type PSFPipelineStar = {
+  x: number; // Original integer x
+  y: number; // Original integer y
+  value: number; // Peak value from convolved image
+  fwhm: number;
+  cx?: number; // Subpixel x
+  cy?: number; // Subpixel y
+  id?: number; // Tracked across frames (not used for single image analysis yet)
+};
 
-function createPSF(
-  size: number,
-  fwhm: number,
-  amplitude = 1.0,
-  normalize = true
-): GrayscaleImageArray {
+/**
+ * Create 2D Gaussian PSF kernel
+ */
+function createPSF(size: number, fwhm: number, addLog?: (message: string) => void): number[][] {
+  if (addLog) addLog(`[PSF PIPE] Creating PSF: size=${size}, fwhm=${fwhm}`);
   const sigma = fwhm / 2.3548;
-  const kernel: GrayscaleImageArray = [];
+  const kernel: number[][] = [];
   const center = Math.floor(size / 2);
   const sigma2 = 2 * sigma * sigma;
   let sum = 0;
@@ -189,131 +194,300 @@ function createPSF(
     for (let x = 0; x < size; x++) {
       const dx = x - center;
       const dy = y - center;
-      const value = amplitude * Math.exp(-(dx * dx + dy * dy) / sigma2);
+      const value = Math.exp(-(dx * dx + dy * dy) / sigma2);
       kernel[y][x] = value;
       sum += value;
     }
   }
 
-  if (normalize) {
-    for (let y = 0; y < size; y++) {
-      for (let x = 0; x < size; x++) {
-        kernel[y][x] /= sum;
-      }
+  // Normalize
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      kernel[y][x] /= sum;
     }
   }
+  if (addLog) addLog(`[PSF PIPE] PSF kernel created and normalized.`);
   return kernel;
 }
 
-function getGrayscaleImageDataFromContext(ctx: CanvasRenderingContext2D, addLog: (message: string) => void): GrayscaleImageArray {
+/**
+ * Extract grayscale luminance from canvas
+ */
+function getGrayscaleImageDataFromCanvas(ctx: CanvasRenderingContext2D, addLog?: (message: string) => void): number[][] {
   const { width, height } = ctx.canvas;
-  addLog(`[PSF PIPE] Converting canvas ${width}x${height} to grayscale array.`);
-  const imgData = ctx.getImageData(0, 0, width, height).data;
-  const gray: GrayscaleImageArray = [];
+  if (addLog) addLog(`[PSF PIPE] Extracting grayscale data from canvas: ${width}x${height}`);
+  const data = ctx.getImageData(0, 0, width, height).data;
+  const gray: number[][] = [];
 
   for (let y = 0; y < height; y++) {
     gray[y] = [];
     for (let x = 0; x < width; x++) {
-      const i = (y * width + x) * 4;
-      const r = imgData[i];
-      const g = imgData[i + 1];
-      const b = imgData[i + 2];
-      gray[y][x] = 0.299 * r + 0.587 * g + 0.114 * b; // Luminance
+      const idx = (y * width + x) * 4;
+      const r = data[idx];
+      const g = data[idx + 1];
+      const b = data[idx + 2];
+      gray[y][x] = 0.299 * r + 0.587 * g + 0.114 * b;
     }
   }
-  addLog(`[PSF PIPE] Grayscale conversion complete.`);
+  if (addLog) addLog(`[PSF PIPE] Grayscale data extraction complete.`);
   return gray;
 }
 
-function convolveGrayscaleImage(image: GrayscaleImageArray, kernel: GrayscaleImageArray, addLog: (message: string) => void): GrayscaleImageArray {
+/**
+ * Convolve image with kernel
+ */
+function convolveImagePSF(image: number[][], kernel: number[][], addLog?: (message: string) => void): number[][] {
   const height = image.length;
   const width = image[0]?.length || 0;
   if (width === 0 || height === 0) {
-    addLog("[PSF PIPE WARN] convolveGrayscaleImage called with empty image.");
+    if (addLog) addLog("[PSF PIPE WARN] convolveImagePSF called with empty image.");
     return [];
   }
-
   const kSize = kernel.length;
   const kHalf = Math.floor(kSize / 2);
-  const result: GrayscaleImageArray = Array.from({ length: height }, () => Array(width).fill(0));
-
-  addLog(`[PSF PIPE] Starting convolution. Image: ${width}x${height}, Kernel: ${kSize}x${kSize}.`);
-  // const startTime = performance.now();
+  const result = Array.from({ length: height }, () => Array(width).fill(0));
+  if (addLog) addLog(`[PSF PIPE] Starting convolution. Image: ${width}x${height}, Kernel: ${kSize}x${kSize}.`);
 
   for (let y = kHalf; y < height - kHalf; y++) {
     for (let x = kHalf; x < width - kHalf; x++) {
       let sum = 0;
       for (let ky = 0; ky < kSize; ky++) {
         for (let kx = 0; kx < kSize; kx++) {
-          const iy = y + ky - kHalf;
           const ix = x + kx - kHalf;
-          // This assumes iy, ix are within bounds of `image` due to outer loop limits
+          const iy = y + ky - kHalf;
           sum += image[iy][ix] * kernel[ky][kx];
         }
       }
       result[y][x] = sum;
     }
   }
-  // const endTime = performance.now();
-  addLog(`[PSF PIPE] Convolution complete.`); // Took ${(endTime - startTime).toFixed(2)} ms.`);
+  if (addLog) addLog(`[PSF PIPE] Convolution complete.`);
   return result;
 }
 
-function detectStarsFromConvolvedImage(image: GrayscaleImageArray, threshold: number, addLog: (message: string) => void): DetectedPSFStar[] {
-  const stars: DetectedPSFStar[] = [];
+/**
+ * Estimate subpixel centroid using brightness-weighted mean
+ */
+function estimateCentroidPSF(
+  image: number[][],
+  x: number,
+  y: number,
+  windowSize = 3, // Renamed from window to windowSize for clarity
+  addLog?: (message: string) => void
+): [number, number] | null { // Return null if out of bounds
+  let sum = 0,
+    sumX = 0,
+    sumY = 0;
   const height = image.length;
   const width = image[0]?.length || 0;
 
+  for (let dy = -windowSize; dy <= windowSize; dy++) {
+    for (let dx = -windowSize; dx <= windowSize; dx++) {
+      const currentY = y + dy;
+      const currentX = x + dx;
+      if (currentY < 0 || currentY >= height || currentX < 0 || currentX >= width) {
+        // if (addLog && (dx === -windowSize && dy === -windowSize)) addLog(`[PSF CENTROID] Skipping out-of-bounds pixel at ${currentX},${currentY} for center ${x},${y}`);
+        continue; // Skip pixels outside image bounds
+      }
+      const val = image[currentY][currentX];
+      sum += val;
+      sumX += currentX * val;
+      sumY += currentY * val;
+    }
+  }
+  if (sum === 0) {
+    if (addLog) addLog(`[PSF CENTROID WARN] Sum of pixel values in window for centroid at (${x},${y}) is zero. Cannot calculate centroid.`);
+    return null;
+  }
+  return [sumX / sum, sumY / sum];
+}
+
+
+/**
+ * Find top N brightest stars (with FWHM and centroid filtering)
+ */
+function detectTopStarsPSF(
+  image: number[][], // This should be the convolved image
+  originalGrayscaleImage: number[][], // For more accurate centroid/FWHM if needed, or use convolved for simplicity
+  count = 5,
+  maxFWHM = 5.0,
+  centroidWindow = 3,
+  addLog?: (message: string) => void
+): PSFPipelineStar[] {
+  const height = image.length;
+  const width = image[0]?.length || 0;
   if (width === 0 || height === 0) {
-    addLog("[PSF PIPE WARN] detectStarsFromConvolvedImage called with empty image.");
+    if (addLog) addLog("[PSF PIPE WARN] detectTopStarsPSF called with empty image.");
     return [];
   }
-  addLog(`[PSF PIPE] Detecting stars from convolved image ${width}x${height} with threshold ${threshold}.`);
+  const candidates: PSFPipelineStar[] = [];
+  if (addLog) addLog(`[PSF DETECT] Detecting top stars. Target count: ${count}, Max FWHM: ${maxFWHM}, Centroid window: ${centroidWindow}. Image: ${width}x${height}`);
 
-  for (let y = 1; y < height - 1; y++) { // Iterate within borders to allow neighbor checks
-    for (let x = 1; x < width - 1; x++) {
-      const value = image[y][x];
+  // Iterate within a boundary to allow FWHM/centroid estimation window
+  const boundary = Math.max(5, centroidWindow + 1); 
+
+  for (let y = boundary; y < height - boundary; y++) {
+    for (let x = boundary; x < width - boundary; x++) {
+      const value = image[y][x]; // Value from convolved image
+
+      // Local maxima check on convolved image
       if (
-        value > threshold &&
-        image[y-1] && image[y+1] && image[y][x-1] !== undefined && image[y][x+1] !== undefined && // Ensure neighbors exist
         value > image[y - 1][x] &&
         value > image[y + 1][x] &&
         value > image[y][x - 1] &&
         value > image[y][x + 1]
       ) {
-        stars.push({ x, y, value });
+        // Estimate FWHM using a small window on the *original* grayscale image for better accuracy
+        // or on the convolved image if original is not easily available or for consistency
+        let fwhmSum = 0,
+          fwhmSumX = 0,
+          fwhmSumY = 0,
+          fwhmSumXX = 0,
+          fwhmSumYY = 0;
+        const fwhmEstWindow = 2; // Small window for FWHM estimation
+        
+        let validPixelsForFWHM = 0;
+        for (let dy = -fwhmEstWindow; dy <= fwhmEstWindow; dy++) {
+          for (let dx = -fwhmEstWindow; dx <= fwhmEstWindow; dx++) {
+            const px = x + dx;
+            const py = y + dy;
+            // Ensure indices are within bounds of originalGrayscaleImage
+            if (py >= 0 && py < originalGrayscaleImage.length && px >= 0 && px < (originalGrayscaleImage[0]?.length || 0)) {
+              const val = originalGrayscaleImage[py][px]; 
+              fwhmSum += val;
+              fwhmSumX += dx * val;
+              fwhmSumY += dy * val;
+              fwhmSumXX += dx * dx * val;
+              fwhmSumYY += dy * dy * val;
+              validPixelsForFWHM++;
+            }
+          }
+        }
+
+        if (fwhmSum === 0 || validPixelsForFWHM < (fwhmEstWindow*2+1)**2 / 2) { // Ensure enough pixels contributed
+            // if (addLog) addLog(`[PSF FWHM WARN] Sum for FWHM at (${x},${y}) is zero or too few pixels. Skipping FWHM calc.`);
+            continue; 
+        }
+
+        const varX = fwhmSumXX / fwhmSum - (fwhmSumX / fwhmSum) ** 2;
+        const varY = fwhmSumYY / fwhmSum - (fwhmSumY / fwhmSum) ** 2;
+        const sigma = Math.sqrt((varX + varY) / 2); // Average variance
+        const fwhm = 2.3548 * sigma;
+
+        if (fwhm > 0 && fwhm <= maxFWHM) { // Ensure FWHM is positive and within limits
+          // Estimate centroid on the *original* grayscale image for better subpixel accuracy
+          const centroidResult = estimateCentroidPSF(originalGrayscaleImage, x, y, centroidWindow, addLog);
+          if (centroidResult) {
+            const [cx, cy] = centroidResult;
+            candidates.push({ x, y, value, fwhm, cx, cy });
+          } else {
+            // if (addLog) addLog(`[PSF DETECT] Centroid estimation failed for candidate at (${x},${y}).`)
+          }
+        } else {
+            // if (addLog && fwhm > 0) addLog(`[PSF DETECT] Candidate at (${x},${y}) rejected due to FWHM: ${fwhm.toFixed(2)} (max: ${maxFWHM})`);
+        }
       }
     }
   }
-  addLog(`[PSF PIPE] Detected ${stars.length} raw star candidates using local maxima.`);
+  if (addLog) addLog(`[PSF DETECT] Found ${candidates.length} candidates before sorting and slicing.`);
+
+  const sortedCandidates = candidates.sort((a, b) => b.value - a.value);
+  const topNStars = sortedCandidates.slice(0, count).map((star, i) => ({ ...star, id: i }));
+  
+  if (addLog) addLog(`[PSF DETECT] Selected top ${topNStars.length} stars.`);
+  if (topNStars.length > 0 && addLog) {
+    // addLog(`[PSF DETECT] Example Star 0: x=${topNStars[0].x}, y=${topNStars[0].y}, val=${topNStars[0].value.toFixed(2)}, fwhm=${topNStars[0].fwhm.toFixed(2)}, cx=${topNStars[0].cx?.toFixed(2)}, cy=${topNStars[0].cy?.toFixed(2)}`);
+  }
+  return topNStars;
+}
+
+
+/**
+ * Match stars from previous frame using proximity (nearest-neighbor)
+ * (Not actively used for single frame analysis but kept for potential future use)
+ */
+function matchStarsPSF(prev: PSFPipelineStar[], current: PSFPipelineStar[], maxDist = 5, addLog?: (message: string) => void): PSFPipelineStar[] {
+  if (addLog) addLog(`[PSF MATCH] Attempting to match ${current.length} current stars against ${prev.length} previous stars. Max dist: ${maxDist}`);
+  const matched: PSFPipelineStar[] = [];
+  const usedCurrentStarIndices = new Set<number>();
+
+  for (const pStar of prev) {
+    let closestStar: PSFPipelineStar | null = null;
+    let closestStarIndex = -1;
+    let minDistanceSq = maxDist * maxDist;
+
+    current.forEach((cStar, cIndex) => {
+      if (usedCurrentStarIndices.has(cIndex)) return; // Already matched this current star
+
+      // Use sub-pixel coordinates if available for matching
+      const pMatchX = pStar.cx ?? pStar.x;
+      const pMatchY = pStar.cy ?? pStar.y;
+      const cMatchX = cStar.cx ?? cStar.x;
+      const cMatchY = cStar.cy ?? cStar.y;
+
+      const dx = cMatchX - pMatchX;
+      const dy = cMatchY - pMatchY;
+      const distSq = dx * dx + dy * dy;
+
+      if (distSq < minDistanceSq) {
+        minDistanceSq = distSq;
+        closestStar = cStar;
+        closestStarIndex = cIndex;
+      }
+    });
+
+    if (closestStar && closestStarIndex !== -1) {
+      matched.push({ ...closestStar, id: pStar.id }); // Preserve ID from previous star
+      usedCurrentStarIndices.add(closestStarIndex);
+    }
+  }
+  if (addLog) addLog(`[PSF MATCH] Matched ${matched.length} stars.`);
+  return matched;
+}
+
+
+/**
+ * Pipeline entry point
+ */
+function findAndTrackStarsPSF(
+  ctx: CanvasRenderingContext2D,
+  prevStars: PSFPipelineStar[] | null, // For potential future frame-to-frame tracking
+  psfFwhm: number,
+  psfKernelSize: number,
+  detectCount: number,
+  detectMaxFwhm: number,
+  centroidWindow: number,
+  addLog: (message: string) => void // Made addLog mandatory for better diagnostics
+): PSFPipelineStar[] {
+  addLog(`[PSF PIPE] Initiating findAndTrackStars. PSF FWHM: ${psfFwhm}, Kernel: ${psfKernelSize}, Detect Count: ${detectCount}, Detect Max FWHM: ${detectMaxFwhm}, Centroid Window: ${centroidWindow}`);
+  
+  const originalGrayscale = getGrayscaleImageDataFromCanvas(ctx, addLog);
+  if (originalGrayscale.length === 0 || originalGrayscale[0].length === 0) {
+    addLog("[PSF PIPE ERROR] Original grayscale image is empty.");
+    return [];
+  }
+
+  const psf = createPSF(psfKernelSize, psfFwhm, addLog);
+  const blurred = convolveImagePSF(originalGrayscale, psf, addLog);
+  if (blurred.length === 0 || blurred[0].length === 0) {
+    addLog("[PSF PIPE ERROR] Blurred image is empty after convolution.");
+    return [];
+  }
+  
+  const stars = detectTopStarsPSF(blurred, originalGrayscale, detectCount, detectMaxFwhm, centroidWindow, addLog);
+
+  if (prevStars && prevStars.length > 0) {
+    // Star matching logic is available but typically not used for single-image analysis in this app's context
+    // return matchStarsPSF(prevStars, stars, 5 /* maxDist */, addLog); 
+    addLog("[PSF PIPE] prevStars provided but matching is currently bypassed for single image analysis.");
+    return stars; // For current app, always return stars from current frame analysis
+  }
+
   return stars;
 }
 
-function findStarsFromCanvas(
-  ctx: CanvasRenderingContext2D,
-  addLog: (message: string) => void,
-  fwhm = DEFAULT_PSF_FWHM,
-  psfSize = DEFAULT_PSF_KERNEL_SIZE,
-  detectionThreshold = DEFAULT_PSF_DETECTION_THRESHOLD
-): DetectedPSFStar[] {
-  addLog(`[PSF PIPE] Starting findStarsFromCanvas. FWHM: ${fwhm}, PSF Size: ${psfSize}, Det. Threshold: ${detectionThreshold}.`);
-  const grayscale = getGrayscaleImageDataFromContext(ctx, addLog);
-  if (grayscale.length === 0 || grayscale[0].length === 0) {
-    addLog("[PSF PIPE ERROR] Grayscale conversion resulted in an empty image.");
-    return [];
-  }
-  const psf = createPSF(psfSize, fwhm);
-  addLog(`[PSF PIPE] PSF kernel ${psfSize}x${psfSize} created.`);
-  const convolved = convolveGrayscaleImage(grayscale, psf, addLog);
-  if (convolved.length === 0 || convolved[0].length === 0) {
-    addLog("[PSF PIPE ERROR] Convolution resulted in an empty image.");
-    return [];
-  }
-  const stars = detectStarsFromConvolvedImage(convolved, detectionThreshold, addLog);
-  addLog(`[PSF PIPE] findStarsFromCanvas finished, found ${stars.length} candidates.`);
-  return stars;
-}
-// --- End of New PSF Star Detection Pipeline Functions ---
+// --- End of New PSF Star Detection Pipeline ---
+
 
 
 function calculateStarArrayCentroid(starsInput: Star[], addLog: (message: string) => void): { x: number; y: number } | null {
@@ -376,7 +550,7 @@ function calculateBrightnessCentroid(imageData: ImageData, addLog: (message: str
         const r = data[i];
         const g = data[i + 1];
         const b = data[i + 2];
-        const brightness = 0.299 * r + 0.587 * g + 0.114 * b;
+        const brightness = 0.299 * r + 0.587 * g + 0.114 * b; // Luminance
 
         if (brightness > brightnessThreshold) {
           weightedX += x * brightness;
@@ -401,6 +575,7 @@ function calculateBrightnessCentroid(imageData: ImageData, addLog: (message: str
     };
 }
 
+// This function is still used for manual star click refinement
 function calculateLocalBrightnessCentroid(
   fullImageData: ImageData,
   cropRect: { x: number; y: number; width: number; height: number },
@@ -436,8 +611,8 @@ function calculateLocalBrightnessCentroid(
       const pixelBrightness = 0.299 * r + 0.587 * g + 0.114 * b;
 
       if (pixelBrightness > brightnessThreshold) {
-        weightedXSum += xInCrop * pixelBrightness;
-        weightedYSum += yInCrop * pixelBrightness;
+        weightedXSum += xInCrop * pixelBrightness; // xInCrop is relative to cropRect origin
+        weightedYSum += yInCrop * pixelBrightness; // yInCrop is relative to cropRect origin
         totalBrightnessVal += pixelBrightness;
         brightPixelCount++;
       }
@@ -449,6 +624,7 @@ function calculateLocalBrightnessCentroid(
     return null;
   }
   
+  // Return coordinates relative to the cropRect origin
   return {
     x: weightedXSum / totalBrightnessVal,
     y: weightedYSum / totalBrightnessVal,
@@ -472,9 +648,9 @@ const calculateMean = (arr: number[]): number => {
 };
 
 const calculateStdDev = (arr: number[], meanVal?: number): number => {
-  if (arr.length < 2) return 0;
+  if (arr.length < 2) return 0; // Standard deviation requires at least 2 points
   const mean = meanVal === undefined ? calculateMean(arr) : meanVal;
-  const variance = arr.reduce((acc, val) => acc + Math.pow(val - mean, 2), 0) / (arr.length -1);
+  const variance = arr.reduce((acc, val) => acc + Math.pow(val - mean, 2), 0) / (arr.length -1); // Use (n-1) for sample std dev
   return Math.sqrt(variance);
 };
 
@@ -489,12 +665,12 @@ const applySigmaClip = (
   let currentValues = [...initialValues];
 
   for (let iter = 0; iter < maxIterations; iter++) {
-    if (currentValues.length < 2) break;
+    if (currentValues.length < 2) break; // Need at least 2 values to calculate stddev
 
     const mean = calculateMean(currentValues);
     const stdDev = calculateStdDev(currentValues, mean);
 
-    if (stdDev === 0) break;
+    if (stdDev === 0) break; // No variation, or all values became identical
 
     const lowerBound = mean - sigmaThreshold * stdDev;
     const upperBound = mean + sigmaThreshold * stdDev;
@@ -502,12 +678,16 @@ const applySigmaClip = (
     const nextValues = currentValues.filter(val => val >= lowerBound && val <= upperBound);
 
     if (nextValues.length === currentValues.length) {
+      // No values were clipped, convergence
       break;
     }
     currentValues = nextValues;
   }
 
+  // If all values were clipped, fall back to the mean of the original set
   if (!currentValues.length) {
+    // This case should be rare if initialValues is not empty.
+    // console.warn("Sigma clipping resulted in an empty set. Falling back to mean of initial values.");
     return calculateMean(initialValues);
   }
   return calculateMean(currentValues);
@@ -550,8 +730,10 @@ const processFitsFileToDataURL_custom = async (file: File, addLog: (message: str
         const valuePart = parts.slice(1).join("=").trim();
         headerMap[key] = valuePart.split("/")[0].trim().replace(/'/g, "");
       } else {
-         if (card.trim() !== "" && !["COMMENT", "HISTORY", ""].includes(card.substring(0,8).trim())) {
-            addLog(`[FITS HEADER WARN] Skipping card without '=': ${card}`);
+         // Allow COMMENT and HISTORY cards, and empty cards, to pass without warning
+         const cardType = card.substring(0,8).trim();
+         if (card.trim() !== "" && !["COMMENT", "HISTORY", ""].includes(cardType)) {
+            addLog(`[FITS HEADER WARN] Skipping card without '=' (potentially non-standard): '${card}' (Type: ${cardType})`);
          }
       }
     }
@@ -578,9 +760,9 @@ const processFitsFileToDataURL_custom = async (file: File, addLog: (message: str
 
     const bytesPerPixel = Math.abs(bitpix) / 8;
     const pixelCount = width * height;
-    const rawPixelData = new Float32Array(pixelCount);
+    const rawPixelData = new Float32Array(pixelCount); // Use Float32Array to handle various FITS data types before normalization
 
-    const imageDataOffset = headerOffset;
+    const imageDataOffset = headerOffset; // This is the byte offset where pixel data begins
     addLog(`[FITS] Image data starting at offset: ${imageDataOffset}`);
 
 
@@ -589,19 +771,22 @@ const processFitsFileToDataURL_custom = async (file: File, addLog: (message: str
       return null;
     }
 
+    // FITS data is big-endian
+    const isBigEndian = true; // FITS standard specifies big-endian
+
     for (let i = 0; i < pixelCount; i++) {
       const pixelByteOffset = imageDataOffset + i * bytesPerPixel;
       try {
-        if (bitpix === 8) {
+        if (bitpix === 8) { // Unsigned 8-bit integer
             rawPixelData[i] = dataView.getUint8(pixelByteOffset);
-        } else if (bitpix === 16) {
-            rawPixelData[i] = dataView.getInt16(pixelByteOffset, false);
-        } else if (bitpix === 32) {
-            rawPixelData[i] = dataView.getInt32(pixelByteOffset, false);
-        } else if (bitpix === -32) {
-            rawPixelData[i] = dataView.getFloat32(pixelByteOffset, false);
-        } else if (bitpix === -64) {
-            rawPixelData[i] = dataView.getFloat64(pixelByteOffset, false);
+        } else if (bitpix === 16) { // Signed 16-bit integer
+            rawPixelData[i] = dataView.getInt16(pixelByteOffset, !isBigEndian);
+        } else if (bitpix === 32) { // Signed 32-bit integer
+            rawPixelData[i] = dataView.getInt32(pixelByteOffset, !isBigEndian);
+        } else if (bitpix === -32) { // IEEE 754 single-precision floating point
+            rawPixelData[i] = dataView.getFloat32(pixelByteOffset, !isBigEndian);
+        } else if (bitpix === -64) { // IEEE 754 double-precision floating point
+            rawPixelData[i] = dataView.getFloat64(pixelByteOffset, !isBigEndian);
         }
          else {
           addLog(`[FITS ERROR] Unsupported BITPIX value: ${bitpix}. Cannot read pixel data. Reading first pixel and stopping.`);
@@ -623,7 +808,7 @@ const processFitsFileToDataURL_custom = async (file: File, addLog: (message: str
       if (rawPixelData[i] > maxVal) maxVal = rawPixelData[i];
     }
 
-    if (minVal === Infinity || maxVal === -Infinity ) {
+    if (minVal === Infinity || maxVal === -Infinity || isNaN(minVal) || isNaN(maxVal) ) {
         addLog(`[FITS WARN] Could not determine valid min/max for normalization (min: ${minVal}, max: ${maxVal}). Image might be blank or contain only NaNs. Setting to default 0-255 range.`);
         minVal = 0;
         maxVal = 255;
@@ -658,10 +843,10 @@ const processFitsFileToDataURL_custom = async (file: File, addLog: (message: str
     const imgData = ctx.createImageData(width, height);
     for (let i = 0; i < pixelCount; i++) {
       const val = normalizedPixels[i];
-      imgData.data[i * 4 + 0] = val;
-      imgData.data[i * 4 + 1] = val;
-      imgData.data[i * 4 + 2] = val;
-      imgData.data[i * 4 + 3] = 255;
+      imgData.data[i * 4 + 0] = val; // R
+      imgData.data[i * 4 + 1] = val; // G
+      imgData.data[i * 4 + 2] = val; // B
+      imgData.data[i * 4 + 3] = 255; // Alpha
     }
     ctx.putImageData(imgData, 0, 0);
     addLog(`[FITS] Image data rendered to canvas.`);
@@ -687,13 +872,13 @@ const averageImageDataArrays = (imageDataArrays: ImageData[], targetWidth: numbe
 
   const numImages = imageDataArrays.length;
   const totalPixels = targetWidth * targetHeight;
-  const sumData = new Float32Array(totalPixels * 4); 
+  const sumData = new Float32Array(totalPixels * 4); // Use Float32Array for sum to avoid clamping during summation
 
   let validImagesProcessed = 0;
   for (const imgData of imageDataArrays) {
     if (imgData.width !== targetWidth || imgData.height !== targetHeight) {
       addLog(`[CAL MASTER WARN] Skipping image data in average due to dimension mismatch. Expected ${targetWidth}x${targetHeight}, got ${imgData.width}x${imgData.height}. This frame will not be part of the master.`);
-      continue; 
+      continue; // Skip if dimensions don't match
     }
     for (let i = 0; i < imgData.data.length; i++) {
       sumData[i] += imgData.data[i];
@@ -708,7 +893,7 @@ const averageImageDataArrays = (imageDataArrays: ImageData[], targetWidth: numbe
 
   const averagedData = new Uint8ClampedArray(totalPixels * 4);
   for (let i = 0; i < sumData.length; i++) {
-    averagedData[i] = sumData[i] / validImagesProcessed; 
+    averagedData[i] = sumData[i] / validImagesProcessed; // Average and clamp
   }
   addLog(`[CAL MASTER] Averaged ${validImagesProcessed} image data arrays into a master frame.`);
   return averagedData;
@@ -775,13 +960,15 @@ export default function AstroStackerPage() {
         timestamp: new Date().toLocaleTimeString(),
         message
       };
+      // Keep logs reasonably short to avoid performance issues with too many DOM elements
       const updatedLogs = [newLog, ...prevLogs];
-      return updatedLogs.slice(0, 100);
+      return updatedLogs.slice(0, 100); // Keep last 100 logs
     });
   }, []);
 
   useEffect(() => {
     if (logContainerRef.current) {
+      // Scroll to the top (most recent log)
       logContainerRef.current.scrollTop = 0;
     }
   }, [logs]);
@@ -810,12 +997,13 @@ export default function AstroStackerPage() {
           description: "Could not apply image adjustments.",
           variant: "destructive",
         });
-        setEditedPreviewUrl(imageForPostProcessing);
+        setEditedPreviewUrl(imageForPostProcessing); // Fallback to original on error
       } finally {
         setIsApplyingAdjustments(false);
       }
     };
 
+    // Debounce adjustments to avoid too many re-renders/calculations
     const debounceTimeout = setTimeout(applyAdjustments, 300);
     return () => clearTimeout(debounceTimeout);
 
@@ -853,15 +1041,17 @@ export default function AstroStackerPage() {
             }
              addLog(`[FITS] Successfully generated preview for ${file.name}.`);
         } else if (fileType === 'image/x-adobe-dng' || fileName.endsWith('.dng')) {
-          const dngMsg = `${file.name} is a DNG. Manual conversion to JPG/PNG is recommended.`;
+          // DNG files are often RAW files and might not render directly as easily as JPG/PNG in browser
+          // For now, attempt to create a data URL, but warn the user.
+          const dngMsg = `${file.name} is a DNG. Direct browser preview might be limited or slow. Manual conversion to JPG/PNG is recommended for best results.`;
           addLog(`[WARN] ${dngMsg}`);
           toast({
             title: "DNG File Detected",
             description: dngMsg,
-            variant: "default",
+            variant: "default", // Use default variant for warnings
             duration: 8000,
           });
-          originalPreviewUrl = await fileToDataURL(file);
+          originalPreviewUrl = await fileToDataURL(file); // Attempt to get a data URL
 
         } else if (acceptedWebTypes.includes(fileType)) {
             originalPreviewUrl = await fileToDataURL(file);
@@ -882,13 +1072,15 @@ export default function AstroStackerPage() {
         }
 
 
+        // Get natural dimensions and decide on downscaling
         return new Promise<ImageStarEntry | null>((resolveEntry) => {
             const img = new Image();
             img.onload = async () => {
                 const { naturalWidth, naturalHeight } = img;
-                let processedPreviewUrl = originalPreviewUrl!;
+                let processedPreviewUrl = originalPreviewUrl!; // Assume original initially
                 let finalDimensions = { width: naturalWidth, height: naturalHeight };
 
+                // Check if image is large and prompt for downscaling
                 if ((naturalWidth * naturalHeight) / (1000 * 1000) > IS_LARGE_IMAGE_THRESHOLD_MP) {
                     if (window.confirm(t('downscalePrompt', { fileName: file.name, width: naturalWidth, height: naturalHeight, maxSize: MAX_DIMENSION_DOWNSCALED }))) {
                         addLog(`User approved downscaling for ${file.name}. Original preview: ${naturalWidth}x${naturalHeight}`);
@@ -900,6 +1092,7 @@ export default function AstroStackerPage() {
                             let targetWidth = naturalWidth;
                             let targetHeight = naturalHeight;
 
+                            // Calculate new dimensions maintaining aspect ratio
                             if (naturalWidth > MAX_DIMENSION_DOWNSCALED || naturalHeight > MAX_DIMENSION_DOWNSCALED) {
                                 if (naturalWidth > naturalHeight) {
                                     targetWidth = MAX_DIMENSION_DOWNSCALED;
@@ -911,9 +1104,9 @@ export default function AstroStackerPage() {
                             }
                             canvas.width = targetWidth;
                             canvas.height = targetHeight;
-                            ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
+                            ctx.drawImage(img, 0, 0, targetWidth, targetHeight); // Draw scaled image
 
-                            processedPreviewUrl = canvas.toDataURL('image/png');
+                            processedPreviewUrl = canvas.toDataURL('image/png'); // Use PNG for downscaled preview
                             finalDimensions = { width: targetWidth, height: targetHeight };
                             addLog(`Downscaled ${file.name} preview to ${targetWidth}x${targetHeight}.`);
                         }
@@ -923,12 +1116,12 @@ export default function AstroStackerPage() {
                 }
 
                 resolveEntry({
-                    id: `${file.name}-${Date.now()}-${Math.random()}`,
+                    id: `${file.name}-${Date.now()}-${Math.random()}`, // Unique ID
                     file,
-                    previewUrl: processedPreviewUrl,
+                    previewUrl: processedPreviewUrl, // Use potentially downscaled URL
                     analysisStars: [],
                     initialAutoStars: [],
-                    analysisDimensions: finalDimensions,
+                    analysisDimensions: finalDimensions, // Store the dimensions used for the preview (and thus analysis)
                     userReviewed: false,
                     isAnalyzed: false,
                     isAnalyzing: false,
@@ -941,7 +1134,7 @@ export default function AstroStackerPage() {
                 toast({ title: "Error Reading Preview", description: errorMessage, variant: "destructive" });
                 resolveEntry(null);
             };
-            img.src = originalPreviewUrl!;
+            img.src = originalPreviewUrl!; // Start loading the original preview to get dimensions
         });
 
       } catch (error) {
@@ -996,21 +1189,22 @@ export default function AstroStackerPage() {
           previewUrl = await processFitsFileToDataURL_custom(file, addLog);
           if (!previewUrl) {
             toast({ title: `FITS ${frameTypeName} Fail`, description: `Could not process FITS ${file.name}. Logs have details.`, variant: "destructive" });
-            continue;
+            continue; // Skip this file
           }
         } else if (!acceptedWebTypes.includes(fileType)) {
           addLog(`[ERROR] Unsupported ${frameTypeName} frame ${file.name}. Use JPG, PNG, GIF, WEBP, or FITS.`);
           toast({ title: `Unsupported ${frameTypeName} Frame`, description: `${file.name} is unsupported.`, variant: "destructive" });
-          continue;
+          continue; // Skip this file
         } else {
           previewUrl = await fileToDataURL(file);
         }
 
         if (!previewUrl) {
           addLog(`[ERROR] Could not generate preview for ${frameType} frame ${file.name}.`);
-          continue;
+          continue; // Skip if preview fails
         }
         
+        // Get dimensions for the preview URL
         const img = new Image();
         const dimensions = await new Promise<{width: number, height: number} | null>((resolveDim) => {
             img.onload = () => resolveDim({ width: img.naturalWidth, height: img.naturalHeight });
@@ -1063,7 +1257,7 @@ export default function AstroStackerPage() {
     const fileName = setFilesState(prev => {
         const file = prev[indexToRemove];
         return file ? file.name : `frame at index ${indexToRemove}`;
-    });
+    }); // Get filename before modifying state
     addLog(`Removing ${frameType} frame: ${fileName} at index ${indexToRemove}`);
     setFilesState(prev => prev.filter((_, index) => index !== indexToRemove));
     setPreviewUrlsState(prev => prev.filter((_, index) => index !== indexToRemove));
@@ -1102,7 +1296,7 @@ export default function AstroStackerPage() {
     if (!currentEntry || currentEntry.isAnalyzing) return false;
 
     setAllImageStarData(prev => prev.map((entry, idx) => idx === imageIndex ? { ...entry, isAnalyzing: true } : entry));
-    addLog(`Starting star analysis for: ${currentEntry.file.name} using PSF pipeline...`);
+    addLog(`[PSF PIPE] Starting star analysis for: ${currentEntry.file.name} using new PSF pipeline...`);
 
     try {
       const imgEl = await loadImage(currentEntry.previewUrl, currentEntry.file.name);
@@ -1111,79 +1305,63 @@ export default function AstroStackerPage() {
       const tempAnalysisCtx = tempAnalysisCanvas.getContext('2d', { willReadFrequently: true });
       if (!tempAnalysisCtx) throw new Error("Could not get analysis canvas context.");
 
-      const analysisWidth = imgEl.naturalWidth;
-      const analysisHeight = imgEl.naturalHeight;
+      // Use the dimensions stored in analysisDimensions (which could be downscaled)
+      const analysisWidth = currentEntry.analysisDimensions.width;
+      const analysisHeight = currentEntry.analysisDimensions.height;
 
       tempAnalysisCanvas.width = analysisWidth;
       tempAnalysisCanvas.height = analysisHeight;
+      // Draw the image element (which might be full res) onto the canvas at the analysis dimensions
       tempAnalysisCtx.drawImage(imgEl, 0, 0, analysisWidth, analysisHeight);
       
-      // Use the new PSF-based star detection pipeline
-      const psfDetectedStarsRaw = findStarsFromCanvas(
-        tempAnalysisCtx, 
-        addLog, 
-        DEFAULT_PSF_FWHM, 
-        DEFAULT_PSF_KERNEL_SIZE, 
-        DEFAULT_PSF_DETECTION_THRESHOLD
+      addLog(`[PSF PIPE] Canvas prepared for ${currentEntry.file.name} at ${analysisWidth}x${analysisHeight}.`);
+
+      const pipelineStars: PSFPipelineStar[] = findAndTrackStarsPSF(
+        tempAnalysisCtx,
+        null, // No previous stars for single image analysis
+        PIPELINE_PSF_FWHM_FOR_BLUR,
+        PIPELINE_PSF_KERNEL_SIZE,
+        PIPELINE_DETECT_TOP_N_STARS,
+        PIPELINE_DETECT_MAX_FWHM,
+        PIPELINE_ESTIMATE_CENTROID_WINDOW,
+        addLog 
       );
       
-      addLog(`PSF pipeline found ${psfDetectedStarsRaw.length} candidates in ${currentEntry.file.name}. Refining positions...`);
-
-      // Refine positions using local centroid for each detected star
-      const refinedStars: Star[] = [];
-      const analysisImageData = tempAnalysisCtx.getImageData(0, 0, analysisWidth, analysisHeight); // Get once for all refinements
-
-      for (const rawStar of psfDetectedStarsRaw) {
-        let refinedX = rawStar.x;
-        let refinedY = rawStar.y;
-
-        const cropRectX = Math.max(0, Math.round(rawStar.x) - AUTO_DETECT_STAR_REFINEMENT_RADIUS);
-        const cropRectY = Math.max(0, Math.round(rawStar.y) - AUTO_DETECT_STAR_REFINEMENT_RADIUS);
-        const cropRectWidth = Math.min(
-            analysisWidth - cropRectX,
-            AUTO_DETECT_STAR_REFINEMENT_RADIUS * 2
-        );
-        const cropRectHeight = Math.min(
-            analysisHeight - cropRectY,
-            AUTO_DETECT_STAR_REFINEMENT_RADIUS * 2
-        );
-
-        if (cropRectWidth > 0 && cropRectHeight > 0) {
-            const localCentroid = calculateLocalBrightnessCentroid(
-                analysisImageData, // Use the full image data for local centroid
-                { x: cropRectX, y: cropRectY, width: cropRectWidth, height: cropRectHeight },
-                addLog, // Pass addLog
-                AUTO_DETECT_STAR_REFINEMENT_BRIGHTNESS_THRESHOLD
-            );
-
-            if (localCentroid) {
-                refinedX = cropRectX + localCentroid.x;
-                refinedY = cropRectY + localCentroid.y;
-            }
+      addLog(`[PSF PIPE] Detected ${pipelineStars.length} stars in ${currentEntry.file.name}. (Target: ${PIPELINE_DETECT_TOP_N_STARS})`);
+      
+      // Log FWHM stats for the detected stars
+      if (pipelineStars.length > 0) {
+        const fwhmValues = pipelineStars.map(s => s.fwhm).filter(f => f !== undefined && !isNaN(f));
+        if (fwhmValues.length > 0) {
+            const avgFwhm = fwhmValues.reduce((sum, f) => sum + f, 0) / fwhmValues.length;
+            const minFwhm = Math.min(...fwhmValues);
+            const maxFwhm = Math.max(...fwhmValues);
+            addLog(`[PSF PIPE] FWHM stats for ${currentEntry.file.name} (${fwhmValues.length} stars): Avg=${avgFwhm.toFixed(2)}, Min=${minFwhm.toFixed(2)}, Max=${maxFwhm.toFixed(2)}`);
         }
-        refinedStars.push({ x: refinedX, y: refinedY, brightness: rawStar.value });
-      }
-      
-      addLog(`Auto-detected and refined ${refinedStars.length} stars in ${currentEntry.file.name} (at ${analysisWidth}x${analysisHeight}).`);
-      
-      if (refinedStars.length > 1000) {
-        addLog(`[DETECT WARN] Detected a large number of stars (${refinedStars.length}) after PSF pipeline and refinement.`);
-      } else if (refinedStars.length === 0) {
-        addLog(`[DETECT WARN] No stars detected with current PSF pipeline parameters (FWHM: ${DEFAULT_PSF_FWHM}, Kernel: ${DEFAULT_PSF_KERNEL_SIZE}, Threshold: ${DEFAULT_PSF_DETECTION_THRESHOLD}).`);
+      } else {
+        addLog(`[PSF PIPE WARN] No stars detected for ${currentEntry.file.name} with current pipeline parameters.`);
       }
 
+      // Map PSFPipelineStar to the application's simpler Star interface
+      const finalStars: Star[] = pipelineStars.map(pStar => ({
+        x: pStar.cx ?? pStar.x, // Prefer sub-pixel centroid
+        y: pStar.cy ?? pStar.y, // Prefer sub-pixel centroid
+        brightness: pStar.value,  // Peak value from convolved image
+        isManuallyAdded: false,
+      }));
 
       setAllImageStarData(prev => prev.map((entry, idx) => {
         if (idx === imageIndex) {
           const newEntry = {
             ...entry,
-            initialAutoStars: [...refinedStars], // Store the refined stars
-            analysisDimensions: { width: analysisWidth, height: analysisHeight },
+            initialAutoStars: [...finalStars], // Store the refined stars
+            analysisDimensions: { width: analysisWidth, height: analysisHeight }, // Should already be set, but ensure
             isAnalyzed: true,
             isAnalyzing: false,
           };
+          // If mode is auto, or manual but not yet reviewed, populate analysisStars
           if (newEntry.starSelectionMode === 'auto' || (newEntry.starSelectionMode === 'manual' && !newEntry.userReviewed)) {
-            newEntry.analysisStars = [...refinedStars];
+            newEntry.analysisStars = [...finalStars];
           }
           return newEntry;
         }
@@ -1219,27 +1397,33 @@ export default function AstroStackerPage() {
         const updatedEntry: ImageStarEntry = {
           ...entry,
           starSelectionMode: newMode,
-          userReviewed: false,
+          userReviewed: false, // Reset review status when mode changes
         };
 
+        // If switching to auto, reset analysisStars to initialAutoStars
         if (newMode === 'auto') {
           updatedEntry.analysisStars = [...entry.initialAutoStars];
-        } else {
+        } else { // Switching to manual
+            // If analysisStars is empty but initialAutoStars is not, populate with initialAutoStars as a starting point
             if ((!entry.analysisStars || entry.analysisStars.length === 0) && entry.initialAutoStars.length > 0) {
                updatedEntry.analysisStars = [...entry.initialAutoStars];
             }
+            // Otherwise, keep existing analysisStars if user had manually edited before
         }
         return updatedEntry;
       }
       return entry;
     }));
 
+    // If switched to manual and not analyzed, trigger analysis
+    // Use a timeout to ensure state update has propagated before checking
+    await yieldToEventLoop(10); 
     setAllImageStarData(currentData => {
         if (imageIndex !== -1) {
             const entryToCheck = currentData.find((e, i) => i === imageIndex);
             if (entryToCheck && entryToCheck.starSelectionMode === 'manual' && !entryToCheck.isAnalyzed && !entryToCheck.isAnalyzing) {
                 addLog(`Image ${entryToCheck.file.name} switched to manual mode, and needs analysis. Analyzing now...`);
-                analyzeImageForStars(imageIndex);
+                analyzeImageForStars(imageIndex); // analyzeImageForStars will handle setting isAnalyzing
             }
         }
         return currentData;
@@ -1250,63 +1434,75 @@ export default function AstroStackerPage() {
     const currentEntry = allImageStarData[imageIndex];
     if (!currentEntry) return;
 
-    setCurrentEditingImageData(null); 
+    setCurrentEditingImageData(null); // Reset previous image data
 
     let entryForEditing = {...currentEntry};
 
+    // If in auto mode, or in manual but not user reviewed and has no stars, switch to manual and prepare stars
     if (entryForEditing.starSelectionMode === 'auto' ||
         (entryForEditing.starSelectionMode === 'manual' && !entryForEditing.userReviewed && entryForEditing.analysisStars.length === 0)) {
       addLog(`Switching ${entryForEditing.file.name} to manual mode for editing (or preparing unreviewed manual).`);
       entryForEditing.starSelectionMode = 'manual';
-      if (!entryForEditing.isAnalyzed || entryForEditing.initialAutoStars.length > 0) {
+      // If initial auto stars are available, use them as a base for manual editing
+      if (entryForEditing.initialAutoStars.length > 0) { // Check if initialAutoStars is populated
           entryForEditing.analysisStars = [...entryForEditing.initialAutoStars];
       }
-      entryForEditing.userReviewed = false;
+      entryForEditing.userReviewed = false; // Ensure it's marked as not reviewed yet
 
+      // Update state immediately to reflect mode change
       setAllImageStarData(prev => prev.map((e, idx) => idx === imageIndex ? entryForEditing : e));
-      await yieldToEventLoop(10);
+      await yieldToEventLoop(10); // Allow state to update
     }
 
+    // Re-fetch the entry from state as it might have been updated
     const updatedEntryForAnalysisCheck = allImageStarData.find(e => e.id === entryForEditing.id) || entryForEditing;
 
+    // If not analyzed, analyze it first
     if (!updatedEntryForAnalysisCheck.isAnalyzed && !updatedEntryForAnalysisCheck.isAnalyzing) {
       addLog(`Analyzing ${updatedEntryForAnalysisCheck.file.name} before editing stars.`);
       const analysisSuccess = await analyzeImageForStars(imageIndex);
       if (!analysisSuccess) {
-        return;
+        toast({title: "Analysis Failed", description: `Could not analyze ${updatedEntryForAnalysisCheck.file.name}. Cannot edit stars.`, variant: "destructive"});
+        return; // Stop if analysis fails
       }
-      await yieldToEventLoop(100); 
+      await yieldToEventLoop(100); // Wait for analysis state to propagate
     } else if (updatedEntryForAnalysisCheck.isAnalyzing) {
       toast({title: "Analysis in Progress", description: `Still analyzing ${updatedEntryForAnalysisCheck.file.name}. Please wait.`});
       return;
     }
 
+    // Fetch the latest version of the entry after potential analysis
     const finalEntryForEditing = allImageStarData.find(e => e.id === updatedEntryForAnalysisCheck.id);
 
     if (finalEntryForEditing && finalEntryForEditing.isAnalyzed && finalEntryForEditing.analysisDimensions) {
+      // Ensure analysisStars is populated for manual editing, using initialAutoStars if analysisStars is empty
       let starsToEdit = [...finalEntryForEditing.analysisStars];
       if (finalEntryForEditing.starSelectionMode === 'manual' && starsToEdit.length === 0 && finalEntryForEditing.initialAutoStars.length > 0) {
           starsToEdit = [...finalEntryForEditing.initialAutoStars];
           addLog(`Populating editor for ${finalEntryForEditing.file.name} with ${starsToEdit.length} auto-detected stars as a base for manual editing.`);
       }
 
+      // Update the state to ensure the correct stars are ready for the editor
       setAllImageStarData(prev => prev.map((e, idx) =>
           idx === imageIndex ? {...e, analysisStars: starsToEdit, starSelectionMode: 'manual' } : e
       ));
       
+      // Load image data for precise click refinement
       const imgToEdit = new Image();
       imgToEdit.onload = () => {
           const tempCanvas = document.createElement('canvas');
+          // Use analysisDimensions for the canvas to match what stars were detected on
           tempCanvas.width = finalEntryForEditing.analysisDimensions.width;
           tempCanvas.height = finalEntryForEditing.analysisDimensions.height;
           const tempCtx = tempCanvas.getContext('2d', { willReadFrequently: true });
           if (tempCtx) {
+              // Draw the potentially full-res previewUrl image onto the analysis-dimensioned canvas
               tempCtx.drawImage(imgToEdit, 0, 0, tempCanvas.width, tempCanvas.height);
               setCurrentEditingImageData(tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height));
               addLog(`Loaded ImageData (${tempCanvas.width}x${tempCanvas.height}) for ${finalEntryForEditing.file.name} for precise star editing.`);
           } else {
-              setCurrentEditingImageData(null);
-              addLog(`[WARN] Could not get canvas context to load ImageData for ${finalEntryForEditing.file.name}. Precise click disabled.`);
+              setCurrentEditingImageData(null); // Fallback
+              addLog(`[WARN] Could not get canvas context to load ImageData for ${finalEntryForEditing.file.name}. Precise click refinement disabled.`);
               toast({title: "Warning", description: `Could not prepare image data for ${finalEntryForEditing.file.name}. Precise click refinement disabled.`});
           }
           setCurrentEditingImageIndex(imageIndex);
@@ -1314,14 +1510,15 @@ export default function AstroStackerPage() {
           addLog(`Opened star editor for ${finalEntryForEditing.file.name}. Mode: Manual. Initial stars for edit: ${starsToEdit.length}. Dim: ${finalEntryForEditing.analysisDimensions.width}x${finalEntryForEditing.analysisDimensions.height}`);
       };
       imgToEdit.onerror = () => {
-          setCurrentEditingImageData(null);
+          setCurrentEditingImageData(null); // Fallback
           addLog(`[ERROR] Failed to load image ${finalEntryForEditing.file.name} for ImageData preparation for editor.`);
           toast({title: "Editor Error", description: `Could not load image ${finalEntryForEditing.file.name} for editing stars.`, variant: "destructive"});
-          setIsStarEditingMode(false);
+          setIsStarEditingMode(false); // Don't open editor if image fails to load
       };
-      imgToEdit.src = finalEntryForEditing.previewUrl;
+      imgToEdit.src = finalEntryForEditing.previewUrl; // Load the preview URL (could be full res or downscaled)
 
     } else {
+       // This case implies analysis is done, but dimensions or preview might be missing, or entry not found
        console.warn(`Cannot edit stars for ${finalEntryForEditing?.file?.name || 'image'}: Analysis data, dimension data, or preview URL might be incomplete or loading failed.`);
        toast({title: "Error", description: `Could not prepare ${finalEntryForEditing?.file?.name || 'image'} for star editing. Analysis data may be missing.`, variant: "destructive"});
     }
@@ -1341,26 +1538,29 @@ export default function AstroStackerPage() {
 
     if (currentEditingImageData) {
       const searchRadius = MANUAL_STAR_CLICK_CENTROID_RADIUS;
+      // Define the crop rectangle around the click in analysis coordinates
       const cropRectX = Math.max(0, Math.round(clickedX_analysis) - searchRadius);
       const cropRectY = Math.max(0, Math.round(clickedY_analysis) - searchRadius);
       
       const cropRectWidth = Math.min(
-        currentEditingImageData.width - cropRectX, 
+        currentEditingImageData.width - cropRectX, // Ensure width does not exceed image boundary
         searchRadius * 2
       );
       const cropRectHeight = Math.min(
-        currentEditingImageData.height - cropRectY, 
+        currentEditingImageData.height - cropRectY, // Ensure height does not exceed image boundary
         searchRadius * 2
       );
 
       if (cropRectWidth > 0 && cropRectHeight > 0) {
         const localCentroid = calculateLocalBrightnessCentroid(
-          currentEditingImageData,
+          currentEditingImageData, // This is already at analysisDimensions
           { x: cropRectX, y: cropRectY, width: cropRectWidth, height: cropRectHeight },
-          addLog
+          addLog, // Pass addLog
+          MANUAL_STAR_CLICK_CENTROID_BRIGHTNESS_THRESHOLD
         );
 
         if (localCentroid) {
+          // localCentroid returns x,y relative to cropRect. Convert back to full image coordinates.
           finalStarX = cropRectX + localCentroid.x;
           finalStarY = cropRectY + localCentroid.y;
           addLog(`Refined click from (${clickedX_analysis.toFixed(1)},${clickedY_analysis.toFixed(1)}) to local centroid (${finalStarX.toFixed(1)},${finalStarY.toFixed(1)}) in area of size ${cropRectWidth}x${cropRectHeight} around click.`);
@@ -1374,6 +1574,8 @@ export default function AstroStackerPage() {
       addLog("[STAR EDIT WARN] No ImageData available for local centroid calculation. Using direct click position.");
     }
 
+    // Calculate click tolerance in analysis image units
+    // This depends on the display width of the canvas vs its actual analysis resolution
     const effectiveCanvasDisplayWidth = Math.min(STAR_ANNOTATION_MAX_DISPLAY_WIDTH, entry.analysisDimensions.width);
     const clickToleranceInAnalysisUnits = effectiveCanvasDisplayWidth > 0 ? (STAR_CLICK_TOLERANCE_ON_DISPLAY_CANVAS_PX / effectiveCanvasDisplayWidth) * entry.analysisDimensions.width : STAR_CLICK_TOLERANCE_ON_DISPLAY_CANVAS_PX;
     const dynamicClickToleranceSquared = clickToleranceInAnalysisUnits * clickToleranceInAnalysisUnits;
@@ -1382,22 +1584,23 @@ export default function AstroStackerPage() {
       if (idx === currentEditingImageIndex) {
         let starFoundAndRemoved = false;
         const updatedStars = item.analysisStars.filter(star => {
-          const dx = star.x - finalStarX;
-          const dy = star.y - finalStarY;
+          const dx = star.x - finalStarX; // Compare against refined click
+          const dy = star.y - finalStarY; // Compare against refined click
           const distSq = dx * dx + dy * dy;
           if (distSq < dynamicClickToleranceSquared) {
             starFoundAndRemoved = true;
             addLog(`Removed star at (${star.x.toFixed(0)}, ${star.y.toFixed(0)}) from ${item.file.name} (click refined to ${finalStarX.toFixed(0)}, ${finalStarY.toFixed(0)}).`);
-            return false;
+            return false; // Remove this star
           }
-          return true;
+          return true; // Keep this star
         });
 
         if (!starFoundAndRemoved) {
+          // Add new star at the refined position
           const newStar: Star = {
             x: finalStarX,
             y: finalStarY,
-            brightness: DEFAULT_PSF_DETECTION_THRESHOLD + 1, // Use a default brightness, can be refined
+            brightness: PIPELINE_DETECT_MAX_FWHM + 1, // Default brightness for manually added star, could be refined further
             isManuallyAdded: true,
           };
           updatedStars.push(newStar);
@@ -1405,7 +1608,7 @@ export default function AstroStackerPage() {
         } else {
           addLog(`Total stars for ${item.file.name} after removal: ${updatedStars.length}`);
         }
-        return { ...item, analysisStars: updatedStars, userReviewed: false };
+        return { ...item, analysisStars: updatedStars, userReviewed: false }; // Mark as unreviewed after edit
       }
       return item;
     }));
@@ -1416,7 +1619,7 @@ export default function AstroStackerPage() {
     setAllImageStarData(prev => prev.map((entry, idx) => {
       if (idx === currentEditingImageIndex) {
         addLog(`Stars reset to ${entry.initialAutoStars.length} auto-detected stars for ${entry.file.name}.`);
-        return { ...entry, analysisStars: [...entry.initialAutoStars], userReviewed: false };
+        return { ...entry, analysisStars: [...entry.initialAutoStars], userReviewed: false }; // Reset to initial auto, mark as unreviewed
       }
       return entry;
     }));
@@ -1429,7 +1632,7 @@ export default function AstroStackerPage() {
     setAllImageStarData(prev => prev.map((entry, idx) => {
       if (idx === currentEditingImageIndex) {
         addLog(`All stars wiped for ${currentImageName}.`);
-        return { ...entry, analysisStars: [], userReviewed: false };
+        return { ...entry, analysisStars: [], userReviewed: false }; // Wipe, mark as unreviewed
       }
       return entry;
     }));
@@ -1451,18 +1654,20 @@ export default function AstroStackerPage() {
     ));
     
     setIsStarEditingMode(false);
-    setCurrentEditingImageData(null);
+    setCurrentEditingImageData(null); // Clear image data
     toast({title: "Stars Confirmed", description: `Star selection saved for ${currentImageName}.`});
 
+    // After confirming, if there are multiple images, show the "Apply to others" menu
     if (allImageStarData.length > 1 && confirmedEntry.analysisStars && confirmedEntry.analysisDimensions) {
         setSourceImageForApplyMenu({
             id: confirmedEntry.id,
             fileName: confirmedEntry.file.name,
-            stars: [...confirmedEntry.analysisStars],
-            dimensions: { ...confirmedEntry.analysisDimensions },
+            stars: [...confirmedEntry.analysisStars], // Use a copy
+            dimensions: { ...confirmedEntry.analysisDimensions }, // Use a copy
         });
         setShowApplyStarOptionsMenu(true);
     } else {
+      // If only one image, or other conditions not met for the menu, just clear index
       setCurrentEditingImageIndex(null);
     }
   };
@@ -1472,6 +1677,7 @@ export default function AstroStackerPage() {
 
     const hasNextImage = currentEditingImageIndex < allImageStarData.length - 1;
     
+    // Save current image's stars
     const currentImageEntry = allImageStarData[currentEditingImageIndex];
     const currentImageName = currentImageEntry?.file.name || "current image";
     addLog(`Confirmed star selection for ${currentImageName} and ${hasNextImage ? 'moving to next' : 'closing (last image)'}. Total stars: ${currentImageEntry?.analysisStars.length}. Mode: Manual.`);
@@ -1483,13 +1689,16 @@ export default function AstroStackerPage() {
     toast({title: "Stars Confirmed", description: `Star selection saved for ${currentImageName}.`});
 
     if (!hasNextImage) {
+      // Last image, close editor
       setIsStarEditingMode(false);
       setCurrentEditingImageData(null);
       setCurrentEditingImageIndex(null);
       return;
     }
 
+    // Move to next image
     const nextImageIndex = currentEditingImageIndex + 1;
+    // Call handleEditStarsRequest for the next image. This will handle analysis if needed.
     await handleEditStarsRequest(nextImageIndex); 
   };
 
@@ -1507,10 +1716,10 @@ export default function AstroStackerPage() {
         addLog(`Applied ${starsToApply.length} stars to ${entry.file.name} (matching dimensions).`);
         return {
           ...entry,
-          analysisStars: [...starsToApply],
-          starSelectionMode: 'manual' as StarSelectionMode,
-          userReviewed: true,
-          isAnalyzed: true, 
+          analysisStars: [...starsToApply], // Apply a copy of the stars
+          starSelectionMode: 'manual' as StarSelectionMode, // Set mode to manual
+          userReviewed: true, // Mark as reviewed
+          isAnalyzed: true, // Ensure it's marked as analyzed if stars are applied
         };
       }
       return entry;
@@ -1519,7 +1728,7 @@ export default function AstroStackerPage() {
     toast({title: t('toastStarsAppliedMatchingDimTitle'), description: t('toastStarsAppliedMatchingDimDesc')});
     setShowApplyStarOptionsMenu(false);
     setSourceImageForApplyMenu(null);
-    setCurrentEditingImageIndex(null);
+    setCurrentEditingImageIndex(null); // Ensure editor is closed
     setCurrentEditingImageData(null);
     setIsApplyingStarsFromMenu(false);
   };
@@ -1530,6 +1739,17 @@ export default function AstroStackerPage() {
   
     const { id: sourceId, stars: sourceStars, dimensions: sourceDimensions, fileName: sourceFileName } = sourceImageForApplyMenu;
     const { width: sourceWidth, height: sourceHeight } = sourceDimensions;
+    
+    if (sourceWidth === 0 || sourceHeight === 0) {
+      addLog("[ERROR] Proportional apply failed: Source image dimensions are zero.");
+      toast({ title: "Error", description: "Cannot apply stars proportionally from an image with zero dimensions.", variant: "destructive" });
+      setIsApplyingStarsFromMenu(false);
+      setShowApplyStarOptionsMenu(false);
+      setSourceImageForApplyMenu(null);
+      setCurrentEditingImageIndex(null);
+      setCurrentEditingImageData(null);
+      return;
+    }
     const sourceAspectRatio = sourceWidth / sourceHeight;
   
     if (sourceStars.length === 0) {
@@ -1547,9 +1767,10 @@ export default function AstroStackerPage() {
   
     const updatedImageStarData = await Promise.all(allImageStarData.map(async (targetEntry) => {
       if (targetEntry.id === sourceId) {
-        return targetEntry;
+        return targetEntry; // Don't apply to source itself
       }
   
+      // Ensure target has valid analysis dimensions
       if (!targetEntry.analysisDimensions || targetEntry.analysisDimensions.width === 0 || targetEntry.analysisDimensions.height === 0) {
         addLog(`[WARN] Skipping proportional apply for ${targetEntry.file.name}: Dimension data not available or invalid.`);
         return targetEntry;
@@ -1558,22 +1779,23 @@ export default function AstroStackerPage() {
       const { width: targetWidth, height: targetHeight } = targetEntry.analysisDimensions;
       const targetAspectRatio = targetWidth / targetHeight;
   
+      // Check for similar aspect ratio
       if (Math.abs(sourceAspectRatio - targetAspectRatio) < ASPECT_RATIO_TOLERANCE) {
         addLog(`Applying stars proportionally to ${targetEntry.file.name} (Matching aspect ratio: Source ${sourceAspectRatio.toFixed(2)}, Target ${targetAspectRatio.toFixed(2)})...`);
         const transformedStars = sourceStars.map(star => ({
           x: (star.x / sourceWidth) * targetWidth,
           y: (star.y / sourceHeight) * targetHeight,
-          brightness: star.brightness,
-          isManuallyAdded: true, 
+          brightness: star.brightness, // Keep original brightness or could be re-evaluated
+          isManuallyAdded: true, // Mark as if manually added after transformation
         }));
   
         addLog(`Successfully applied ${transformedStars.length} stars proportionally to ${targetEntry.file.name}.`);
         return {
           ...targetEntry,
           analysisStars: transformedStars,
-          starSelectionMode: 'manual' as StarSelectionMode,
-          userReviewed: true,
-          isAnalyzed: targetEntry.isAnalyzed || true, 
+          starSelectionMode: 'manual' as StarSelectionMode, // Set to manual
+          userReviewed: true, // Mark as reviewed
+          isAnalyzed: targetEntry.isAnalyzed || true, // Ensure marked as analyzed
         };
       } else {
         addLog(`[INFO] Skipped proportional apply for ${targetEntry.file.name}: Aspect ratio mismatch. Source ${sourceAspectRatio.toFixed(2)} (${sourceWidth}x${sourceHeight}), Target ${targetAspectRatio.toFixed(2)} (${targetWidth}x${targetHeight}).`);
@@ -1587,14 +1809,14 @@ export default function AstroStackerPage() {
     setIsApplyingStarsFromMenu(false);
     setShowApplyStarOptionsMenu(false);
     setSourceImageForApplyMenu(null);
-    setCurrentEditingImageIndex(null);
+    setCurrentEditingImageIndex(null); // Ensure editor is closed
     setCurrentEditingImageData(null);
   };
 
   const handleCancelApplyStarOptionsMenu = () => {
     setShowApplyStarOptionsMenu(false);
     setSourceImageForApplyMenu(null);
-    setCurrentEditingImageIndex(null); 
+    setCurrentEditingImageIndex(null); // Close editor if "Don't Apply" is chosen from this menu
     setCurrentEditingImageData(null);
     addLog("User chose not to apply star selection to other images from the menu.");
   };
@@ -1611,9 +1833,10 @@ export default function AstroStackerPage() {
 
     setIsProcessingStack(true);
     setProgressPercent(0);
-    setLogs([]);
+    setLogs([]); // Clear previous logs for new stacking process
     logIdCounter.current = 0;
 
+    // Reset stacked image and post-processing state
     setStackedImage(null);
     setShowPostProcessEditor(false);
     setImageForPostProcessing(null);
@@ -1625,8 +1848,7 @@ export default function AstroStackerPage() {
     addLog(`Dark Frames: ${useDarkFrames && darkFrameFiles.length > 0 ? `${darkFrameFiles.length} frame(s)` : 'Not Used'}.`);
     addLog(`Flat Frames: ${useFlatFrames && flatFrameFiles.length > 0 ? `${flatFrameFiles.length} frame(s)` : 'Not Used'}.`);
     addLog(`Star Alignment: Min Stars = ${MIN_STARS_FOR_ALIGNMENT}, Auto Target Count = ${AUTO_ALIGN_TARGET_STAR_COUNT}.`);
-    addLog(`Star Detection (PSF Pipeline): FWHM=${DEFAULT_PSF_FWHM}, KernelSize=${DEFAULT_PSF_KERNEL_SIZE}, DetThreshold=${DEFAULT_PSF_DETECTION_THRESHOLD}.`);
-    addLog(`Auto-Detect Refinement: Radius = ${AUTO_DETECT_STAR_REFINEMENT_RADIUS}px, Threshold = ${AUTO_DETECT_STAR_REFINEMENT_BRIGHTNESS_THRESHOLD}.`);
+    addLog(`Star Detection (PSF Pipeline): FWHM_Blur=${PIPELINE_PSF_FWHM_FOR_BLUR}, Kernel=${PIPELINE_PSF_KERNEL_SIZE}, TopN=${PIPELINE_DETECT_TOP_N_STARS}, MaxFWHM=${PIPELINE_DETECT_MAX_FWHM}, CentroidWin=${PIPELINE_ESTIMATE_CENTROID_WINDOW}.`);
     addLog(`Brightness Centroid Fallback Threshold: ${BRIGHTNESS_CENTROID_FALLBACK_THRESHOLD_GRAYSCALE_EQUIVALENT} (grayscale equivalent).`);
 
     if (typeof window === 'undefined' || typeof document === 'undefined') {
@@ -1640,61 +1862,79 @@ export default function AstroStackerPage() {
     setProgressPercent(PROGRESS_INITIAL_SETUP);
     addLog(`Initial setup complete. Progress: ${PROGRESS_INITIAL_SETUP}%.`);
 
+    // Create a mutable copy for this stacking operation, to ensure star lists are correctly prepared
     const updatedStarDataForStacking = [...allImageStarData];
 
+    // Ensure all images are analyzed and star lists are correctly set up based on mode
     addLog(`Starting pre-stack analysis for ${updatedStarDataForStacking.length} images if needed...`);
     for (let i = 0; i < updatedStarDataForStacking.length; i++) {
         let entry = updatedStarDataForStacking[i];
         if (!entry.isAnalyzed && !entry.isAnalyzing) {
             addLog(`Image ${entry.file.name} (${entry.id}) not analyzed. Analyzing now...`);
+            // Update the main state to show "isAnalyzing" in UI
             setAllImageStarData(prev => prev.map((e) => e.id === entry.id ? {...e, isAnalyzing: true} : e));
-            const analysisSuccess = await analyzeImageForStars(i);
+            const analysisSuccess = await analyzeImageForStars(i); // Pass index for analysis
+            // After analysis, the main `allImageStarData` state will be updated by `analyzeImageForStars`
+            // So, re-fetch the entry from the potentially updated main state for the local `updatedStarDataForStacking` array
             const potentiallyUpdatedEntryFromState = allImageStarData.find(e => e.id === entry.id);
 
             if (analysisSuccess && potentiallyUpdatedEntryFromState && potentiallyUpdatedEntryFromState.isAnalyzed) {
                 addLog(`Analysis successful for ${entry.file.name}. isAnalyzed: ${potentiallyUpdatedEntryFromState.isAnalyzed}`);
-                updatedStarDataForStacking[i] = { ...potentiallyUpdatedEntryFromState };
-                entry = updatedStarDataForStacking[i];
+                updatedStarDataForStacking[i] = { ...potentiallyUpdatedEntryFromState }; // Update local copy
+                entry = updatedStarDataForStacking[i]; // Re-assign for checks below
             } else {
                 const analyzeFailMsg = `Analysis failed for ${entry.file.name}. It will be processed with fallback alignment.`;
                 addLog(`[WARN] ${analyzeFailMsg} (Details: analysisSuccess=${analysisSuccess}, entryFound=${!!potentiallyUpdatedEntryFromState}, entryAnalyzed=${potentiallyUpdatedEntryFromState?.isAnalyzed})`);
                 toast({ title: `Analysis Warning for ${entry.file.name}`, description: analyzeFailMsg, variant: "default"});
+                // Mark as not analyzed in local copy, clear stars
                 updatedStarDataForStacking[i] = { ...(potentiallyUpdatedEntryFromState || entry), isAnalyzed: false, isAnalyzing: false, analysisStars: [], initialAutoStars: [] };
-                entry = updatedStarDataForStacking[i];
+                entry = updatedStarDataForStacking[i]; // Re-assign
             }
+             // Ensure isAnalyzing is false in the main state after this specific analysis pass
              setAllImageStarData(prev => prev.map((e) => e.id === entry.id ? {...e, isAnalyzing: false, isAnalyzed: entry.isAnalyzed } : e));
         }
 
+        // Ensure correct stars are used for alignment based on mode for the local stacking copy
         if (entry.starSelectionMode === 'auto') {
-            if (JSON.stringify(entry.analysisStars) !== JSON.stringify(entry.initialAutoStars)) {
-                 updatedStarDataForStacking[i] = { ...entry, analysisStars: [...entry.initialAutoStars] };
-                 addLog(`For auto mode image ${entry.file.name}, ensuring analysis stars are set from initial auto-detected (${entry.initialAutoStars.length} stars) if different.`);
+            // For auto mode, always use initialAutoStars for alignment, sorted by brightness
+            const sortedAutoStars = [...entry.initialAutoStars].sort((a, b) => b.brightness - a.brightness);
+            const starsForAlignment = sortedAutoStars.slice(0, AUTO_ALIGN_TARGET_STAR_COUNT);
+            if (JSON.stringify(entry.analysisStars) !== JSON.stringify(starsForAlignment)) {
+                 updatedStarDataForStacking[i] = { ...entry, analysisStars: starsForAlignment };
+                 addLog(`For auto mode image ${entry.file.name}, using top ${starsForAlignment.length} (target ${AUTO_ALIGN_TARGET_STAR_COUNT}) of ${entry.initialAutoStars.length} auto-detected stars for alignment.`);
             }
         } else if (entry.starSelectionMode === 'manual') {
+            // For manual mode, if not reviewed by user, ensure it uses some stars if available
             if (!entry.userReviewed) {
                 if ((!entry.analysisStars || entry.analysisStars.length === 0) && entry.initialAutoStars.length > 0) {
+                    // If manual and no stars, but auto stars exist, use auto as a base
                     updatedStarDataForStacking[i] = { ...entry, analysisStars: [...entry.initialAutoStars] };
                     addLog(`For unreviewed manual image ${entry.file.name}, using initial auto-detected (${entry.initialAutoStars.length} stars) as analysisStars was empty.`);
                 } else if (entry.analysisStars && entry.analysisStars.length > 0) {
+                    // If manual and unreviewed but has stars, use them (user might have started editing)
                     addLog(`For unreviewed manual image ${entry.file.name}, using its existing ${entry.analysisStars.length} analysis stars.`);
                 } else {
+                     // Manual, unreviewed, no stars, no auto stars - will use fallback
                      addLog(`For unreviewed manual image ${entry.file.name}, no stars available. Will use fallback alignment.`);
                 }
             } else {
+                 // Manual and reviewed, use the user-confirmed stars
                  addLog(`For reviewed manual image ${entry.file.name}, using its ${entry.analysisStars.length} user-confirmed stars.`);
             }
         }
-         await yieldToEventLoop(10);
+         await yieldToEventLoop(10); // Small yield
     }
 
+    // Update the main state with the prepared star lists before proceeding to load images for stacking
+    // This ensures that if stacking fails, the UI reflects the stars that *would* have been used.
     setAllImageStarData(updatedStarDataForStacking);
     addLog("Pre-stack analysis and star-list preparation finished.");
-    await yieldToEventLoop(100);
+    await yieldToEventLoop(100); // Longer yield before heavy processing
 
     try {
       let imageElements: HTMLImageElement[] = [];
-      addLog(`Loading ${allImageStarData.length} image elements from their previewUrls...`);
-      for (const entry of allImageStarData) {
+      addLog(`Loading ${updatedStarDataForStacking.length} image elements from their previewUrls...`);
+      for (const entry of updatedStarDataForStacking) { // Use the prepared local copy
         try {
           const imgEl = await loadImage(entry.previewUrl, entry.file.name);
           imageElements.push(imgEl);
@@ -1702,9 +1942,10 @@ export default function AstroStackerPage() {
            const errorMessage = loadError instanceof Error ? loadError.message : String(loadError);
            addLog(`[LOAD ERROR] ${entry.file.name}: ${errorMessage}`);
            toast({ title: `Error Loading ${entry.file.name}`, description: errorMessage, variant: "destructive" });
+           // Do not add this image to imageElements if it fails to load
         }
       }
-      addLog(`Successfully loaded ${imageElements.length} out of ${allImageStarData.length} images into HTMLImageElements.`);
+      addLog(`Successfully loaded ${imageElements.length} out of ${updatedStarDataForStacking.length} images into HTMLImageElements.`);
 
       if (imageElements.length < 2) {
         const notEnoughValidMsg = `Need at least two valid images for stacking after filtering. Found ${imageElements.length}.`;
@@ -1715,21 +1956,31 @@ export default function AstroStackerPage() {
         return;
       }
 
-      const firstImage = imageElements[0];
-      const firstImageEntry = allImageStarData[0];
+      // Determine target dimensions from the *first successfully loaded image* that corresponds to an entry in updatedStarDataForStacking
+      const firstValidImageIndexInOriginal = updatedStarDataForStacking.findIndex(
+        entry => imageElements.some(imgEl => imgEl.src === entry.previewUrl)
+      );
 
-      if (!firstImage || firstImage.naturalWidth === 0 || firstImage.naturalHeight === 0 || !firstImageEntry?.analysisDimensions) {
-        const invalidRefMsg = `The first image (${firstImageEntry?.file?.name || 'unknown'}) is invalid or its dimensions are missing. Cannot proceed.`;
+      if (firstValidImageIndexInOriginal === -1) {
+        const noValidRefMsg = `Could not find a valid reference image among loaded images. Cannot proceed.`;
+        addLog(`[ERROR] ${noValidRefMsg}`);
+        toast({ title: "Invalid Reference Image", description: noValidRefMsg, variant: "destructive" });
+        setIsProcessingStack(false); setProgressPercent(0); return;
+      }
+      
+      const firstImageEntryForStacking = updatedStarDataForStacking[firstValidImageIndexInOriginal];
+      const firstLoadedImageElement = imageElements.find(imgEl => imgEl.src === firstImageEntryForStacking.previewUrl);
+
+      if (!firstLoadedImageElement || !firstImageEntryForStacking?.analysisDimensions || firstImageEntryForStacking.analysisDimensions.width === 0 || firstImageEntryForStacking.analysisDimensions.height === 0) {
+        const invalidRefMsg = `The reference image (${firstImageEntryForStacking?.file?.name || 'unknown'}) is invalid or its analysis dimensions are missing/zero. Cannot proceed.`;
         addLog(`[ERROR] ${invalidRefMsg}`);
         toast({ title: "Invalid Reference Image", description: invalidRefMsg, variant: "destructive" });
-        setIsProcessingStack(false);
-        setProgressPercent(0);
-        return;
+        setIsProcessingStack(false); setProgressPercent(0); return;
       }
 
-      let targetWidth = firstImageEntry.analysisDimensions.width;
-      let targetHeight = firstImageEntry.analysisDimensions.height;
-      addLog(`Target stacking dimensions (from first image's analysisDimensions): ${targetWidth}x${targetHeight}.`);
+      let targetWidth = firstImageEntryForStacking.analysisDimensions.width;
+      let targetHeight = firstImageEntryForStacking.analysisDimensions.height;
+      addLog(`Target stacking dimensions (from reference image '${firstImageEntryForStacking.file.name}' analysisDimensions): ${targetWidth}x${targetHeight}.`);
 
 
       if (targetWidth === 0 || targetHeight === 0) {
@@ -1755,6 +2006,7 @@ export default function AstroStackerPage() {
         for (let i = 0; i < biasFramePreviewUrls.length; i++) {
             try {
                 const biasImgEl = await loadImage(biasFramePreviewUrls[i], biasFrameFiles[i].name);
+                // Draw and get ImageData at target dimensions
                 calCtx.clearRect(0,0,targetWidth, targetHeight);
                 calCtx.drawImage(biasImgEl, 0, 0, targetWidth, targetHeight);
                 biasImageDataArrays.push(calCtx.getImageData(0,0,targetWidth,targetHeight));
@@ -1767,10 +2019,10 @@ export default function AstroStackerPage() {
             if (masterBiasData) addLog(t('logMasterBiasCreated', { count: biasImageDataArrays.length }));
             else addLog(t('logMasterBiasFailed'));
         } else {
-            addLog(t('biasFramesMissing'));
+            addLog(t('biasFramesMissing')); // No valid bias frames processed
             toast({ title: t('biasFramesMissingTitle'), description: t('biasFramesMissing'), variant: "default" });
         }
-      } else if (useBiasFrames) {
+      } else if (useBiasFrames) { // Switch is on, but no files
          addLog(t('biasFramesMissing'));
          toast({ title: t('biasFramesMissingTitle'), description: t('biasFramesMissing'), variant: "default" });
       }
@@ -1787,12 +2039,14 @@ export default function AstroStackerPage() {
             calCtx.drawImage(darkImgEl, 0, 0, targetWidth, targetHeight);
             let currentDarkFrameImageData = calCtx.getImageData(0, 0, targetWidth, targetHeight);
 
+            // Subtract master bias from this dark frame if available
             if (masterBiasData) {
               const tempDarkData = new Uint8ClampedArray(currentDarkFrameImageData.data);
               for (let p = 0; p < tempDarkData.length; p += 4) {
                 tempDarkData[p] = Math.max(0, tempDarkData[p] - masterBiasData[p]);
                 tempDarkData[p+1] = Math.max(0, tempDarkData[p+1] - masterBiasData[p+1]);
                 tempDarkData[p+2] = Math.max(0, tempDarkData[p+2] - masterBiasData[p+2]);
+                // Alpha remains unchanged
               }
               currentDarkFrameImageData = new ImageData(tempDarkData, targetWidth, targetHeight);
               if (i === 0) addLog(t('logBiasSubtractedFromDark', { darkFrameName: darkFrameFiles[i].name }));
@@ -1827,6 +2081,7 @@ export default function AstroStackerPage() {
             calCtx.drawImage(flatImgEl, 0, 0, targetWidth, targetHeight);
             let currentFlatFrameImageData = calCtx.getImageData(0, 0, targetWidth, targetHeight);
 
+            // Subtract master bias from this flat frame if available
             if (masterBiasData) {
               const tempFlatData = new Uint8ClampedArray(currentFlatFrameImageData.data);
               for (let p = 0; p < tempFlatData.length; p += 4) {
@@ -1857,14 +2112,15 @@ export default function AstroStackerPage() {
       addLog("Master calibration frame creation phase complete.");
 
 
-      const numImages = imageElements.length;
+      const numValidLightImages = imageElements.length; // Already filtered for load errors
       const totalPixels = targetWidth * targetHeight;
-      const normalizedImageFactor = Math.min(1, numImages / 20);
-      const veryLargePixelCount = 10000 * 10000;
+      // Adjust dynamic delay based on number of images and size
+      const normalizedImageFactor = Math.min(1, numValidLightImages / 20); // Normalize based on 20 images
+      const veryLargePixelCount = 10000 * 10000; // 100MP image reference
       const normalizedPixelFactor = Math.min(1, totalPixels / veryLargePixelCount);
-      const loadScore = (0.3 * normalizedImageFactor) + (0.7 * normalizedPixelFactor);
-      const dynamicDelayMs = Math.max(10, Math.min(100, 10 + Math.floor(loadScore * 90)));
-      addLog(`Calculated dynamic yield delay: ${dynamicDelayMs}ms (Load score: ${loadScore.toFixed(2)}, Images: ${numImages}, Pixels: ${totalPixels})`);
+      const loadScore = (0.3 * normalizedImageFactor) + (0.7 * normalizedPixelFactor); // Weighted score
+      const dynamicDelayMs = Math.max(10, Math.min(100, 10 + Math.floor(loadScore * 90))); // Delay between 10ms and 100ms
+      addLog(`Calculated dynamic yield delay: ${dynamicDelayMs}ms (Load score: ${loadScore.toFixed(2)}, Images: ${numValidLightImages}, Pixels: ${totalPixels})`);
 
 
       const offscreenCanvas = document.createElement('canvas');
@@ -1872,7 +2128,7 @@ export default function AstroStackerPage() {
       offscreenCanvas.height = targetHeight;
       const ctx = offscreenCanvas.getContext('2d', { willReadFrequently: true });
 
-      const tempAnalysisCanvasForFallback = document.createElement('canvas');
+      const tempAnalysisCanvasForFallback = document.createElement('canvas'); // For fallback brightness centroid
       const tempAnalysisCtxForFallback = tempAnalysisCanvasForFallback.getContext('2d', { willReadFrequently: true });
 
       if (!ctx || !tempAnalysisCtxForFallback) {
@@ -1884,80 +2140,81 @@ export default function AstroStackerPage() {
 
       const centroids: ({ x: number; y: number } | null)[] = [];
       let successfulStarAlignments = 0;
-      const centroidProgressIncrement = imageElements.length > 0 ? PROGRESS_CENTROID_CALCULATION_TOTAL / imageElements.length : 0;
+      const centroidProgressIncrement = numValidLightImages > 0 ? PROGRESS_CENTROID_CALCULATION_TOTAL / numValidLightImages : 0;
 
-      addLog(`Starting centroid calculation for ${imageElements.length} images...`);
-      for (let i = 0; i < imageElements.length; i++) {
-        const imgEl = imageElements[i];
-        const entryData = allImageStarData[i];
+      addLog(`Starting centroid calculation for ${numValidLightImages} valid light images...`);
+      // Loop through updatedStarDataForStacking to get star data, but use imageElements for actual image data
+      for (let i = 0; i < updatedStarDataForStacking.length; i++) {
+        const entryData = updatedStarDataForStacking[i];
+        // Find the corresponding HTMLImageElement for this entry
+        const imgEl = imageElements.find(el => el.src === entryData.previewUrl);
+
+        if (!imgEl) { // This image failed to load or was filtered out
+            addLog(`[ALIGN SKIP] Image ${entryData.file.name} was not loaded successfully. Skipping centroid calculation.`);
+            centroids.push(null); // Push null if image not loaded, so offsets array matches
+            continue;
+        }
+
         const fileNameForLog = entryData.file.name;
         let finalScaledCentroid: { x: number; y: number } | null = null;
         let method = "unknown";
-        let starsForCentroidCalculation: Star[] = [];
+        
+        // Use analysisStars from the entryData (which was prepared from initialAutoStars if in auto mode)
+        let starsForCentroidCalculation: Star[] = entryData.analysisStars;
 
-        if (!imgEl || imgEl.naturalWidth === 0 || imgEl.naturalHeight === 0 || !entryData.analysisDimensions || !entryData.isAnalyzed) {
-            const reason = !entryData.isAnalyzed ? "analysis failed or skipped" : "invalid image element or data";
+        // Ensure analysisDimensions are valid from entryData
+        if (!entryData.isAnalyzed || !entryData.analysisDimensions || entryData.analysisDimensions.width === 0 || entryData.analysisDimensions.height === 0) {
+            const reason = !entryData.isAnalyzed ? "analysis failed or skipped" : "invalid analysis data";
             const skipMsg = `Centroid for ${fileNameForLog} (${reason}): using target geometric center.`;
             console.warn(skipMsg);
             addLog(`[ALIGN WARN] ${skipMsg}`);
             finalScaledCentroid = { x: targetWidth / 2, y: targetHeight / 2 };
             method = `${reason}_geometric_fallback`;
-            centroids.push(finalScaledCentroid);
-            addLog(`[ALIGN] Image ${i} (${fileNameForLog}) centroid (scaled to target): ${finalScaledCentroid.x.toFixed(2)}, ${finalScaledCentroid.y.toFixed(2)} (Method: ${method})`);
-            await yieldToEventLoop(dynamicDelayMs);
-            setProgressPercent(prev => Math.min(100, prev + centroidProgressIncrement));
-            continue;
-        }
+        } else {
+            const {width: analysisWidth, height: analysisHeight} = entryData.analysisDimensions;
+            try {
+              addLog(`[ALIGN] Analyzing image ${i} (${fileNameForLog}): ${analysisWidth}x${analysisHeight} with ${starsForCentroidCalculation.length} stars for centroid (Mode: ${entryData.starSelectionMode}, Reviewed: ${entryData.userReviewed}).`);
+              let analysisImageCentroid = calculateStarArrayCentroid(starsForCentroidCalculation, addLog);
 
-        const {width: analysisWidth, height: analysisHeight} = entryData.analysisDimensions;
+              if (analysisImageCentroid) {
+                  method = entryData.starSelectionMode === 'manual' && entryData.userReviewed ? `user-manual-star-based` : `auto-star-based (target ${AUTO_ALIGN_TARGET_STAR_COUNT})`;
+                  if(entryData.starSelectionMode === 'manual' && !entryData.userReviewed && starsForCentroidCalculation.length > 0) {
+                    method = `unreviewed-manual-star-based (${starsForCentroidCalculation.length} stars)`;
+                  }
+                  successfulStarAlignments++;
+              } else { // Fallback to brightness centroid if star-based failed
+                const reason = starsForCentroidCalculation.length < MIN_STARS_FOR_ALIGNMENT ? `only ${starsForCentroidCalculation.length} stars (min ${MIN_STARS_FOR_ALIGNMENT} required)` : "star centroid failed";
+                method = `brightness-based fallback (${reason})`;
+                addLog(`[ALIGN WARN] Star-based centroid failed for ${fileNameForLog} (${reason}). Falling back to brightness-based centroid.`);
 
-        try {
-          if (entryData.starSelectionMode === 'auto') {
-              const sortedAutoStars = [...entryData.initialAutoStars].sort((a, b) => b.brightness - a.brightness);
-              starsForCentroidCalculation = sortedAutoStars.slice(0, AUTO_ALIGN_TARGET_STAR_COUNT);
-              addLog(`[ALIGN AUTO] Image ${i} (${fileNameForLog}): Using top ${starsForCentroidCalculation.length} (target: ${AUTO_ALIGN_TARGET_STAR_COUNT}) of ${entryData.initialAutoStars.length} auto-detected stars.`);
-          } else { 
-              starsForCentroidCalculation = entryData.analysisStars;
-              addLog(`[ALIGN MANUAL] Image ${i} (${fileNameForLog}): Using ${starsForCentroidCalculation.length} manually selected/reviewed stars.`);
-          }
-          
-          addLog(`[ALIGN] Analyzing image ${i} (${fileNameForLog}): ${analysisWidth}x${analysisHeight} with ${starsForCentroidCalculation.length} stars for centroid (Mode: ${entryData.starSelectionMode}, Reviewed: ${entryData.userReviewed}).`);
-          let analysisImageCentroid = calculateStarArrayCentroid(starsForCentroidCalculation, addLog);
-
-          if (analysisImageCentroid) {
-              method = entryData.starSelectionMode === 'manual' && entryData.userReviewed ? `user-manual-star-based` : `auto-star-based (target ${AUTO_ALIGN_TARGET_STAR_COUNT})`;
-              if(entryData.starSelectionMode === 'manual' && !entryData.userReviewed && starsForCentroidCalculation.length > 0) {
-                method = `unreviewed-manual-star-based (${starsForCentroidCalculation.length} stars)`;
+                // Use the analysis dimensions for the fallback canvas
+                tempAnalysisCanvasForFallback.width = analysisWidth;
+                tempAnalysisCanvasForFallback.height = analysisHeight;
+                tempAnalysisCtxForFallback.clearRect(0, 0, analysisWidth, analysisHeight);
+                // Draw the HTMLImageElement (could be full-res preview) scaled to analysis dimensions
+                tempAnalysisCtxForFallback.drawImage(imgEl, 0, 0, analysisWidth, analysisHeight);
+                const fallbackImageData = tempAnalysisCtxForFallback.getImageData(0, 0, analysisWidth, analysisHeight);
+                analysisImageCentroid = calculateBrightnessCentroid(fallbackImageData, addLog);
               }
-              successfulStarAlignments++;
-          } else {
-            const reason = starsForCentroidCalculation.length < MIN_STARS_FOR_ALIGNMENT ? `only ${starsForCentroidCalculation.length} stars (min ${MIN_STARS_FOR_ALIGNMENT} required)` : "star centroid failed";
-            method = `brightness-based fallback (${reason})`;
-            addLog(`[ALIGN WARN] Star-based centroid failed for ${fileNameForLog} (${reason}). Falling back to brightness-based centroid.`);
 
-            tempAnalysisCanvasForFallback.width = analysisWidth;
-            tempAnalysisCanvasForFallback.height = analysisHeight;
-            tempAnalysisCtxForFallback.clearRect(0, 0, analysisWidth, analysisHeight);
-            tempAnalysisCtxForFallback.drawImage(imgEl, 0, 0, analysisWidth, analysisHeight);
-            const fallbackImageData = tempAnalysisCtxForFallback.getImageData(0, 0, analysisWidth, analysisHeight);
-            analysisImageCentroid = calculateBrightnessCentroid(fallbackImageData, addLog);
-          }
+              if (analysisImageCentroid) {
+                 // Scale centroid from analysis dimensions to target stacking dimensions
+                 finalScaledCentroid = {
+                    x: (analysisImageCentroid.x / analysisWidth) * targetWidth,
+                    y: (analysisImageCentroid.y / analysisHeight) * targetHeight,
+                };
+              }
 
-          if (analysisImageCentroid) {
-             finalScaledCentroid = {
-                x: (analysisImageCentroid.x / analysisWidth) * targetWidth,
-                y: (analysisImageCentroid.y / analysisHeight) * targetHeight,
-            };
-          }
-
-        } catch (imgAnalysisError) {
-            const errorMessage = imgAnalysisError instanceof Error ? imgAnalysisError.message : String(imgAnalysisError);
-            addLog(`[ALIGN ERROR] Error during centroid phase for ${fileNameForLog}: ${errorMessage}. Aligning to geometric center.`);
-            toast({ title: `Centroid Error for ${fileNameForLog}`, description: `Could not determine centroid: ${errorMessage}.`, variant: "destructive" });
-            method = "analysis_error";
+            } catch (imgAnalysisError) {
+                const errorMessage = imgAnalysisError instanceof Error ? imgAnalysisError.message : String(imgAnalysisError);
+                addLog(`[ALIGN ERROR] Error during centroid phase for ${fileNameForLog}: ${errorMessage}. Aligning to geometric center.`);
+                toast({ title: `Centroid Error for ${fileNameForLog}`, description: `Could not determine centroid: ${errorMessage}.`, variant: "destructive" });
+                method = "analysis_error";
+            }
         }
 
-        if (!finalScaledCentroid) {
+
+        if (!finalScaledCentroid) { // Ultimate fallback
             const noCentroidMsg = `Could not determine any centroid for ${fileNameForLog}. It will be aligned to target geometric center.`;
             addLog(`[ALIGN ERROR] ${noCentroidMsg}`);
             finalScaledCentroid = { x: targetWidth / 2, y: targetHeight / 2 };
@@ -1968,18 +2225,20 @@ export default function AstroStackerPage() {
         setProgressPercent(prev => Math.min(100, prev + centroidProgressIncrement));
         await yieldToEventLoop(dynamicDelayMs);
       }
-      addLog(`Centroid calculation complete. ${successfulStarAlignments}/${imageElements.length} images primarily used star-based alignment.`);
+      addLog(`Centroid calculation complete. ${successfulStarAlignments}/${numValidLightImages} images primarily used star-based alignment.`);
 
-      const referenceCentroid = centroids[0];
+      // Use the centroid of the *first successfully loaded image* as reference
+      const referenceCentroid = centroids.find(c => c !== null); 
       if (!referenceCentroid) {
-        const noRefMsg = "Could not determine alignment reference for the first image. Stacking cannot proceed.";
+        const noRefMsg = "Could not determine any valid alignment reference from loaded images. Stacking cannot proceed.";
         addLog(`[ERROR] ${noRefMsg}`);
         toast({ title: "Alignment Failed", description: noRefMsg, variant: "destructive" });
         setIsProcessingStack(false);
         setProgressPercent(0);
         return;
       }
-      addLog(`[ALIGN] Reference centroid (from image 0, in target space): ${referenceCentroid.x.toFixed(2)}, ${referenceCentroid.y.toFixed(2)}`);
+      const refCentroidIndex = centroids.findIndex(c => c === referenceCentroid);
+      addLog(`[ALIGN] Reference centroid (from image ${refCentroidIndex}, in target space): ${referenceCentroid.x.toFixed(2)}, ${referenceCentroid.y.toFixed(2)}`);
 
       const finalImageData = ctx.createImageData(targetWidth, targetHeight);
       let validImagesStackedCount = 0;
@@ -1998,11 +2257,18 @@ export default function AstroStackerPage() {
         }
 
         let imagesContributingToBand = 0;
-        for (let i = 0; i < imageElements.length; i++) {
+        for (let i = 0; i < imageElements.length; i++) { // Iterate through successfully loaded image elements
           const img = imageElements[i];
-          const currentCentroid = centroids[i];
+          // Find the original entry data corresponding to this img element to get its centroid
+          // This assumes previewUrl is unique enough or matches imageElements[i].src
+          const originalEntryIndex = updatedStarDataForStacking.findIndex(entry => entry.previewUrl === img.src);
+          if (originalEntryIndex === -1) {
+             addLog(`[STACK SKIP] Could not find original entry data for loaded image ${i}. Skipping.`);
+             continue;
+          }
+          const currentCentroid = centroids[originalEntryIndex]; // Use centroid from the corresponding original entry index
 
-          if (!img || img.naturalWidth === 0 || img.naturalHeight === 0) {
+          if (!img || img.naturalWidth === 0 || img.naturalHeight === 0) { // Should not happen if imageElements is filtered
             addLog(`[STACK SKIP] Skipping invalid image element ${i} during band processing.`);
             continue;
           }
@@ -2010,17 +2276,20 @@ export default function AstroStackerPage() {
           let dx = 0;
           let dy = 0;
 
-          if (currentCentroid) {
+          if (currentCentroid) { // If this image had a valid centroid
             dx = referenceCentroid.x - currentCentroid.x;
             dy = referenceCentroid.y - currentCentroid.y;
           } else {
-            addLog(`[STACK WARN] Image ${i} (${allImageStarData[i]?.file?.name}) had no centroid for offset calculation. Using 0,0 offset.`);
+            // This image might have failed centroid calculation or was skipped
+            addLog(`[STACK WARN] Image ${i} (${updatedStarDataForStacking[originalEntryIndex]?.file?.name}) had no valid centroid. Using 0,0 offset (no alignment for this frame).`);
+            // No alignment for this frame, it will be stacked at its original position relative to the canvas
           }
 
+          // Apply calibration to the light frame (img)
           calCtx.clearRect(0,0, targetWidth, targetHeight);
-          calCtx.drawImage(img, 0,0, targetWidth, targetHeight);
+          calCtx.drawImage(img, 0,0, targetWidth, targetHeight); // Draw current light frame scaled to target
           let lightFrameImageData = calCtx.getImageData(0,0, targetWidth, targetHeight);
-          let calibratedLightData = new Uint8ClampedArray(lightFrameImageData.data);
+          let calibratedLightData = new Uint8ClampedArray(lightFrameImageData.data); // Make a mutable copy
 
           let logCalibrationMsg = "";
 
@@ -2048,61 +2317,68 @@ export default function AstroStackerPage() {
             for (let p = 0; p < masterFlatData.length; p += 4) {
               sumR += masterFlatData[p]; sumG += masterFlatData[p+1]; sumB += masterFlatData[p+2];
             }
+            // Avoid division by zero if numPixelsFlat is 0
             const meanR = numPixelsFlat > 0 ? sumR / numPixelsFlat : 0;
             const meanG = numPixelsFlat > 0 ? sumG / numPixelsFlat : 0;
             const meanB = numPixelsFlat > 0 ? sumB / numPixelsFlat : 0;
             
-            if (meanR > 0 && meanG > 0 && meanB > 0) { 
+            if (meanR > 1 && meanG > 1 && meanB > 1) { // Ensure mean is high enough to be meaningful
                 for (let p = 0; p < calibratedLightData.length; p += 4) {
-                const flatR = masterFlatData[p]; const flatG = masterFlatData[p+1]; const flatB = masterFlatData[p+2];
-                const scaleR = (flatR > 1) ? meanR / flatR : 1; 
-                const scaleG = (flatG > 1) ? meanG / flatG : 1;
-                const scaleB = (flatB > 1) ? meanB / flatB : 1;
+                  const flatR = masterFlatData[p]; const flatG = masterFlatData[p+1]; const flatB = masterFlatData[p+2];
+                  // Avoid division by zero or near-zero flat values
+                  const scaleR = (flatR > 1) ? meanR / flatR : 1; 
+                  const scaleG = (flatG > 1) ? meanG / flatG : 1;
+                  const scaleB = (flatB > 1) ? meanB / flatB : 1;
 
-                calibratedLightData[p]   = Math.min(255, Math.max(0, calibratedLightData[p]   * Math.min(scaleR, FLAT_FIELD_CORRECTION_MAX_SCALE_FACTOR) ));
-                calibratedLightData[p+1] = Math.min(255, Math.max(0, calibratedLightData[p+1] * Math.min(scaleG, FLAT_FIELD_CORRECTION_MAX_SCALE_FACTOR) ));
-                calibratedLightData[p+2] = Math.min(255, Math.max(0, calibratedLightData[p+2] * Math.min(scaleB, FLAT_FIELD_CORRECTION_MAX_SCALE_FACTOR) ));
+                  calibratedLightData[p]   = Math.min(255, Math.max(0, calibratedLightData[p]   * Math.min(scaleR, FLAT_FIELD_CORRECTION_MAX_SCALE_FACTOR) ));
+                  calibratedLightData[p+1] = Math.min(255, Math.max(0, calibratedLightData[p+1] * Math.min(scaleG, FLAT_FIELD_CORRECTION_MAX_SCALE_FACTOR) ));
+                  calibratedLightData[p+2] = Math.min(255, Math.max(0, calibratedLightData[p+2] * Math.min(scaleB, FLAT_FIELD_CORRECTION_MAX_SCALE_FACTOR) ));
                 }
                 logCalibrationMsg += `Flat corrected (Master Flat Mean R:${meanR.toFixed(1)}, G:${meanG.toFixed(1)}, B:${meanB.toFixed(1)}).`;
             } else {
-                logCalibrationMsg += `Flat correction skipped (Master Flat mean is zero or near-zero).`;
+                logCalibrationMsg += `Flat correction skipped (Master Flat mean is too low or zero). Avg R=${meanR.toFixed(1)}, G=${meanG.toFixed(1)}, B=${meanB.toFixed(1)}.`;
             }
           }
-          if (logCalibrationMsg && i === 0) addLog(`[CALIBRATE] Image 0 (${allImageStarData[0]?.file?.name}): ${logCalibrationMsg}`);
+          if (logCalibrationMsg && i === 0) addLog(`[CALIBRATE] Image 0 (${updatedStarDataForStacking[originalEntryIndex]?.file?.name}): ${logCalibrationMsg}`);
 
 
-          ctx.clearRect(0, 0, targetWidth, targetHeight);
+          // Draw the calibrated and aligned image to the main offscreen canvas
+          ctx.clearRect(0, 0, targetWidth, targetHeight); // Clear for this frame
           const calibratedImageDataForDraw = new ImageData(calibratedLightData, targetWidth, targetHeight);
-          ctx.putImageData(calibratedImageDataForDraw, dx, dy);
+          ctx.putImageData(calibratedImageDataForDraw, dx, dy); // dx, dy are alignment offsets
 
           try {
+            // Extract pixel data for the current band from the aligned image
             const bandFrameImageData = ctx.getImageData(0, yBandStart, targetWidth, currentBandHeight);
             const bandData = bandFrameImageData.data;
 
             for (let j = 0; j < bandData.length; j += 4) {
-              const bandPixelIndex = j / 4;
-              if (bandPixelDataCollector[bandPixelIndex]) {
+              const bandPixelIndex = j / 4; // Index within the bandPixelDataCollector array
+              if (bandPixelDataCollector[bandPixelIndex]) { // Should always be true
                   bandPixelDataCollector[bandPixelIndex].r.push(bandData[j]);
                   bandPixelDataCollector[bandPixelIndex].g.push(bandData[j + 1]);
                   bandPixelDataCollector[bandPixelIndex].b.push(bandData[j + 2]);
+                  // Alpha is handled at the end
               }
             }
-            if (yBandStart === 0) {
+            if (yBandStart === 0) { // Count images contributing to the first band as a proxy for overall contribution
               imagesContributingToBand++;
             }
           } catch (e) {
             const errorMsg = e instanceof Error ? e.message : String(e);
             const bandErrorMsg = `Error getting image data for band (img ${i}, bandY ${yBandStart}): ${errorMsg}`;
             addLog(`[STACK ERROR] ${bandErrorMsg}`);
-            toast({ title: `Stacking Error on Band Processing`, description: `Could not process pixel data for ${allImageStarData[i]?.file?.name || `image ${i}`} for band at row ${yBandStart}.`, variant: "destructive"});
+            toast({ title: `Stacking Error on Band Processing`, description: `Could not process pixel data for ${updatedStarDataForStacking[originalEntryIndex]?.file?.name || `image ${i}`} for band at row ${yBandStart}.`, variant: "destructive"});
+            // Continue to next image, this one might not contribute to this band
           }
            await yieldToEventLoop(dynamicDelayMs);
         }
-        if (yBandStart === 0) {
+        if (yBandStart === 0) { // After processing all images for the first band
             validImagesStackedCount = imagesContributingToBand;
             addLog(`[STACK] ${validImagesStackedCount} images contributed to the first band.`);
         }
 
+        // Process the collected pixel data for the current band
         for (let yInBand = 0; yInBand < currentBandHeight; yInBand++) {
           for (let x = 0; x < targetWidth; x++) {
               const bandPixelIndex = yInBand * targetWidth + x;
@@ -2113,32 +2389,34 @@ export default function AstroStackerPage() {
                   finalImageData.data[finalPixelGlobalIndex] = getMedian(bandPixelDataCollector[bandPixelIndex].r);
                   finalImageData.data[finalPixelGlobalIndex + 1] = getMedian(bandPixelDataCollector[bandPixelIndex].g);
                   finalImageData.data[finalPixelGlobalIndex + 2] = getMedian(bandPixelDataCollector[bandPixelIndex].b);
-                } else {
+                } else { // sigmaClip
                   finalImageData.data[finalPixelGlobalIndex] = applySigmaClip(bandPixelDataCollector[bandPixelIndex].r);
                   finalImageData.data[finalPixelGlobalIndex + 1] = applySigmaClip(bandPixelDataCollector[bandPixelIndex].g);
                   finalImageData.data[finalPixelGlobalIndex + 2] = applySigmaClip(bandPixelDataCollector[bandPixelIndex].b);
                 }
-                finalImageData.data[finalPixelGlobalIndex + 3] = 255;
+                finalImageData.data[finalPixelGlobalIndex + 3] = 255; // Set alpha to fully opaque
               } else {
-                  finalImageData.data[finalPixelGlobalIndex] = 0;
-                  finalImageData.data[finalPixelGlobalIndex + 1] = 0;
-                  finalImageData.data[finalPixelGlobalIndex + 2] = 0;
-                  finalImageData.data[finalPixelGlobalIndex + 3] = 255;
+                  // If no data for this pixel (should be rare if imagesContributingToBand > 0)
+                  finalImageData.data[finalPixelGlobalIndex] = 0;     // R
+                  finalImageData.data[finalPixelGlobalIndex + 1] = 0; // G
+                  finalImageData.data[finalPixelGlobalIndex + 2] = 0; // B
+                  finalImageData.data[finalPixelGlobalIndex + 3] = 255; // Alpha
               }
           }
         }
+        // Log progress periodically
         if (yBandStart % (STACKING_BAND_HEIGHT * 5) === 0 || yBandStart + currentBandHeight >= targetHeight ) {
              addLog(`Processed band: rows ${yBandStart} to ${yBandStart + currentBandHeight - 1}. Progress: ${Math.round(progressPercent + bandProgressIncrement * ((yBandStart + currentBandHeight) / targetHeight * numBands) )}%. Yielding.`);
         }
         setProgressPercent(prev => Math.min(100, prev + bandProgressIncrement));
-        await yieldToEventLoop(dynamicDelayMs);
+        await yieldToEventLoop(dynamicDelayMs); // Yield after each band
       }
 
       setProgressPercent(100);
       addLog(`All bands processed. Finalizing image.`);
 
-      if (validImagesStackedCount === 0 && imageElements.length > 0) {
-        const noStackMsg = "No images could be successfully processed during band stacking.";
+      if (validImagesStackedCount === 0 && numValidLightImages > 0) {
+        const noStackMsg = "No images could be successfully processed during band stacking (zero contribution).";
         addLog(`[ERROR] ${noStackMsg}`);
         toast({ title: "Stacking Failed", description: noStackMsg, variant: "destructive" });
         setIsProcessingStack(false);
@@ -2146,7 +2424,7 @@ export default function AstroStackerPage() {
         return;
       }
 
-      ctx.putImageData(finalImageData, 0, 0);
+      ctx.putImageData(finalImageData, 0, 0); // Put the final combined image data onto the offscreen canvas
 
       let resultDataUrl: string;
       let outputMimeType = 'image/png';
@@ -2154,29 +2432,30 @@ export default function AstroStackerPage() {
         outputMimeType = 'image/jpeg';
         resultDataUrl = offscreenCanvas.toDataURL(outputMimeType, jpegQuality / 100);
         addLog(`Generated JPEG image (Quality: ${jpegQuality}%).`);
-      } else {
+      } else { // PNG
         resultDataUrl = offscreenCanvas.toDataURL(outputMimeType);
         addLog(`Generated PNG image.`);
       }
 
       if (!resultDataUrl || resultDataUrl === "data:," || resultDataUrl.length < MIN_VALID_DATA_URL_LENGTH) {
-        const previewFailMsg = `Could not generate a valid image preview in ${outputFormat.toUpperCase()} format.`;
-        addLog(`[ERROR] ${previewFailMsg}`);
+        const previewFailMsg = `Could not generate a valid image preview in ${outputFormat.toUpperCase()} format. The resulting data URL was too short or invalid.`;
+        addLog(`[ERROR] ${previewFailMsg} Result URL length: ${resultDataUrl?.length || 'null'}`);
         toast({ title: "Preview Generation Failed", description: previewFailMsg, variant: "destructive" });
         setStackedImage(null);
       } else {
         setStackedImage(resultDataUrl);
-        setImageForPostProcessing(resultDataUrl);
-        setEditedPreviewUrl(resultDataUrl);
-        setShowPostProcessEditor(true);
+        setImageForPostProcessing(resultDataUrl); // For editor
+        setEditedPreviewUrl(resultDataUrl); // Initial editor preview
 
+        // Reset post-processing sliders to defaults for new image
         setBrightness(100);
         setExposure(0);
         setSaturation(100);
+        setShowPostProcessEditor(true); // Open post-process editor
 
         const alignmentMessage = successfulStarAlignments > 0
-          ? `${successfulStarAlignments}/${imageElements.length} images primarily aligned using star-based centroids.`
-          : `All images aligned using brightness-based centroids or geometric centers.`;
+          ? `${successfulStarAlignments}/${numValidLightImages} images primarily aligned using star-based centroids.`
+          : `All ${numValidLightImages} images aligned using brightness-based centroids or geometric centers.`;
 
         let calibrationSummary = "";
         if (useBiasFrames && masterBiasData) calibrationSummary += `Bias (master from ${biasFrameFiles.length} frames) subtracted. `;
@@ -2186,7 +2465,7 @@ export default function AstroStackerPage() {
 
 
         const stackingMethodUsed = stackingMode === 'median' ? 'Median' : 'Sigma Clip';
-        const successToastMsg = `${alignmentMessage} ${calibrationSummary} ${validImagesStackedCount} image(s) (out of ${imageElements.length} processed) stacked. Dim: ${targetWidth}x${targetHeight}. Ready for post-processing.`;
+        const successToastMsg = `${alignmentMessage} ${calibrationSummary} ${validImagesStackedCount} image(s) (out of ${numValidLightImages} processed) stacked. Dim: ${targetWidth}x${targetHeight}. Ready for post-processing.`;
         addLog(`Stacking complete. ${successToastMsg}`);
         toast({
           title: `${stackingMethodUsed} Stacking Complete (${outputFormat.toUpperCase()})`,
@@ -2204,20 +2483,22 @@ export default function AstroStackerPage() {
         description: `An unexpected error occurred: ${errorMessage}. Check console and logs. Very large images may cause browser instability or errors.`,
         variant: "destructive",
       });
-      setStackedImage(null);
+      setStackedImage(null); // Clear any potentially partial result
     } finally {
       setIsProcessingStack(false);
       setProgressPercent(0);
+      // Reset isAnalyzing for all images after stacking attempt
       setAllImageStarData(prev => prev.map(e => ({...e, isAnalyzing: false})));
       addLog("Image stacking process finished.");
-      console.log("Image stacking process finished.");
+      console.log("Image stacking process finished."); // For easier debugging in browser console
     }
   };
 
   const handleOpenPostProcessEditor = () => {
     if (stackedImage) {
-      setImageForPostProcessing(stackedImage);
-      setEditedPreviewUrl(stackedImage);
+      setImageForPostProcessing(stackedImage); // Base image for editor
+      setEditedPreviewUrl(stackedImage); // Initial preview in editor
+      // Reset sliders to default when opening
       setBrightness(100);
       setExposure(0);
       setSaturation(100);
@@ -2232,7 +2513,8 @@ export default function AstroStackerPage() {
     setExposure(0);
     setSaturation(100);
     if (imageForPostProcessing) {
-      setEditedPreviewUrl(imageForPostProcessing);
+      // Re-apply with default values to effectively reset the preview
+      setEditedPreviewUrl(imageForPostProcessing); // This will trigger the useEffect for adjustments
     }
   };
 
@@ -2247,6 +2529,7 @@ export default function AstroStackerPage() {
 
   const countImagesWithMatchingAspectRatio = useCallback(() => {
     if (!sourceImageForApplyMenu) return 0;
+    if (sourceImageForApplyMenu.dimensions.height === 0) return 0; // Avoid division by zero
     const sourceAspectRatio = sourceImageForApplyMenu.dimensions.width / sourceImageForApplyMenu.dimensions.height;
     return allImageStarData.filter(img => {
       if (img.id === sourceImageForApplyMenu.id || !img.analysisDimensions || img.analysisDimensions.width === 0 || img.analysisDimensions.height === 0) {
@@ -2259,7 +2542,13 @@ export default function AstroStackerPage() {
 
 
   const canStartStacking = allImageStarData.length >= 2;
-  const isUiDisabled = isProcessingStack || isProcessingDarkFrames || isProcessingFlatFrames || isProcessingBiasFrames || (currentEditingImageIndex !== null && allImageStarData[currentEditingImageIndex]?.isAnalyzing) || isApplyingStarsFromMenu;
+  // More comprehensive check for UI disabling states
+  const isUiDisabled = isProcessingStack || 
+                       isProcessingDarkFrames || 
+                       isProcessingFlatFrames || 
+                       isProcessingBiasFrames || 
+                       (currentEditingImageIndex !== null && allImageStarData[currentEditingImageIndex]?.isAnalyzing) || 
+                       isApplyingStarsFromMenu;
 
   const currentImageForEditing = currentEditingImageIndex !== null ? allImageStarData[currentEditingImageIndex] : null;
 
@@ -2270,6 +2559,7 @@ export default function AstroStackerPage() {
       <AppHeader />
       <main className="flex-grow container mx-auto py-6 px-2 sm:px-4 md:px-6">
         <div className="flex flex-col lg:flex-row gap-6">
+          {/* Left Panel: Uploads, Settings, Logs */}
           <div className="w-full lg:w-2/5 xl:w-1/3 space-y-6">
             <Card className="shadow-lg">
               <CardHeader>
@@ -2284,8 +2574,10 @@ export default function AstroStackerPage() {
               <CardContent className="space-y-4">
                 {!isStarEditingMode ? (
                   <>
+                    {/* Light Frames Upload */}
                     <ImageUploadArea onFilesAdded={handleFilesAdded} isProcessing={isUiDisabled} multiple={true} />
 
+                    {/* Stacking Progress Bar */}
                     {isProcessingStack && progressPercent > 0 && (
                       <div className="space-y-2 my-4">
                         <Progress value={progressPercent} className="w-full h-3" />
@@ -2293,6 +2585,7 @@ export default function AstroStackerPage() {
                       </div>
                     )}
 
+                    {/* Image Queue Display */}
                     {allImageStarData.length > 0 && (
                       <>
                         <h3 className="text-lg font-semibold mt-4 text-foreground">{t('imageQueueCount', {count: allImageStarData.length})}</h3>
@@ -2320,6 +2613,7 @@ export default function AstroStackerPage() {
                       </>
                     )}
 
+                    {/* Bias Frames Section */}
                     <Card className="mt-4 shadow-md">
                         <CardHeader className="pb-3 pt-4">
                             <CardTitle className="flex items-center text-lg">
@@ -2361,6 +2655,7 @@ export default function AstroStackerPage() {
                         </CardContent>
                     </Card>
 
+                    {/* Dark Frames Section */}
                     <Card className="mt-4 shadow-md">
                         <CardHeader className="pb-3 pt-4">
                             <CardTitle className="flex items-center text-lg">
@@ -2402,6 +2697,7 @@ export default function AstroStackerPage() {
                         </CardContent>
                     </Card>
 
+                    {/* Flat Frames Section */}
                     <Card className="mt-4 shadow-md">
                         <CardHeader className="pb-3 pt-4">
                             <CardTitle className="flex items-center text-lg">
@@ -2444,6 +2740,7 @@ export default function AstroStackerPage() {
                     </Card>
 
 
+                    {/* Stacking Controls (if images are present) */}
                     {allImageStarData.length > 0 && (
                         <>
                         <div className="space-y-2 pt-2">
@@ -2532,7 +2829,7 @@ export default function AstroStackerPage() {
                       </>
                     )}
                   </>
-                ) : (
+                ) : ( // Star Editing Mode UI
                   currentImageForEditing && currentImageForEditing.analysisDimensions && (
                     <div className="space-y-4">
                       <Alert>
@@ -2561,11 +2858,11 @@ export default function AstroStackerPage() {
                       <div className="space-y-2 mt-2">
                         <Button
                           onClick={handleConfirmAndNext}
-                          className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+                          className="w-full bg-blue-600 hover:bg-blue-700 text-white" // Distinct color for Confirm & Next
                           disabled={
                             isUiDisabled ||
                             currentEditingImageIndex === null ||
-                            currentEditingImageIndex >= allImageStarData.length - 1
+                            currentEditingImageIndex >= allImageStarData.length - 1 // Disable if last image
                           }
                         >
                           <SkipForward className="mr-2 h-4 w-4" />
@@ -2573,7 +2870,7 @@ export default function AstroStackerPage() {
                         </Button>
                          <Button
                           onClick={handleConfirmStarsForCurrentImage}
-                          className="w-full bg-green-600 hover:bg-green-700 text-white"
+                          className="w-full bg-green-600 hover:bg-green-700 text-white" // Existing confirm button
                           disabled={isUiDisabled}
                         >
                           <CheckCircle className="mr-2 h-4 w-4" />
@@ -2587,6 +2884,7 @@ export default function AstroStackerPage() {
                   )
                 )}
 
+                {/* Processing Logs */}
                 {logs.length > 0 && (
                   <Card className="mt-4">
                     <CardHeader className="p-3 border-b">
@@ -2611,17 +2909,18 @@ export default function AstroStackerPage() {
             </Card>
           </div>
 
+          {/* Right Panel: Image Preview */}
           <div className="w-full lg:w-3/5 xl:w-2/3 flex flex-col space-y-6">
             <ImagePreview
               imageUrl={showPostProcessEditor ? editedPreviewUrl : stackedImage}
               fitMode={previewFitMode}
             />
-            {stackedImage && !showPostProcessEditor && (
+            {stackedImage && !showPostProcessEditor && ( // Show only if stacked and editor not open
                <Button
                 onClick={handleOpenPostProcessEditor}
                 className="w-full bg-purple-600 hover:bg-purple-700 text-white"
                 size="lg"
-                disabled={isProcessingStack}
+                disabled={isProcessingStack} // Disable if stacking is in progress
               >
                 <Wand2 className="mr-2 h-5 w-5" />
                 {t('finalizeAndDownload')}
@@ -2637,6 +2936,7 @@ export default function AstroStackerPage() {
         </div>
       </footer>
 
+      {/* "Apply Star Selection to Others" Dialog */}
       {showApplyStarOptionsMenu && sourceImageForApplyMenu && (
         <AlertDialog open={showApplyStarOptionsMenu} onOpenChange={(open) => { if (!open) handleCancelApplyStarOptionsMenu(); }}>
             <AlertDialogContent className="max-w-md">
@@ -2683,12 +2983,13 @@ export default function AstroStackerPage() {
         </AlertDialog>
       )}
 
+    {/* Post-Processing Editor Dialog */}
     {showPostProcessEditor && imageForPostProcessing && (
         <ImagePostProcessEditor
           isOpen={showPostProcessEditor}
           onClose={() => setShowPostProcessEditor(false)}
-          baseImageUrl={imageForPostProcessing}
-          editedImageUrl={editedPreviewUrl}
+          baseImageUrl={imageForPostProcessing} // The original stacked image
+          editedImageUrl={editedPreviewUrl} // The live preview of adjustments
           brightness={brightness}
           setBrightness={setBrightness}
           exposure={exposure}
@@ -2706,5 +3007,3 @@ export default function AstroStackerPage() {
   );
 }
     
-
-      
