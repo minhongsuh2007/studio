@@ -39,13 +39,13 @@ export const translations: Translations = {
     confirmAndNext: 'Confirm & Next',
     cancelEditing: 'Cancel Editing',
     processingLogs: 'Processing Logs',
-    
+
     applyStarOptionsMenuTitle: 'Apply Star Selection to Others',
     applyStarOptionsMenuDesc: "You've set {starCount} stars for '{fileName}' ({width}x{height}px). How would you like to apply this selection to other images in the queue?",
     applyToMatchingDimensionsBtn: 'To {count} images with matching dimensions',
     applyProportionallyBtn: 'Proportionally to {count} images with similar aspect ratio',
     dontApplyToOthersBtn: "Don't Apply to Others",
-    
+
     toastStarsAppliedMatchingDimTitle: "Stars Applied (Matching Dimensions)",
     toastStarsAppliedMatchingDimDesc: "The selected stars have been applied to other images with matching dimensions.",
     toastProportionalApplySkippedTitle: "Proportional Apply Skipped",
@@ -66,7 +66,7 @@ export const translations: Translations = {
     logMasterDarkCreated: "Master Dark Frame created from {count} frames.",
     logMasterDarkFailed: "Failed to create Master Dark Frame (no valid darks processed).",
     logBiasSubtractedFromDark: "Bias (if any) subtracted from dark frame: {darkFrameName}",
-    
+
     flatFramesUploadTitle: 'Flat Frames (Optional)',
     flatFramesUploadDescription: 'Upload one or more flat frames (JPG/PNG/WEBP/FITS). Averaged into a master flat, then used to correct for sensor dust, vignetting, etc. Ensure similar dimensions.',
     useFlatFramesLabel: 'Enable Flat Field Correction',
@@ -96,24 +96,22 @@ export const translations: Translations = {
     stopLearningSession: "Stop Learning Session",
     learningModeActiveIndicator: "LEARNING MODE ACTIVE",
     enterPinDialogTitle: "Enter PIN to Activate Learning Mode",
-    enterPinDialogDesc: "Enter the designated PIN to start a learning session. This allows you to define a reference star pattern.",
+    enterPinDialogDesc: "Enter the designated PIN to start a learning session. This allows you to define reference star patterns.",
     pinPlaceholder: "PIN Code",
     submitPinButton: "Submit PIN",
     incorrectPinToastTitle: "Incorrect PIN",
     incorrectPinToastDesc: "The PIN you entered is incorrect. Learning mode not activated.",
     learningModeActivatedToastTitle: "Learning Mode Activated",
-    learningModeActivatedToastDesc: "You can now define star patterns by editing stars on an image and confirming. Select patterns from the list to use them.",
+    learningModeActivatedToastDesc: "You can now define star patterns by editing stars on an image and confirming. Select patterns from the list to use them for stacking or testing.",
     learningModeDeactivatedToastTitle: "Learning Mode Deactivated",
     learningModeDeactivatedToastDesc: "The current learning session has ended. Learned patterns remain stored locally.",
     starPatternFirstLearnedToastTitle: "Star Pattern Learned!",
     starPatternFirstLearnedToastDesc: "Pattern & characteristics from '{fileName}' ({starCount} stars; AvgBr: {avgBrightness}, AvgCo: {avgContrast}, AvgFw: {avgFwhm}) captured. It has been added to your list and stored locally.",
     starPatternOverwrittenToastTitle: "Learned Star Pattern Updated!",
     starPatternOverwrittenToastDesc: "Existing pattern for '{fileName}' updated. New pattern & characteristics ({starCount} stars; AvgBr: {avgBrightness}, AvgCo: {avgContrast}, AvgFw: {avgFwhm}) captured. Stored locally.",
-    
-    learnedPatternSource: "Source: {fileName} ({starCount} stars, {width}x{height}px)",
+
     noPatternLearnedYetInfo: "No star pattern has been learned. Edit stars on an image and confirm to create one.",
     patternStoredButModeOffInfo: "Pattern data for {count} source(s) stored locally, but Learning Mode is off. Activate to use or manage.",
-    activePatternTitle: "Active Learned Pattern:", // To be replaced or removed
     selectedPatternsTitle: "Selected Patterns ({count})",
     avgBrightnessLabel: "Avg Brightness",
     avgContrastLabel: "Avg Contrast",
@@ -121,13 +119,11 @@ export const translations: Translations = {
     learningModeCardTitle: "Pattern Learning Mode",
     learningModeCardDescription: "Activate to manually teach the system reference star patterns for improved alignment. Patterns are stored in your browser.",
     allLearnedPatternsListTitle: "Stored Patterns",
-    selectPatternCheckboxLabel: "Select this pattern for use", // For aria-label or tooltip on checkbox
+    selectPatternCheckboxLabel: "Select pattern from {fileName}",
     deletePatternButtonText: "Delete",
     clearAllLearnedPatternsButton: "Clear ALL Learned Patterns",
     patternDeletedToastTitle: "Pattern Deleted",
     patternDeletedToastDesc: "Pattern from '{fileName}' has been deleted.",
-    activePatternSetToastTitle: "Active Pattern Set", // This might be deprecated if we only use checkboxes
-    activePatternSetToastDesc: "Pattern from '{fileName}' is now the active reference.",
     allPatternsClearedToastTitle: "All Patterns Cleared",
     allPatternsClearedToastDesc: "All learned star patterns have been removed from local storage.",
     noActivePatternSelectedInfo: "No patterns are currently selected. Check boxes in the list below to select patterns for alignment guidance or for testing.",
@@ -137,8 +133,8 @@ export const translations: Translations = {
     uploadTestImageButton: "Upload Test Image",
     runPatternTestButton: "Run Pattern Test",
     analyzingTestImageProgress: "Analyzing test image with learned pattern...",
-    noActivePatternForTestToastTitle: "No Pattern Selected for Test", // Updated
-    noActivePatternForTestToastDesc: "Please select exactly one learned pattern from the list above to run a test.", // Updated
+    noActivePatternForTestToastTitle: "No Pattern Selected for Test",
+    noActivePatternForTestToastDesc: "Please select exactly one learned pattern from the list above to run a test.",
     learnTestSelectSinglePatternTitle: "Select One Pattern for Test",
     learnTestSelectSinglePatternDesc: "Please select exactly one pattern from the 'Stored Patterns' list to use for this test.",
     noTestImageToastTitle: "No Test Image",
@@ -239,18 +235,16 @@ export const translations: Translations = {
     incorrectPinToastTitle: "잘못된 PIN",
     incorrectPinToastDesc: "입력한 PIN이 잘못되었습니다. 학습 모드가 활성화되지 않았습니다.",
     learningModeActivatedToastTitle: "학습 모드 활성화됨!",
-    learningModeActivatedToastDesc: "이제 이미지에서 별을 편집하고 확인하여 별 패턴을 정의할 수 있습니다. 목록에서 사용할 패턴을 선택하세요.",
+    learningModeActivatedToastDesc: "이제 이미지에서 별을 편집하고 확인하여 별 패턴을 정의할 수 있습니다. 목록에서 사용할 패턴을 선택하여 스태킹 또는 테스트에 사용하세요.",
     learningModeDeactivatedToastTitle: "학습 모드 비활성화됨",
     learningModeDeactivatedToastDesc: "현재 학습 세션이 종료되었습니다. 학습된 패턴은 로컬에 저장된 상태로 유지됩니다.",
     starPatternFirstLearnedToastTitle: "별 패턴 학습됨!",
     starPatternFirstLearnedToastDesc: "'{fileName}' ({starCount}개 별; 평균밝기: {avgBrightness}, 평균대비: {avgContrast}, 평균FWHM: {avgFwhm}) 패턴 및 특성 캡처됨. 목록에 추가되었으며 로컬에 저장됩니다.",
     starPatternOverwrittenToastTitle: "학습된 별 패턴 업데이트됨!",
     starPatternOverwrittenToastDesc: "'{fileName}'의 기존 패턴 업데이트됨. 새 패턴 및 특성 ({starCount}개 별; 평균밝기: {avgBrightness}, 평균대비: {avgContrast}, 평균FWHM: {avgFwhm}) 캡처됨. 로컬에 저장됩니다.",
-    
-    learnedPatternSource: "출처: {fileName} (별 {starCount}개, {width}x{height}px)",
+
     noPatternLearnedYetInfo: "학습된 별 패턴이 없습니다. 이미지에서 별을 편집하고 확인하여 패턴을 만드세요.",
     patternStoredButModeOffInfo: "{count}개 출처의 패턴 데이터가 로컬에 저장되어 있지만, 학습 모드가 꺼져 있습니다. 사용하거나 관리하려면 활성화하세요.",
-    activePatternTitle: "활성 학습 패턴:",
     selectedPatternsTitle: "선택된 패턴 ({count}개)",
     avgBrightnessLabel: "평균 밝기",
     avgContrastLabel: "평균 대비",
@@ -258,13 +252,11 @@ export const translations: Translations = {
     learningModeCardTitle: "패턴 학습 모드",
     learningModeCardDescription: "활성화하여 시스템에 참조 별 패턴을 수동으로 학습시켜 정렬 정확도를 향상시킵니다. 패턴은 브라우저에 저장됩니다.",
     allLearnedPatternsListTitle: "저장된 패턴",
-    selectPatternCheckboxLabel: "사용할 패턴 선택",
+    selectPatternCheckboxLabel: "{fileName}의 패턴 선택",
     deletePatternButtonText: "삭제",
     clearAllLearnedPatternsButton: "모든 학습된 패턴 지우기",
     patternDeletedToastTitle: "패턴 삭제됨",
     patternDeletedToastDesc: "'{fileName}'의 패턴이 삭제되었습니다.",
-    activePatternSetToastTitle: "활성 패턴 설정됨",
-    activePatternSetToastDesc: "'{fileName}'의 패턴이 이제 활성 참조입니다.", // Might be deprecated
     allPatternsClearedToastTitle: "모든 패턴 지워짐",
     allPatternsClearedToastDesc: "모든 학습된 별 패턴이 로컬 저장소에서 제거되었습니다.",
     noActivePatternSelectedInfo: "현재 선택된 패턴이 없습니다. 정렬 지침이나 테스트를 위해 아래 목록에서 패턴을 선택하세요.",
@@ -326,7 +318,7 @@ export const translations: Translations = {
     toastProportionalApplySkippedDesc: "源图像“{fileName}”未选择任何星点。按比例应用已跳过。",
     toastProportionalApplyDoneTitle: "星点已应用 (按比例)",
     toastProportionalApplyDoneDesc: "星点已按比例应用于具有相似长宽比的其他图像。",
-    
+
     downscalePrompt: "图像 '{fileName}' ({width}x{height}px) 尺寸较大。将其缩小至最大 {maxSize}px (保持纵横比) 可以提高稳定性和速度。是否缩小？",
     stackingProgress: '叠加进度: {progressPercent}%',
 
@@ -351,7 +343,7 @@ export const translations: Translations = {
     logMasterFlatCreated: "已从 {count} 个帧创建母版平场。",
     logMasterFlatFailed: "未能创建母版平场 (未处理有效平场)。",
     logBiasSubtractedFromFlat: "已从平场中减去偏置场 (如有): {flatFrameName}",
-    
+
     biasFramesUploadTitle: '偏置场 (可选)',
     biasFramesUploadDescription: '上传一个或多个偏置场文件 (JPG/PNG/WEBP/FITS)。平均为母版偏置场，代表相机读出噪声。如果使用，将从亮场、暗场和平场中减去。确保尺寸相似。',
     useBiasFramesLabel: '启用偏置场扣除',
@@ -376,18 +368,16 @@ export const translations: Translations = {
     incorrectPinToastTitle: "PIN 码错误",
     incorrectPinToastDesc: "您输入的 PIN 码不正确。学习模式未激活。",
     learningModeActivatedToastTitle: "学习模式已激活!",
-    learningModeActivatedToastDesc: "您现在可以通过编辑图像上的星点并确认来定义星点图案。从列表中选择要使用的图案。",
+    learningModeActivatedToastDesc: "您现在可以通过编辑图像上的星点并确认来定义星点图案。从列表中选择要使用的图案以用于叠加或测试。",
     learningModeDeactivatedToastTitle: "学习模式已停用",
     learningModeDeactivatedToastDesc: "当前学习会话已结束。已学习的图案仍保留在本地。",
     starPatternFirstLearnedToastTitle: "星点图案已学习!",
     starPatternFirstLearnedToastDesc: "已捕获来自“{fileName}”({starCount}颗星；平均亮度: {avgBrightness}, 平均对比度: {avgContrast}, 平均FWHM: {avgFwhm})的图案和特征。它已添加到您的列表并本地存储。",
     starPatternOverwrittenToastTitle: "学习的星点图案已更新!",
     starPatternOverwrittenToastDesc: "“{fileName}”的现有图案已更新。已捕获新图案和特征 ({starCount}颗星；平均亮度: {avgBrightness}, 平均对比度: {avgContrast}, 平均FWHM: {avgFwhm})。本地存储。",
-    
-    learnedPatternSource: "来源: {fileName} (星点 {starCount}个, {width}x{height}px)",
+
     noPatternLearnedYetInfo: "尚未学习任何星点图案。请编辑图像上的星点并确认以创建一个。",
     patternStoredButModeOffInfo: "{count}个来源的图案数据已本地存储，但学习模式当前已关闭。请激活以使用或管理。",
-    activePatternTitle: "当前激活的学习图案:",
     selectedPatternsTitle: "已选图案 ({count}个)",
     avgBrightnessLabel: "平均亮度",
     avgContrastLabel: "平均对比度",
@@ -395,13 +385,11 @@ export const translations: Translations = {
     learningModeCardTitle: "图案学习模式",
     learningModeCardDescription: "激活此模式可手动教导系统参考星点图案，以提高对齐精度。图案存储在您的浏览器中。",
     allLearnedPatternsListTitle: "已存储图案",
-    selectPatternCheckboxLabel: "选择此图案以供使用",
+    selectPatternCheckboxLabel: "选择来自 {fileName} 的图案",
     deletePatternButtonText: "删除",
     clearAllLearnedPatternsButton: "清除所有已学图案",
     patternDeletedToastTitle: "图案已删除",
     patternDeletedToastDesc: "来自“{fileName}”的图案已被删除。",
-    activePatternSetToastTitle: "活动图案已设置",
-    activePatternSetToastDesc: "来自“{fileName}”的图案现在是活动参考。", // Might be deprecated
     allPatternsClearedToastTitle: "所有图案已清除",
     allPatternsClearedToastDesc: "所有学习的星点图案已从本地存储中移除。",
     noActivePatternSelectedInfo: "当前没有选择任何图案。请在下面的列表中勾选图案以用于对齐指导或测试。",
@@ -428,5 +416,3 @@ export const translations: Translations = {
 export const defaultLocale: Locale = 'en';
 
 export const getTranslations = (locale: Locale) => translations[locale] || translations[defaultLocale];
-
-
