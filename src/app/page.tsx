@@ -17,7 +17,7 @@ import { ImageQueueItem } from '@/components/astrostacker/ImageQueueItem';
 import { ImagePreview } from '@/components/astrostacker/ImagePreview';
 import { ImagePostProcessEditor } from '@/components/astrostacker/ImagePostProcessEditor';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Star as StarIcon, ListChecks, CheckCircle, RefreshCcw, Edit3, Loader2, Orbit, Trash2, CopyCheck, AlertTriangle, Wand2, ShieldOff, UploadCloud, Layers, Baseline, X, FileImage, ChevronRight, SkipForward, Brain, KeyRound, BadgeAlert, Settings, Info, FileText, TestTube2 } from 'lucide-react';
+import { Star as StarIcon, ListChecks, CheckCircle, RefreshCcw, Edit3, Loader2, Orbit, Trash2, CopyCheck, AlertTriangle, Wand2, ShieldOff, UploadCloud, Layers, Baseline, X, FileImage, ChevronRight, SkipForward, Brain, KeyRound, BadgeAlert, Settings, Info, FileText, TestTube2, CheckSquare, Square } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
@@ -29,6 +29,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Switch } from '@/components/ui/switch';
 import NextImage from 'next/image';
 import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
 
 
 interface LogEntry {
@@ -928,7 +929,8 @@ export default function AstroStackerPage() {
   const [isLearningModeActive, setIsLearningModeActive] = useState(false);
   
   const [allLearnedPatterns, setAllLearnedPatterns] = useState<LearnedStarPattern[]>([]);
-  const [activeLearnedPatternId, setActiveLearnedPatternId] = useState<string | null>(null);
+  const [selectedLearnedPatternIds, setSelectedLearnedPatternIds] = useState<string[]>([]);
+
 
   // Learn Test State
   const [testImageFile, setTestImageFile] = useState<File | null>(null);
@@ -966,27 +968,25 @@ export default function AstroStackerPage() {
         }
       }
       
-      const storedActivePatternId = localStorage.getItem('astrostacker-active-learned-pattern-id');
-      if (storedActivePatternId) {
-        setActiveLearnedPatternId(storedActivePatternId);
-         addLog(`[LEARN] Loaded active pattern ID: ${storedActivePatternId} from localStorage.`);
+      const storedSelectedPatternIdsString = localStorage.getItem('astrostacker-selected-pattern-ids');
+      if (storedSelectedPatternIdsString) {
+        const storedIds = JSON.parse(storedSelectedPatternIdsString) as string[];
+        if(Array.isArray(storedIds)) {
+            setSelectedLearnedPatternIds(storedIds);
+            addLog(`[LEARN] Loaded ${storedIds.length} selected pattern ID(s) from localStorage.`);
+        }
       }
 
       const storedLearningModeActive = localStorage.getItem('astrostacker-learning-mode-active');
       if (storedLearningModeActive === 'true') {
          setIsLearningModeActive(true);
          addLog("[LEARN] Learning Mode status restored as ACTIVE from localStorage.");
-         // If mode is active, try to load the active pattern into state
-         if (storedActivePatternId && allLearnedPatterns.find(p => p.id === storedActivePatternId)) {
-            // This assumes allLearnedPatterns is already populated from localStorage if available
-            // setActiveLearnedPatternId(storedActivePatternId); // This is already done above
-         }
       }
     } catch (error) {
       console.error("Error loading data from localStorage:", error);
       addLog("[ERROR] Could not load learning data from localStorage. Clearing potentially corrupted data.");
       localStorage.removeItem('astrostacker-learned-patterns-list');
-      localStorage.removeItem('astrostacker-active-learned-pattern-id');
+      localStorage.removeItem('astrostacker-selected-pattern-ids');
       localStorage.removeItem('astrostacker-learning-mode-active');
     }
   }, [addLog]); 
@@ -1666,7 +1666,7 @@ const analyzeImageForStars = async (
         avgFwhm: calculateMean(confirmedEntry.analysisStars.filter(s => s.fwhm !== undefined).map(s => s.fwhm!)),
       };
       
-      const newPatternId = `${Date.now()}-${confirmedEntry.file.name}`; 
+      const newPatternId = `${Date.now()}-${confirmedEntry.file.name.replace(/[^a-zA-Z0-9]/g, '_')}`; 
       const newLearnedPattern: LearnedStarPattern = {
         id: newPatternId,
         stars: [...confirmedEntry.analysisStars],
@@ -1681,24 +1681,23 @@ const analyzeImageForStars = async (
         if (p.sourceFileName === newLearnedPattern.sourceFileName) { 
           patternUpdated = true;
           addLog(`[LEARN] Updating existing pattern for source file: ${p.sourceFileName} with new ID ${newLearnedPattern.id}. Old ID was ${p.id}.`);
-          return { ...newLearnedPattern, id: p.id }; 
+          return { ...newLearnedPattern, id: p.id }; // Keep old ID if updating by same source file name. This logic may need review if multiple distinct patterns from same source are desired later.
         }
         return p;
       });
 
       if (!patternUpdated) {
         updatedPatterns.push(newLearnedPattern);
+         addLog(`[LEARN] New pattern created: ${newLearnedPattern.sourceFileName} (ID: ${newLearnedPattern.id}).`);
       }
       
       setAllLearnedPatterns(updatedPatterns);
-      const currentActiveId = patternUpdated ? (updatedPatterns.find(p=>p.sourceFileName === newLearnedPattern.sourceFileName)?.id || newPatternId) : newPatternId;
-      setActiveLearnedPatternId(currentActiveId);
+      // Do NOT automatically select the pattern. User explicitly selects from list.
 
       try {
         localStorage.setItem('astrostacker-learned-patterns-list', JSON.stringify(updatedPatterns));
-        localStorage.setItem('astrostacker-active-learned-pattern-id', currentActiveId);
         localStorage.setItem('astrostacker-learning-mode-active', 'true'); 
-        addLog("[LEARN] Saved/Updated learned patterns and active ID to localStorage.");
+        addLog("[LEARN] Saved/Updated learned patterns list and active learning mode status to localStorage.");
       } catch (error) {
         console.error("Error saving learned pattern to localStorage:", error);
         addLog("[ERROR] Could not save learned pattern to localStorage.");
@@ -1760,7 +1759,7 @@ const analyzeImageForStars = async (
         avgFwhm: calculateMean(currentImageEntry.analysisStars.filter(s => s.fwhm !== undefined).map(s => s.fwhm!)),
       };
       
-      const newPatternId = `${Date.now()}-${currentImageEntry.file.name}`; 
+      const newPatternId = `${Date.now()}-${currentImageEntry.file.name.replace(/[^a-zA-Z0-9]/g, '_')}`; 
       const newLearnedPattern : LearnedStarPattern = {
         id: newPatternId, 
         stars: [...currentImageEntry.analysisStars],
@@ -1775,24 +1774,22 @@ const analyzeImageForStars = async (
         if (p.sourceFileName === newLearnedPattern.sourceFileName) {
           patternUpdated = true;
            addLog(`[LEARN] Confirm&Next: Updating existing pattern for source file: ${p.sourceFileName} with new ID ${newLearnedPattern.id}. Old ID was ${p.id}.`);
-          return { ...newLearnedPattern, id: p.id }; 
+          return { ...newLearnedPattern, id: p.id };  // Keep old ID if updating by same source file name
         }
         return p;
       });
       if (!patternUpdated) {
         updatedPatterns.push(newLearnedPattern);
+        addLog(`[LEARN] Confirm&Next: New pattern created: ${newLearnedPattern.sourceFileName} (ID: ${newLearnedPattern.id}).`);
       }
       
       setAllLearnedPatterns(updatedPatterns);
-      const newActiveId = patternUpdated ? (updatedPatterns.find(p => p.sourceFileName === newLearnedPattern.sourceFileName)?.id || newPatternId) : newPatternId;
-      setActiveLearnedPatternId(newActiveId);
-
+      // Do NOT automatically select the pattern
 
       try {
         localStorage.setItem('astrostacker-learned-patterns-list', JSON.stringify(updatedPatterns));
-        localStorage.setItem('astrostacker-active-learned-pattern-id', newActiveId);
         localStorage.setItem('astrostacker-learning-mode-active', 'true');
-        addLog("[LEARN] Saved/Updated learned patterns and active ID (via Confirm & Next).");
+        addLog("[LEARN] Saved/Updated learned patterns list and active learning mode status (via Confirm & Next).");
       } catch (e) { console.error("LS save error", e); addLog("[ERROR] Confirm&Next: Could not save to localStorage."); }
 
       const toastTitleKey = patternUpdated ? 'starPatternOverwrittenToastTitle' : 'starPatternFirstLearnedToastTitle';
@@ -1983,6 +1980,12 @@ const analyzeImageForStars = async (
     addLog(`Bias Frames: ${useBiasFrames && biasFrameFiles.length > 0 ? `${biasFrameFiles.length} frame(s)` : 'Not Used'}.`);
     addLog(`Dark Frames: ${useDarkFrames && darkFrameFiles.length > 0 ? `${darkFrameFiles.length} frame(s)` : 'Not Used'}.`);
     addLog(`Flat Frames: ${useFlatFrames && flatFrameFiles.length > 0 ? `${flatFrameFiles.length} frame(s)` : 'Not Used'}.`);
+    if (isLearningModeActive && selectedLearnedPatternIds.length > 0) {
+        addLog(`[LEARN STACK] Using ${selectedLearnedPatternIds.length} selected learned pattern(s) for alignment guidance.`);
+    } else if (isLearningModeActive) {
+        addLog(`[LEARN STACK] Learning mode is active, but no patterns are selected. Using default alignment.`);
+    }
+
 
     if (typeof window === 'undefined' || typeof document === 'undefined') {
         const envErrorMsg = "Stacking cannot proceed outside a browser environment.";
@@ -2053,47 +2056,49 @@ const analyzeImageForStars = async (
       return;
     }
 
-    const activeLearnedPattern = isLearningModeActive && activeLearnedPatternId && allLearnedPatterns.length > 0
-      ? allLearnedPatterns.find(p => p.id === activeLearnedPatternId) || null
-      : null;
-
-    if (activeLearnedPattern) {
-      addLog(`[STACK LEARN] Using ACTIVE learned pattern: ${activeLearnedPattern.sourceFileName} (ID: ${activeLearnedPattern.id}, Stars: ${activeLearnedPattern.stars.length})`);
-      addLog(`[STACK LEARN] Pattern characteristics: AvgBr=${activeLearnedPattern.avgBrightness?.toFixed(1)}, AvgCo=${activeLearnedPattern.avgContrast?.toFixed(1)}, AvgFw=${activeLearnedPattern.avgFwhm?.toFixed(1)}`);
-    } else if (isLearningModeActive) {
-      addLog(`[STACK LEARN WARN] Learning mode is active, but no active pattern found (ActiveID: ${activeLearnedPatternId}, Total Patterns: ${allLearnedPatterns.length}). Using default ref image logic.`);
-    }
-
-
     const firstValidImageIndex = currentImageEntriesForStacking.findIndex(
       entry => entry.isAnalyzed && imageElements.some(imgEl => imgEl.src === entry.previewUrl) && entry.analysisDimensions && entry.analysisDimensions.width > 0
     );
 
-    if (firstValidImageIndex === -1 && !activeLearnedPattern) { 
-      const noValidRefMsg = `Could not find a valid reference image (analyzed and loaded with dimensions) among images, and no active learned pattern. Cannot proceed.`;
-      addLog(`[ERROR] ${noValidRefMsg}`);
-      toast({ title: "Invalid Reference Image", description: noValidRefMsg, variant: "destructive" });
-      setIsProcessingStack(false); setProgressPercent(0); return;
-    }
-    
-    const defaultReferenceImageEntry = firstValidImageIndex !== -1 ? currentImageEntriesForStacking[firstValidImageIndex] : null;
-
+    // Determine target dimensions. If any selected pattern is active, use the first one's dimensions.
+    // Otherwise, use the default reference image's dimensions.
     let targetWidth: number;
     let targetHeight: number;
     let refDeterminationMethod = "Unknown";
+    let defaultReferenceImageEntryForCentroidFallback: ImageStarEntry | null = null;
 
-    if (activeLearnedPattern) {
-        targetWidth = activeLearnedPattern.dimensions.width;
-        targetHeight = activeLearnedPattern.dimensions.height;
-        refDeterminationMethod = `LearnedPattern (${activeLearnedPattern.sourceFileName})`;
-    } else if (defaultReferenceImageEntry?.analysisDimensions && defaultReferenceImageEntry.analysisDimensions.width > 0 && defaultReferenceImageEntry.analysisDimensions.height > 0) {
-        targetWidth = defaultReferenceImageEntry.analysisDimensions.width;
-        targetHeight = defaultReferenceImageEntry.analysisDimensions.height;
-        refDeterminationMethod = `DefaultRef (${defaultReferenceImageEntry.file.name})`;
+    if (isLearningModeActive && selectedLearnedPatternIds.length > 0) {
+        const firstSelectedPatternId = selectedLearnedPatternIds[0];
+        const firstSelectedPattern = allLearnedPatterns.find(p => p.id === firstSelectedPatternId);
+        if (firstSelectedPattern && firstSelectedPattern.dimensions.width > 0 && firstSelectedPattern.dimensions.height > 0) {
+            targetWidth = firstSelectedPattern.dimensions.width;
+            targetHeight = firstSelectedPattern.dimensions.height;
+            refDeterminationMethod = `FirstSelectedPattern (${firstSelectedPattern.sourceFileName})`;
+        } else {
+            // Fallback if first selected pattern is invalid (should not happen if UI controls are correct)
+             if (firstValidImageIndex !== -1 && currentImageEntriesForStacking[firstValidImageIndex].analysisDimensions) {
+                const dims = currentImageEntriesForStacking[firstValidImageIndex].analysisDimensions;
+                targetWidth = dims.width;
+                targetHeight = dims.height;
+                defaultReferenceImageEntryForCentroidFallback = currentImageEntriesForStacking[firstValidImageIndex];
+                refDeterminationMethod = `DefaultRef (Fallback from invalid selected pattern) (${defaultReferenceImageEntryForCentroidFallback.file.name})`;
+            } else {
+                const invalidRefMsg = `Reference dimensions from first selected pattern invalid, and no fallback default ref image. Cannot proceed.`;
+                addLog(`[ERROR] ${invalidRefMsg}`);
+                toast({ title: "Invalid Reference Dimensions", description: invalidRefMsg, variant: "destructive" });
+                setIsProcessingStack(false); setProgressPercent(0); return;
+            }
+        }
+    } else if (firstValidImageIndex !== -1 && currentImageEntriesForStacking[firstValidImageIndex].analysisDimensions) {
+        const dims = currentImageEntriesForStacking[firstValidImageIndex].analysisDimensions;
+        targetWidth = dims.width;
+        targetHeight = dims.height;
+        defaultReferenceImageEntryForCentroidFallback = currentImageEntriesForStacking[firstValidImageIndex];
+        refDeterminationMethod = `DefaultRef (${defaultReferenceImageEntryForCentroidFallback.file.name})`;
     } else {
-      const invalidRefMsg = `Reference dimensions are missing or zero (Learned Pattern: ${activeLearnedPattern ? 'Yes' : 'No'}, Default Ref: ${defaultReferenceImageEntry?.file?.name || 'N/A'}). Cannot proceed.`;
-      addLog(`[ERROR] ${invalidRefMsg}`);
-      toast({ title: "Invalid Reference Dimensions", description: invalidRefMsg, variant: "destructive" });
+      const noValidRefMsg = `Could not find a valid reference image (analyzed and loaded with dimensions) among images. Cannot proceed.`;
+      addLog(`[ERROR] ${noValidRefMsg}`);
+      toast({ title: "Invalid Reference Image", description: noValidRefMsg, variant: "destructive" });
       setIsProcessingStack(false); setProgressPercent(0); return;
     }
     addLog(`Target stacking dimensions: ${targetWidth}x${targetHeight} (determined by: ${refDeterminationMethod}).`);
@@ -2233,7 +2238,7 @@ const analyzeImageForStars = async (
     const dynamicDelayMs = Math.max(10, Math.min(100, 10 + Math.floor(loadScore * 90))); 
     addLog(`Calculated dynamic yield delay: ${dynamicDelayMs}ms (Load score: ${loadScore.toFixed(2)}, Images: ${numValidLightImages}, Pixels: ${totalPixelsInTarget})`);
 
-    const centroids: ({ x: number; y: number } | null)[] = [];
+    const globalCentroidsForFallback: ({ x: number; y: number } | null)[] = [];
     let successfulCentroidBasedAlignments = 0;
     const centroidProgressIncrement = numValidLightImages > 0 ? PROGRESS_CENTROID_CALCULATION_TOTAL / numValidLightImages : 0;
     
@@ -2242,13 +2247,13 @@ const analyzeImageForStars = async (
     if (!tempAnalysisCtxForFallback) throw new Error("Could not get fallback analysis canvas context.");
 
 
-    addLog(`Starting fallback centroid calculation for ${numValidLightImages} valid light images (used if Affine fails)...`);
+    addLog(`Starting fallback centroid calculation for ${numValidLightImages} valid light images...`);
     for (let i = 0; i < currentImageEntriesForStacking.length; i++) {
       const entryData = currentImageEntriesForStacking[i];
       const imgEl = imageElements.find(el => el.src === entryData.previewUrl); 
 
       if (!imgEl) { 
-          centroids.push(null); continue;
+          globalCentroidsForFallback.push(null); continue;
       }
       const fileNameForLog = entryData.file.name;
       let finalScaledCentroid: { x: number; y: number } | null = null;
@@ -2289,7 +2294,7 @@ const analyzeImageForStars = async (
           }
       }
       
-      centroids.push(finalScaledCentroid);
+      globalCentroidsForFallback.push(finalScaledCentroid);
       setProgressPercent(prev => Math.min(PROGRESS_INITIAL_SETUP + PROGRESS_CENTROID_CALCULATION_TOTAL, prev + centroidProgressIncrement));
       if (finalScaledCentroid) {
         addLog(`[FALLBACK CENTROID] Image ${i} (${fileNameForLog}): (${finalScaledCentroid.x.toFixed(2)}, ${finalScaledCentroid.y.toFixed(2)}) Method: ${method}`);
@@ -2298,88 +2303,26 @@ const analyzeImageForStars = async (
       }
       await yieldToEventLoop(dynamicDelayMs / 2); 
     }
-    addLog(`Fallback centroid calculation complete. ${successfulCentroidBasedAlignments}/${numValidLightImages} would use star-based if affine failed.`);
+    addLog(`Fallback centroid calculation complete. ${successfulCentroidBasedAlignments}/${numValidLightImages} would use star-based if affine from patterns failed.`);
     
     
-    let referenceStarsForAffine: AstroAlignPoint[] = []; 
-    let referenceCentroidForAffineFallback: { x: number; y: number } | null = null;
-    let effectiveReferenceDimensions = { width: targetWidth, height: targetHeight }; 
-
-    if (activeLearnedPattern) {
-        addLog(`[AFFINE REF PREP] Using Learned Pattern: ${activeLearnedPattern.sourceFileName}`);
-        const learnedStarsToUse = activeLearnedPattern.stars
-            .filter(s => s.fwhm !== undefined && s.fwhm >= ALIGNMENT_STAR_MIN_FWHM && s.fwhm <= ALIGNMENT_STAR_MAX_FWHM)
-            .sort((a, b) => b.brightness - a.brightness) 
-            .slice(0, NUM_STARS_TO_USE_FOR_AFFINE_MATCHING);
-
-        if (learnedStarsToUse.length >= MIN_STARS_FOR_AFFINE_ALIGNMENT) {
-            referenceStarsForAffine = learnedStarsToUse.map(s => ({ x: s.x, y: s.y })); 
-            addLog(`[AFFINE REF PREP] Using ${referenceStarsForAffine.length} FWHM-filtered stars from learned pattern for affine. Top star (raw): (${learnedStarsToUse[0]?.x.toFixed(1)},${learnedStarsToUse[0]?.y.toFixed(1)})`);
+    let defaultRefCentroidForFallback: { x: number; y: number } | null = null;
+    if (defaultReferenceImageEntryForCentroidFallback) {
+        const defaultRefIndex = currentImageEntriesForStacking.findIndex(e => e.id === defaultReferenceImageEntryForCentroidFallback!.id);
+        if(defaultRefIndex !== -1) {
+            defaultRefCentroidForFallback = globalCentroidsForFallback[defaultRefIndex];
+             addLog(`[FALLBACK REF CENTROID] Default reference image for fallback is ${defaultReferenceImageEntryForCentroidFallback.file.name}. Its global fallback centroid: (${defaultRefCentroidForFallback?.x.toFixed(2)}, ${defaultRefCentroidForFallback?.y.toFixed(2)})`);
         } else {
-            addLog(`[AFFINE REF WARN] Learned pattern has only ${learnedStarsToUse.length} stars after FWHM filter & slice (min ${MIN_STARS_FOR_AFFINE_ALIGNMENT} needed). Affine may be disabled for this pattern.`);
-            referenceStarsForAffine = []; 
-        }
-        referenceCentroidForAffineFallback = calculateStarArrayCentroid(activeLearnedPattern.stars, addLog);
-        effectiveReferenceDimensions = { ...activeLearnedPattern.dimensions }; 
-        
-        if (referenceCentroidForAffineFallback && (effectiveReferenceDimensions.width !== targetWidth || effectiveReferenceDimensions.height !== targetHeight)) {
-             if (effectiveReferenceDimensions.width > 0 && effectiveReferenceDimensions.height > 0) {
-                referenceCentroidForAffineFallback = {
-                    x: (referenceCentroidForAffineFallback.x / effectiveReferenceDimensions.width) * targetWidth,
-                    y: (referenceCentroidForAffineFallback.y / effectiveReferenceDimensions.height) * targetHeight
-                };
-                addLog(`[AFFINE REF PREP] Learned pattern centroid scaled to target space: (${referenceCentroidForAffineFallback.x.toFixed(2)}, ${referenceCentroidForAffineFallback.y.toFixed(2)})`);
-             } else {
-                 addLog(`[AFFINE REF WARN] Learned pattern dimensions are zero. Centroid scaling compromised.`);
-                 referenceCentroidForAffineFallback = { x: targetWidth / 2, y: targetHeight / 2}; 
-             }
-        } else if (!referenceCentroidForAffineFallback) {
-             addLog(`[AFFINE REF WARN] Could not calculate centroid from learned pattern stars. Centroid fallback might be compromised.`);
-             referenceCentroidForAffineFallback = { x: targetWidth / 2, y: targetHeight / 2}; 
-        }
-        addLog(`[AFFINE REF PREP] Effective Ref Dims (from Learned): ${effectiveReferenceDimensions.width}x${effectiveReferenceDimensions.height}`);
-
-
-    } else if (defaultReferenceImageEntry) { 
-        addLog(`[AFFINE REF PREP] Using Default Reference Image: ${defaultReferenceImageEntry.file.name}`);
-        if (defaultReferenceImageEntry.isAnalyzed && defaultReferenceImageEntry.analysisStars.length >= MIN_STARS_FOR_AFFINE_ALIGNMENT) {
-            const refStarsToUse = (defaultReferenceImageEntry.starSelectionMode === 'manual' && defaultReferenceImageEntry.analysisStars.length > 0 ?
-                                defaultReferenceImageEntry.analysisStars : defaultReferenceImageEntry.initialAutoStars)
-                .filter(s => s.fwhm !== undefined && s.fwhm >= ALIGNMENT_STAR_MIN_FWHM && s.fwhm <= ALIGNMENT_STAR_MAX_FWHM)
-                .sort((a,b) => b.brightness - a.brightness) 
-                .slice(0, NUM_STARS_TO_USE_FOR_AFFINE_MATCHING);
-            
-            addLog(`[AFFINE REF PREP] Default Ref Img ${defaultReferenceImageEntry.file.name}: Total analysis/initial stars: ${defaultReferenceImageEntry.analysisStars.length}/${defaultReferenceImageEntry.initialAutoStars.length}. After FWHM filter & slice: ${refStarsToUse.length} stars.`);
-
-            if (refStarsToUse.length >= MIN_STARS_FOR_AFFINE_ALIGNMENT) {
-                referenceStarsForAffine = refStarsToUse.map(s => {
-                    addLog(`[AFFINE REF STAR] Using (from default ref): x=${s.x.toFixed(2)}, y=${s.y.toFixed(2)}, fwhm=${s.fwhm?.toFixed(2)}, bright=${s.brightness.toFixed(0)}`);
-                    return { x: s.x, y: s.y }; 
-                });
-            } else {
-                addLog(`[AFFINE REF WARN] Default Ref image ${defaultReferenceImageEntry.file.name} has only ${refStarsToUse.length} stars after FWHM filter & slice (min ${MIN_STARS_FOR_AFFINE_ALIGNMENT} needed). Affine will be disabled for all frames.`);
-            }
-        } else {
-             addLog(`[AFFINE REF INFO] Default Reference image ${defaultReferenceImageEntry?.file?.name || 'N/A'} not suitable for affine (isAnalyzed=${defaultReferenceImageEntry?.isAnalyzed}, stars=${defaultReferenceImageEntry?.analysisStars?.length || 0} vs min ${MIN_STARS_FOR_AFFINE_ALIGNMENT} before FWHM). Affine alignment will be skipped for all images.`);
-        }
-        referenceCentroidForAffineFallback = centroids[firstValidImageIndex]; 
-        if (defaultReferenceImageEntry?.analysisDimensions) {
-            effectiveReferenceDimensions = { ...defaultReferenceImageEntry.analysisDimensions }; 
-            addLog(`[AFFINE REF PREP] Effective Ref Dims (from Default Ref): ${effectiveReferenceDimensions.width}x${effectiveReferenceDimensions.height}`);
+            addLog(`[FALLBACK REF CENTROID WARN] Default ref image for fallback not found in globalCentroids array. Centroid fallback may be impaired.`);
         }
     } else {
-        addLog(`[AFFINE REF ERROR] No suitable reference for Affine (no learned pattern, no default queue image). Affine will be skipped.`);
-    }
-    
-    if (effectiveReferenceDimensions.width === 0 || effectiveReferenceDimensions.height === 0) {
-        addLog(`[ALIGN REF WARN] Effective reference dimensions for affine are zero (${effectiveReferenceDimensions.width}x${effectiveReferenceDimensions.height}). This will likely cause issues. Defaulting to target stacking dimensions ${targetWidth}x${targetHeight}.`);
-        effectiveReferenceDimensions = { width: targetWidth, height: targetHeight };
+        addLog(`[FALLBACK REF CENTROID WARN] No default reference image identified for centroid fallback (e.g. if all alignment is pattern-based). This is okay if patterns work.`);
     }
 
 
     const finalImageData = new Uint8ClampedArray(targetWidth * targetHeight * 4); 
     let validImagesStackedCount = 0;
-    let affineAlignmentsUsed = 0;
+    let successfulAffinePatternAlignmentsThisStack = 0;
 
     addLog(`Starting band processing for stacking. Band height: ${STACKING_BAND_HEIGHT}px. Mode: ${stackingMode}.`);
     const numBands = targetHeight > 0 ? Math.ceil(targetHeight / STACKING_BAND_HEIGHT) : 0;
@@ -2413,11 +2356,11 @@ const analyzeImageForStars = async (
         const currentImageEntry = currentImageEntriesForStacking.find(entry => entry.previewUrl === imgElement.src); 
         
         if (!currentImageEntry || !currentImageEntry.analysisDimensions || currentImageEntry.analysisDimensions.width === 0) { 
-            addLog(`[STACK SKIP WARN] Cannot find entry data or valid analysis dimensions for image element ${i}. This image will be skipped.`); 
+            if (yBandStart === 0) addLog(`[STACK SKIP WARN] Img ${i}: Cannot find entry data or valid analysis dimensions. Skipped.`); 
             continue; 
         }
         if (!currentImageEntry.isAnalyzed) { 
-             addLog(`[STACK SKIP WARN] Image ${currentImageEntry.file.name} (ID: ${currentImageEntry.id}) was not successfully analyzed. Skipping for stacking.`);
+             if (yBandStart === 0) addLog(`[STACK SKIP WARN] Img ${i} (${currentImageEntry.file.name}): Not successfully analyzed. Skipped.`);
              continue;
         }
 
@@ -2463,121 +2406,127 @@ const analyzeImageForStars = async (
         currentImageCtx.putImageData(new ImageData(calibratedLightDataArray, targetWidth, targetHeight), 0,0); 
 
 
-        let useAffineTransform = false;
+        let affineTransformAppliedForThisImage = false;
         let finalMatrixForWarp: number[][] | null = null;
 
-        const isCurrentTheReferenceSource = 
-            (activeLearnedPattern && activeLearnedPattern.sourceFileName === currentImageEntry.file.name && activeLearnedPattern.dimensions.width === currentImageEntry.analysisDimensions.width && activeLearnedPattern.dimensions.height === currentImageEntry.analysisDimensions.height) ||
-            (!activeLearnedPattern && defaultReferenceImageEntry && currentImageEntry.id === defaultReferenceImageEntry.id);
+        if (isLearningModeActive && selectedLearnedPatternIds.length > 0) {
+             if (yBandStart === 0) addLog(`[MULTI-PATTERN] For image ${i} (${currentImageEntry.file.name}), attempting alignment with ${selectedLearnedPatternIds.length} selected pattern(s).`);
 
-
-        if (!isCurrentTheReferenceSource && referenceStarsForAffine.length >= MIN_STARS_FOR_AFFINE_ALIGNMENT) {
-            let candidateStarsForMatchingQuery: Star[] = (currentImageEntry.starSelectionMode === 'manual' && currentImageEntry.analysisStars.length > 0) ?
-                                currentImageEntry.analysisStars : currentImageEntry.initialAutoStars;
-            
-             if (yBandStart === 0) addLog(`[AFFINE PREP CURR] ${currentImageEntry.file.name}: Initial candidates for matching (before learned char. filter): ${candidateStarsForMatchingQuery.length}`);
-            let candidateStarsForMatching: Star[] = [];
-
-            if (activeLearnedPattern && activeLearnedPattern.avgBrightness !== undefined && activeLearnedPattern.avgContrast !== undefined) {
-                const { avgBrightness, avgContrast, avgFwhm } = activeLearnedPattern;
-                if (yBandStart === 0) addLog(`[LEARN APPLY STACK] Using learned characteristics: AvgBr=${avgBrightness?.toFixed(1)}, AvgCo=${avgContrast?.toFixed(1)}, AvgFw=${avgFwhm?.toFixed(1)} for ${currentImageEntry.file.name}`);
-
-                candidateStarsForMatching = candidateStarsForMatchingQuery
-                    .filter(s => s.fwhm !== undefined && s.fwhm >= ALIGNMENT_STAR_MIN_FWHM && s.fwhm <= ALIGNMENT_STAR_MAX_FWHM)
-                    .map(s => {
-                        const brightnessDiff = Math.abs((s.brightness || 0) - (avgBrightness || 0));
-                        const contrastDiff = Math.abs((s.contrast || 0) - (avgContrast || 0));
-                        const fwhmDiff = avgFwhm !== undefined && s.fwhm !== undefined ? Math.abs(s.fwhm - avgFwhm) : 0;
-                        
-                        const score = (brightnessDiff / (Math.max(1, Math.abs(avgBrightness!)) )) + 
-                                      (contrastDiff / (Math.max(1, Math.abs(avgContrast!)) )) +
-                                      (fwhmDiff / (Math.max(1, Math.abs(avgFwhm || 1)) )); 
-                        return { ...s, similarityScore: score };
-                    })
-                    .sort((a, b) => (a.similarityScore || Infinity) - (b.similarityScore || Infinity)) 
-                    .slice(0, NUM_STARS_TO_USE_FOR_AFFINE_MATCHING * 4); 
-
-                if (yBandStart === 0) addLog(`[LEARN APPLY STACK] ${currentImageEntry.file.name}: Have ${candidateStarsForMatching.length} candidates after FWHM & similarity sort. Top score: ${candidateStarsForMatching[0]?.similarityScore?.toFixed(2)}`);
-                if (candidateStarsForMatching.length > 0 && candidateStarsForMatching.length < MIN_STARS_FOR_AFFINE_ALIGNMENT) {
-                     if (yBandStart === 0) addLog(`[LEARN APPLY STACK WARN] ${currentImageEntry.file.name}: Only ${candidateStarsForMatching.length} stars passed similarity filters, may not be enough for affine.`);
-                } else if (candidateStarsForMatching.length === 0) {
-                    if (yBandStart === 0) addLog(`[LEARN APPLY STACK WARN] ${currentImageEntry.file.name}: No stars passed similarity filters. Affine will likely fail or use fallback.`);
+            for (const patternId of selectedLearnedPatternIds) {
+                const activeLearnedPattern = allLearnedPatterns.find(p => p.id === patternId);
+                if (!activeLearnedPattern) {
+                    if (yBandStart === 0) addLog(`[MULTI-PATTERN WARN] Selected pattern ID ${patternId} not found for image ${i}. Skipping this pattern.`);
+                    continue;
                 }
 
-            } else { 
-                 candidateStarsForMatching = candidateStarsForMatchingQuery
+                if (yBandStart === 0) addLog(`[MULTI-PATTERN TRY] Img ${i}: Trying pattern from ${activeLearnedPattern.sourceFileName} (ID: ${patternId})`);
+
+                let referenceStarsForAffine: AstroAlignPoint[] = [];
+                let referenceCentroidForAffineFallback: { x: number; y: number } | null = null;
+                let effectiveReferenceDimensions = { ...activeLearnedPattern.dimensions };
+
+                const learnedStarsToUse = activeLearnedPattern.stars
                     .filter(s => s.fwhm !== undefined && s.fwhm >= ALIGNMENT_STAR_MIN_FWHM && s.fwhm <= ALIGNMENT_STAR_MAX_FWHM)
-                    .sort((a, b) => (b.brightness * (b.contrast || 1)) - (a.brightness * (a.contrast || 1))) 
-                    .slice(0, NUM_STARS_TO_USE_FOR_AFFINE_MATCHING * 4); 
-                 if(yBandStart === 0) addLog(`[AFFINE CURR PREP] ${currentImageEntry.file.name}: Using standard FWHM/brightness*contrast sort for ${candidateStarsForMatching.length} candidates (no learned char. or not active).`);
-            }
-            
-            if (candidateStarsForMatching.length >= MIN_STARS_FOR_AFFINE_ALIGNMENT) {
+                    .sort((a, b) => b.brightness - a.brightness)
+                    .slice(0, NUM_STARS_TO_USE_FOR_AFFINE_MATCHING);
+
+                if (learnedStarsToUse.length >= MIN_STARS_FOR_AFFINE_ALIGNMENT) {
+                    referenceStarsForAffine = learnedStarsToUse.map(s => ({ x: s.x, y: s.y }));
+                } else {
+                    if (yBandStart === 0) addLog(`[MULTI-PATTERN WARN] Pattern ${activeLearnedPattern.sourceFileName} has only ${learnedStarsToUse.length} suitable stars (min ${MIN_STARS_FOR_AFFINE_ALIGNMENT} needed). Cannot use for affine for image ${i}.`);
+                    continue; // Try next selected pattern
+                }
+                referenceCentroidForAffineFallback = calculateStarArrayCentroid(activeLearnedPattern.stars, addLog);
+                if (referenceCentroidForAffineFallback && (effectiveReferenceDimensions.width !== targetWidth || effectiveReferenceDimensions.height !== targetHeight)) {
+                    if (effectiveReferenceDimensions.width > 0 && effectiveReferenceDimensions.height > 0) {
+                        referenceCentroidForAffineFallback = {
+                            x: (referenceCentroidForAffineFallback.x / effectiveReferenceDimensions.width) * targetWidth,
+                            y: (referenceCentroidForAffineFallback.y / effectiveReferenceDimensions.height) * targetHeight
+                        };
+                    } else { referenceCentroidForAffineFallback = { x: targetWidth / 2, y: targetHeight / 2 }; }
+                } else if (!referenceCentroidForAffineFallback) {
+                    referenceCentroidForAffineFallback = { x: targetWidth / 2, y: targetHeight / 2 };
+                }
+
+
+                let candidateStarsForMatchingQuery: Star[] = (currentImageEntry.starSelectionMode === 'manual' && currentImageEntry.analysisStars.length > 0) ?
+                                                        currentImageEntry.analysisStars : currentImageEntry.initialAutoStars;
+                
+                let candidateStarsForMatching: Star[] = [];
+                const { avgBrightness, avgContrast, avgFwhm } = activeLearnedPattern;
+                if (avgBrightness !== undefined && avgContrast !== undefined) {
+                    candidateStarsForMatching = candidateStarsForMatchingQuery
+                        .filter(s => s.fwhm !== undefined && s.fwhm >= ALIGNMENT_STAR_MIN_FWHM && s.fwhm <= ALIGNMENT_STAR_MAX_FWHM)
+                        .map(s => {
+                            const brightnessDiff = Math.abs((s.brightness || 0) - (avgBrightness || 0));
+                            const contrastDiff = Math.abs((s.contrast || 0) - (avgContrast || 0));
+                            const fwhmDiff = avgFwhm !== undefined && s.fwhm !== undefined ? Math.abs(s.fwhm - avgFwhm) : Infinity;
+                            const score = (brightnessDiff / (Math.max(1, Math.abs(avgBrightness!)) * 0.5)) + 
+                                          (contrastDiff / (Math.max(1, Math.abs(avgContrast!)) * 0.3)) +
+                                          (fwhmDiff / (Math.max(1, Math.abs(avgFwhm || 1)) * 0.2 )); 
+                            return { ...s, similarityScore: score };
+                        })
+                        .sort((a, b) => (a.similarityScore || Infinity) - (b.similarityScore || Infinity))
+                        .slice(0, NUM_STARS_TO_USE_FOR_AFFINE_MATCHING * 4);
+                    if (yBandStart === 0) addLog(`[MULTI-PATTERN SIMILARITY] Img ${i} vs Pattern ${activeLearnedPattern.sourceFileName}: ${candidateStarsForMatching.length} candidates after similarity. Top score: ${candidateStarsForMatching[0]?.similarityScore?.toFixed(2)}`);
+                } else {
+                    candidateStarsForMatching = candidateStarsForMatchingQuery
+                        .filter(s => s.fwhm !== undefined && s.fwhm >= ALIGNMENT_STAR_MIN_FWHM && s.fwhm <= ALIGNMENT_STAR_MAX_FWHM)
+                        .sort((a, b) => (b.brightness * (b.contrast || 1)) - (a.brightness * (a.contrast || 1)))
+                        .slice(0, NUM_STARS_TO_USE_FOR_AFFINE_MATCHING * 4);
+                    if (yBandStart === 0) addLog(`[MULTI-PATTERN BRIGHT*CONTR] Img ${i} vs Pattern ${activeLearnedPattern.sourceFileName}: ${candidateStarsForMatching.length} candidates (no learned char.).`);
+                }
+
+
                 const srcPtsMatched: AstroAlignPoint[] = []; 
                 const dstPtsMatched: AstroAlignPoint[] = []; 
                 const usedCurrentStarIndices = new Set<number>();
 
-                const originalEntryIndexInCentroids = currentImageEntriesForStacking.findIndex(e => e.id === currentImageEntry.id);
-                const currentImageGlobalCentroid = originalEntryIndexInCentroids !== -1 ? centroids[originalEntryIndexInCentroids] : null; 
-        
+                const currentImageGlobalCentroid = globalCentroidsForFallback[i];
                 let dxCentroidShiftTargetSpace = 0;
                 let dyCentroidShiftTargetSpace = 0;
                 if (currentImageGlobalCentroid && referenceCentroidForAffineFallback) { 
                     dxCentroidShiftTargetSpace = referenceCentroidForAffineFallback.x - currentImageGlobalCentroid.x;
                     dyCentroidShiftTargetSpace = referenceCentroidForAffineFallback.y - currentImageGlobalCentroid.y;
                 }
-                if(yBandStart === 0) addLog(`[AFFINE MATCHING] ${currentImageEntry.file.name}: Centroid shift (dx,dy) in target space: (${dxCentroidShiftTargetSpace.toFixed(2)}, ${dyCentroidShiftTargetSpace.toFixed(2)})`);
 
                 for (const refStar of referenceStarsForAffine) { 
                     const refStarInTargetSpaceX = (refStar.x / effectiveReferenceDimensions.width) * targetWidth;
                     const refStarInTargetSpaceY = (refStar.y / effectiveReferenceDimensions.height) * targetHeight;
-
                     const predictedTargetXInCurrentFrame = refStarInTargetSpaceX - dxCentroidShiftTargetSpace;
                     const predictedTargetYInCurrentFrame = refStarInTargetSpaceY - dyCentroidShiftTargetSpace;
-
                     const predictedXInCurrentAnalysis = (predictedTargetXInCurrentFrame / targetWidth) * currentImageEntry.analysisDimensions.width;
                     const predictedYInCurrentAnalysis = (predictedTargetYInCurrentFrame / targetHeight) * currentImageEntry.analysisDimensions.height;
 
                     let bestMatchIndexInCurrent = -1;
                     let minDistanceSqToPredicted = AFFINE_MATCHING_RADIUS_SQ; 
-
                     for (let k = 0; k < candidateStarsForMatching.length; k++) { 
                         if (usedCurrentStarIndices.has(k)) continue;
                         const currentCandStar = candidateStarsForMatching[k]; 
                         const distSq = Math.pow(currentCandStar.x - predictedXInCurrentAnalysis, 2) + Math.pow(currentCandStar.y - predictedYInCurrentAnalysis, 2);
-
                         if (distSq < minDistanceSqToPredicted) {
                             minDistanceSqToPredicted = distSq;
                             bestMatchIndexInCurrent = k;
                         }
                     }
-
                     if (bestMatchIndexInCurrent !== -1) {
                         const matchedCurrentStar = candidateStarsForMatching[bestMatchIndexInCurrent];
                         srcPtsMatched.push({ x: matchedCurrentStar.x, y: matchedCurrentStar.y });
                         dstPtsMatched.push({ x: refStar.x, y: refStar.y }); 
                         usedCurrentStarIndices.add(bestMatchIndexInCurrent);
-                        if (yBandStart === 0) { 
-                             addLog(`[AFFINE MATCH] Img ${i} Ref(${refStar.x.toFixed(1)},${refStar.y.toFixed(1)}) in RefDims(${effectiveReferenceDimensions.width}x${effectiveReferenceDimensions.height}) to Curr(${matchedCurrentStar.x.toFixed(1)},${matchedCurrentStar.y.toFixed(1)}) in CurrAnlDims(${currentImageEntry.analysisDimensions.width}x${currentImageEntry.analysisDimensions.height}). PredCurrAnl(${predictedXInCurrentAnalysis.toFixed(1)},${predictedYInCurrentAnalysis.toFixed(1)}). Dist ${Math.sqrt(minDistanceSqToPredicted).toFixed(1)}px.`);
-                        }
-                    } else {
-                        if (yBandStart === 0) addLog(`[AFFINE NO MATCH] Img ${i} Ref(${refStar.x.toFixed(1)},${refStar.y.toFixed(1)}) - no match within ${AFFINE_MATCHING_RADIUS_PIXELS}px of predicted (${predictedXInCurrentAnalysis.toFixed(1)},${predictedYInCurrentAnalysis.toFixed(1)})`);
                     }
-
                     if (srcPtsMatched.length >= NUM_STARS_TO_USE_FOR_AFFINE_MATCHING) break; 
                 }
-
-                if (yBandStart === 0) addLog(`[AFFINE ATTEMPT] For ${currentImageEntry.file.name} with ${srcPtsMatched.length} matched pairs. (Min req ${MIN_STARS_FOR_AFFINE_ALIGNMENT})`);
+                
                 if (yBandStart === 0 && srcPtsMatched.length > 0) {
-                    addLog(`[AFFINE PAIRS SRC (CurrImg AnlCoords)] ${srcPtsMatched.map(p=>`(${p.x.toFixed(1)},${p.y.toFixed(1)})`).join('; ')}`);
-                    addLog(`[AFFINE PAIRS DST (RefImg EffRefCoords)] ${dstPtsMatched.map(p=>`(${p.x.toFixed(1)},${p.y.toFixed(1)})`).join('; ')}`);
+                    addLog(`[MULTI-PATTERN PAIRS SRC (Img ${i} AnlCoords)] for Pattern ${activeLearnedPattern.sourceFileName}: ${srcPtsMatched.map(p=>`(${p.x.toFixed(1)},${p.y.toFixed(1)})`).join('; ')}`);
+                    addLog(`[MULTI-PATTERN PAIRS DST (Pattern ${activeLearnedPattern.sourceFileName} RefCoords)] for Img ${i}: ${dstPtsMatched.map(p=>`(${p.x.toFixed(1)},${p.y.toFixed(1)})`).join('; ')}`);
                 }
+
 
                 if (srcPtsMatched.length >= MIN_STARS_FOR_AFFINE_ALIGNMENT) {
                     try {
                         let estimatedMatrixAnalysis = estimateAffineTransform(srcPtsMatched, dstPtsMatched); 
-                        if (yBandStart === 0) addLog(`[AFFINE EST MATRIX (Analysis->Ref)] ${JSON.stringify(estimatedMatrixAnalysis.map(r => r.map(v => v.toFixed(3))))}`);
-                        
                         const scaleX_currAnl_to_targetStack = currentImageEntry.analysisDimensions.width / targetWidth;
                         const scaleY_currAnl_to_targetStack = currentImageEntry.analysisDimensions.height / targetHeight;
                         const scaleX_effRef_to_targetStack = effectiveReferenceDimensions.width / targetWidth;
@@ -2597,54 +2546,44 @@ const analyzeImageForStars = async (
                         ];
                         
                         if (finalMatrixForWarp.flat().some(val => !isFinite(val))) {
-                            if (yBandStart === 0) addLog(`[AFFINE ERROR] ${currentImageEntry.file.name}: Adjusted warp matrix has non-finite values. Falling back.`);
+                             if (yBandStart === 0) addLog(`[MULTI-PATTERN FAIL] Img ${i}, Pattern ${activeLearnedPattern.sourceFileName}: Adjusted warp matrix has non-finite values.`);
                             finalMatrixForWarp = null;
                         } else {
-                           useAffineTransform = true;
-                           if (yBandStart === 0) addLog(`[AFFINE ADJUSTED MATRIX (for warp)] ${JSON.stringify(finalMatrixForWarp.map(r => r.map(v => v.toFixed(3))))}`);
+                           if (yBandStart === 0) {
+                                addLog(`[MULTI-PATTERN SUCCESS] Img ${i}: Pattern ${activeLearnedPattern.sourceFileName} resulted in valid matrix.`);
+                                successfulAffinePatternAlignmentsThisStack++;
+                           }
+                           affineTransformAppliedForThisImage = true; 
                         }
                     } catch (e) {
-                        const affineErrorMsg = e instanceof Error ? e.message : String(e);
-                        if (yBandStart === 0) addLog(`[AFFINE FAIL] ${currentImageEntry.file.name}: estimateAffineTransform or matrix adjustment failed ('${affineErrorMsg}'). Falling back.`);
+                        if (yBandStart === 0) addLog(`[MULTI-PATTERN ERROR] Img ${i}, Pattern ${activeLearnedPattern.sourceFileName}: estimateAffineTransform failed: ${e instanceof Error ? e.message : String(e)}.`);
                         finalMatrixForWarp = null;
                     }
                 } else {
-                     if (yBandStart === 0) addLog(`[AFFINE INFO] ${currentImageEntry.file.name}: Not enough matched points (${srcPtsMatched.length}) for affine. Need ${MIN_STARS_FOR_AFFINE_ALIGNMENT}. Falling back.`);
+                     if (yBandStart === 0) addLog(`[MULTI-PATTERN INFO] Img ${i}, Pattern ${activeLearnedPattern.sourceFileName}: Not enough matched points (${srcPtsMatched.length}).`);
                 }
-            } else { 
-                 if (yBandStart === 0) addLog(`[AFFINE INFO] ${currentImageEntry.file.name}: Not enough candidate stars (${candidateStarsForMatching.length}) for matching after similarity/FWHM filters. Need ${MIN_STARS_FOR_AFFINE_ALIGNMENT}. Falling back.`);
-            }
-        } else { 
-            if (yBandStart === 0 && !isCurrentTheReferenceSource) {
-                let reason = "Unknown";
-                if (referenceStarsForAffine.length < MIN_STARS_FOR_AFFINE_ALIGNMENT) reason = `ref stars ${referenceStarsForAffine.length} < min ${MIN_STARS_FOR_AFFINE_ALIGNMENT}`;
-                addLog(`[AFFINE INFO] ${currentImageEntry.file.name}: Affine skipped (Reason: ${reason}). Falling back.`);
-            }
-        }
+
+                if (affineTransformAppliedForThisImage && finalMatrixForWarp) {
+                    if (yBandStart === 0) addLog(`[MULTI-PATTERN USING] Img ${i}: Using pattern ${activeLearnedPattern.sourceFileName}.`);
+                    break; // Break from selectedLearnedPatternIds loop, use this pattern's matrix for current image
+                }
+            } // End of loop for selectedLearnedPatternIds
+        } // End of if (isLearningModeActive && selectedLearnedPatternIds.length > 0)
         
-        if (useAffineTransform && yBandStart === 0) {
-            affineAlignmentsUsed++;
-        }
 
         tempWarpedImageCtx.clearRect(0,0,targetWidth,targetHeight); 
-        if (useAffineTransform && finalMatrixForWarp && !isCurrentTheReferenceSource) {
-            warpImage(currentImageCtx, tempWarpedImageCtx, finalMatrixForWarp, yBandStart === 0 ? addLog : undefined);
+        if (affineTransformAppliedForThisImage && finalMatrixForWarp) {
+            warpImage(currentImageCtx, tempWarpedImageCtx, finalMatrixForWarp, (yBandStart === 0 ? addLog : undefined));
         } else { 
-            const originalEntryIndexInCentroids = currentImageEntriesForStacking.findIndex(e => e.id === currentImageEntry.id);
-            const currentImageGlobalCentroid = originalEntryIndexInCentroids !== -1 ? centroids[originalEntryIndexInCentroids] : null;
-            
+            const currentImageGlobalCentroid = globalCentroidsForFallback[i];
             let dx = 0, dy = 0;
-            if (!isCurrentTheReferenceSource && currentImageGlobalCentroid && referenceCentroidForAffineFallback) {
-                dx = referenceCentroidForAffineFallback.x - currentImageGlobalCentroid.x; 
-                dy = referenceCentroidForAffineFallback.y - currentImageGlobalCentroid.y;
-            } else if (isCurrentTheReferenceSource) {
-                dx = 0; dy = 0; 
-            } else {
-               if(yBandStart === 0) addLog(`[ALIGN FALLBACK WARN] ${currentImageEntry.file.name}: Centroid data missing for fallback translation or is ref. No translation if not ref. CurrCent: ${currentImageGlobalCentroid}, RefCent: ${referenceCentroidForAffineFallback}`);
+            if (currentImageGlobalCentroid && defaultRefCentroidForFallback) { // Use default ref for fallback always
+                dx = defaultRefCentroidForFallback.x - currentImageGlobalCentroid.x; 
+                dy = defaultRefCentroidForFallback.y - currentImageGlobalCentroid.y;
             }
             tempWarpedImageCtx.drawImage(currentImageCanvas, dx, dy); 
-            if (yBandStart === 0 && (!useAffineTransform || isCurrentTheReferenceSource) ) { 
-                 addLog(`[ALIGN FALLBACK/REF] ${currentImageEntry.file.name}: Using centroid (dx:${dx.toFixed(2)}, dy:${dy.toFixed(2)}) or is reference. Affine status: ${useAffineTransform}, Matrix: ${useAffineTransform && finalMatrixForWarp ? 'Valid' : 'None/Invalid'}`);
+            if (yBandStart === 0) { 
+                 addLog(`[ALIGN FALLBACK/NO-PATTERN] Image ${i} (${currentImageEntry.file.name}): Using centroid (dx:${dx.toFixed(2)}, dy:${dy.toFixed(2)}). Affine from patterns: ${affineTransformAppliedForThisImage}`);
             }
         }
 
@@ -2737,9 +2676,9 @@ const analyzeImageForStars = async (
       setSaturation(100);
       setShowPostProcessEditor(true); 
 
-      const alignmentMessage = affineAlignmentsUsed > 0
-        ? `${affineAlignmentsUsed}/${imageElements.length -1} non-reference images aligned using Affine Transform. Others (or if affine failed) used centroid fallback.`
-        : `All ${imageElements.length -1} non-reference images (and reference) aligned using centroid-based methods (Affine conditions not met or failed).`;
+      const alignmentMessage = successfulAffinePatternAlignmentsThisStack > 0
+        ? `${successfulAffinePatternAlignmentsThisStack}/${imageElements.length} images aligned using (at least one of the) selected Learned Patterns. Others used centroid fallback.`
+        : `All ${imageElements.length} images aligned using centroid-based methods (Learned Patterns did not yield a successful alignment or were not used/selected).`;
 
       let calibrationSummary = "";
       if (useBiasFrames && masterBiasData) calibrationSummary += `Bias (${biasFrameFiles.length} frames). `;
@@ -2824,18 +2763,13 @@ const analyzeImageForStars = async (
       setIsLearningModeActive(true);
       try {
         localStorage.setItem('astrostacker-learning-mode-active', 'true');
-        const storedActiveId = localStorage.getItem('astrostacker-active-learned-pattern-id');
-        if (storedActiveId && allLearnedPatterns.find(p => p.id === storedActiveId)) {
-          setActiveLearnedPatternId(storedActiveId);
-           addLog("[LEARN] Learning Mode activated. Restored active pattern ID.");
-           toast({ title: t('learningModeActivatedToastTitle'), description: t('learningModeActivatedExistingPatternToastDesc') });
-        } else {
-           addLog("[LEARN] Learning Mode activated. No previously active pattern ID found.");
-           toast({ title: t('learningModeActivatedToastTitle'), description: t('learningModeActivatedToastDesc') });
-        }
+        // No longer automatically load a single "active" pattern here.
+        // User manages selections from the list.
+        addLog("[LEARN] Learning Mode activated.");
+        toast({ title: t('learningModeActivatedToastTitle'), description: t('learningModeActivatedToastDesc') });
       } catch (error) {
         console.error("Error managing localStorage for learning mode:", error);
-        addLog("[ERROR] Could not save learning mode status or load pattern from localStorage.");
+        addLog("[ERROR] Could not save learning mode status to localStorage.");
       }
     } else {
       toast({ title: t('incorrectPinToastTitle'), description: t('incorrectPinToastDesc'), variant: "destructive" });
@@ -2850,7 +2784,7 @@ const analyzeImageForStars = async (
       setIsLearningModeActive(false);
       try {
         localStorage.removeItem('astrostacker-learning-mode-active'); 
-        addLog("[LEARN] Learning Mode deactivated. Status cleared from localStorage. Patterns and active ID remain.");
+        addLog("[LEARN] Learning Mode deactivated. Stored patterns and selections remain.");
       } catch (error) {
         console.error("Error clearing learning mode status from localStorage:", error);
         addLog("[ERROR] Could not clear learning mode status from localStorage.");
@@ -2858,48 +2792,38 @@ const analyzeImageForStars = async (
       toast({ title: t('learningModeDeactivatedToastTitle'), description: t('learningModeDeactivatedToastDesc') });
     } else { 
       setShowLearnPinDialog(true); 
-      const storedActiveId = localStorage.getItem('astrostacker-active-learned-pattern-id');
-      const patternsExist = (localStorage.getItem('astrostacker-learned-patterns-list')?.length || 0) > 0;
-
-      if (storedActiveId && patternsExist && allLearnedPatterns.find(p => p.id === storedActiveId)) {
-          setActiveLearnedPatternId(storedActiveId);
-          addLog("[LEARN] Re-activating learning mode. Restored previously active pattern ID.");
-      } else if (patternsExist && allLearnedPatterns.length > 0 && !storedActiveId) {
-          // If patterns exist but no active ID was explicitly stored, don't auto-select one here.
-          // User can select one from the list once mode is active.
-          addLog("[LEARN] Re-activating learning mode. Stored patterns exist, but no specific active ID was set. User can select from list.");
-      } else {
-          addLog("[LEARN] Re-activating learning mode. No stored patterns or no active ID found.");
-      }
     }
   };
   
-  const handleSetActiveLearnedPattern = (patternId: string) => {
-    setActiveLearnedPatternId(patternId);
-    try {
-      localStorage.setItem('astrostacker-active-learned-pattern-id', patternId);
-      const activePattern = allLearnedPatterns.find(p => p.id === patternId);
-      addLog(`[LEARN] Set active pattern to: ${activePattern?.sourceFileName || 'ID ' + patternId}. Stored active ID.`);
-      toast({title: t('activePatternSetToastTitle'), description: t('activePatternSetToastDesc', {fileName: activePattern?.sourceFileName || 'Unknown'})});
-    } catch (e) {
-      addLog(`[LEARN ERROR] Could not store active pattern ID: ${e}`);
-    }
-  };
+ const handleTogglePatternSelection = (patternId: string) => {
+    setSelectedLearnedPatternIds(prevSelectedIds => {
+        const newSelectedIds = prevSelectedIds.includes(patternId)
+            ? prevSelectedIds.filter(id => id !== patternId)
+            : [...prevSelectedIds, patternId];
+        try {
+            localStorage.setItem('astrostacker-selected-pattern-ids', JSON.stringify(newSelectedIds));
+            addLog(`[LEARN] Updated selected patterns. Count: ${newSelectedIds.length}. Saved to localStorage.`);
+        } catch (e) {
+            addLog(`[LEARN ERROR] Could not store selected pattern IDs: ${e}`);
+        }
+        return newSelectedIds;
+    });
+};
 
   const handleDeleteLearnedPattern = (patternIdToDelete: string) => {
     const patternName = allLearnedPatterns.find(p=>p.id === patternIdToDelete)?.sourceFileName || 'pattern';
     const updatedPatterns = allLearnedPatterns.filter(p => p.id !== patternIdToDelete);
     setAllLearnedPatterns(updatedPatterns);
+    
+    const updatedSelectedIds = selectedLearnedPatternIds.filter(id => id !== patternIdToDelete);
+    setSelectedLearnedPatternIds(updatedSelectedIds);
+
     try {
       localStorage.setItem('astrostacker-learned-patterns-list', JSON.stringify(updatedPatterns));
-      addLog(`[LEARN] Deleted learned pattern ID: ${patternIdToDelete} (${patternName}). Updated list in localStorage.`);
+      localStorage.setItem('astrostacker-selected-pattern-ids', JSON.stringify(updatedSelectedIds));
+      addLog(`[LEARN] Deleted learned pattern ID: ${patternIdToDelete} (${patternName}). Updated list and selection in localStorage.`);
       toast({title: t('patternDeletedToastTitle'), description: t('patternDeletedToastDesc', {fileName: patternName})});
 
-      if (activeLearnedPatternId === patternIdToDelete) {
-        setActiveLearnedPatternId(null);
-        localStorage.removeItem('astrostacker-active-learned-pattern-id');
-        addLog(`[LEARN] Active pattern was deleted. Cleared active pattern ID.`);
-      }
     } catch (e) {
       addLog(`[LEARN ERROR] Could not update localStorage after deleting pattern: ${e}`);
     }
@@ -2907,11 +2831,11 @@ const analyzeImageForStars = async (
   
   const handleClearAllLearnedPatterns = () => {
     setAllLearnedPatterns([]);
-    setActiveLearnedPatternId(null);
+    setSelectedLearnedPatternIds([]);
     try {
       localStorage.removeItem('astrostacker-learned-patterns-list');
-      localStorage.removeItem('astrostacker-active-learned-pattern-id');
-      addLog("[LEARN] All learned patterns cleared by user (also from localStorage).");
+      localStorage.removeItem('astrostacker-selected-pattern-ids');
+      addLog("[LEARN] All learned patterns and selections cleared by user (also from localStorage).");
     } catch (error) {
       console.error("Error clearing all learned patterns from localStorage:", error);
       addLog("[ERROR] Could not clear all learned patterns from localStorage.");
@@ -2954,13 +2878,18 @@ const analyzeImageForStars = async (
         toast({ title: t('noTestImageToastTitle'), description: t('noTestImageToastDesc'), variant: "destructive"});
         return;
     }
-    const currentActivePattern = activeLearnedPatternId ? allLearnedPatterns.find(p => p.id === activeLearnedPatternId) : null;
-    if (!isLearningModeActive || !currentActivePattern) {
+    if (selectedLearnedPatternIds.length !== 1) {
+        toast({ title: t('learnTestSelectSinglePatternTitle'), description: t('learnTestSelectSinglePatternDesc'), variant: "destructive"});
+        return;
+    }
+    const activePatternForTest = allLearnedPatterns.find(p => p.id === selectedLearnedPatternIds[0]);
+
+    if (!isLearningModeActive || !activePatternForTest) {
         toast({ title: t('noActivePatternForTestToastTitle'), description: t('noActivePatternForTestToastDesc'), variant: "destructive"});
         return;
     }
 
-    addLog(`[LEARN TEST] Starting analysis of ${testImageFile.name} with pattern from ${currentActivePattern.sourceFileName}`);
+    addLog(`[LEARN TEST] Starting analysis of ${testImageFile.name} with pattern from ${activePatternForTest.sourceFileName}`);
     setIsAnalyzingTestImage(true);
     setTestImageDetectedStars([]);
 
@@ -2979,7 +2908,7 @@ const analyzeImageForStars = async (
         const detectedPointsOnTest: DetectedStarPoint[] = detectStarsWithNewPipeline(grayscaleTestData, addLog);
         addLog(`[LEARN TEST] Raw detection on test image: ${detectedPointsOnTest.length} points.`);
 
-        const { avgBrightness, avgContrast, avgFwhm } = currentActivePattern;
+        const { avgBrightness, avgContrast, avgFwhm } = activePatternForTest;
 
         const recognizedStars: Star[] = detectedPointsOnTest
             .filter(p => p.fwhm >= ALIGNMENT_STAR_MIN_FWHM && p.fwhm <= ALIGNMENT_STAR_MAX_FWHM)
@@ -2998,7 +2927,7 @@ const analyzeImageForStars = async (
                 }
                 return { ...p, similarityScore };
             })
-            .sort((a, b) => a.similarityScore - b.similarityScore)
+            .sort((a, b) => (a.similarityScore || Infinity) - (b.similarityScore || Infinity))
             .slice(0, LEARN_TEST_MAX_STARS_TO_SHOW)
             .map(p => ({
                 x: p.x,
@@ -3006,7 +2935,7 @@ const analyzeImageForStars = async (
                 brightness: p.windowSumBrightness,
                 fwhm: p.fwhm,
                 contrast: p.contrast,
-                isManuallyAdded: false, // These are auto-detected by the pattern
+                isManuallyAdded: false, 
             }));
         
         setTestImageDetectedStars(recognizedStars);
@@ -3038,8 +2967,6 @@ const analyzeImageForStars = async (
                        isAnalyzingTestImage;
 
   const currentImageForEditing = currentEditingImageIndex !== null ? allImageStarData[currentEditingImageIndex] : null;
-  const activePatternDetails = activeLearnedPatternId ? allLearnedPatterns.find(p => p.id === activeLearnedPatternId) : null;
-
   const currentYear = new Date().getFullYear();
 
   return (
@@ -3234,27 +3161,20 @@ const analyzeImageForStars = async (
                               <BadgeAlert className="mr-1 h-3 w-3" /> {t('learningModeActiveIndicator')}
                             </Badge>
                           )}
-                          <Button onClick={toggleLearningMode} variant="outline" className="w-full" disabled={isUiDisabled && !showLearnPinDialog}> {/* Allow enabling even if other things are processing */}
+                          <Button onClick={toggleLearningMode} variant="outline" className="w-full" disabled={isUiDisabled && !showLearnPinDialog}>
                               {isLearningModeActive ? <><X className="mr-2 h-4 w-4" />{t('stopLearningSession')}</> : <><KeyRound className="mr-2 h-4 w-4" />{t('startLearningSession')}</>}
                           </Button>
                           
-                          {isLearningModeActive && activePatternDetails && (
+                          {isLearningModeActive && selectedLearnedPatternIds.length > 0 && (
                             <div className="text-xs text-muted-foreground p-3 border rounded-md space-y-1 bg-muted/10 mt-2">
-                              <p className="font-semibold text-foreground">{t('activePatternTitle')}</p>
-                              <p>{t('learnedPatternSource', { 
-                                fileName: activePatternDetails.sourceFileName, 
-                                starCount: activePatternDetails.stars.length,
-                                width: activePatternDetails.dimensions.width,
-                                height: activePatternDetails.dimensions.height
-                              })}</p>
-                              {activePatternDetails.avgBrightness !== undefined && <p>{t('avgBrightnessLabel')}: {activePatternDetails.avgBrightness.toFixed(1)}</p>}
-                              {activePatternDetails.avgContrast !== undefined && <p>{t('avgContrastLabel')}: {activePatternDetails.avgContrast.toFixed(1)}</p>}
-                              {activePatternDetails.avgFwhm !== undefined && <p>{t('avgFwhmLabel')}: {activePatternDetails.avgFwhm.toFixed(1)}</p>}
-                               <p className="text-xs">Pattern ID: {activePatternDetails.id.substring(0,13)}...</p>
-                              <p className="text-xs">Learned: {new Date(activePatternDetails.timestamp).toLocaleString()}</p>
+                              <p className="font-semibold text-foreground">{t('selectedPatternsTitle', { count: selectedLearnedPatternIds.length })}</p>
+                                {selectedLearnedPatternIds.map(id => {
+                                    const pattern = allLearnedPatterns.find(p => p.id === id);
+                                    return pattern ? <span key={id} className="inline-block bg-accent/20 text-accent-foreground rounded px-1.5 py-0.5 mr-1 mb-1 text-xs">{pattern.sourceFileName}</span> : null;
+                                })}
                             </div>
                           )}
-                          {isLearningModeActive && !activePatternDetails && allLearnedPatterns.length > 0 && (
+                           {isLearningModeActive && selectedLearnedPatternIds.length === 0 && allLearnedPatterns.length > 0 && (
                              <p className="text-xs text-muted-foreground italic p-2 border rounded-md">{t('noActivePatternSelectedInfo')}</p>
                           )}
                           {isLearningModeActive && allLearnedPatterns.length === 0 && (
@@ -3269,8 +3189,18 @@ const analyzeImageForStars = async (
                                 <Label className="text-sm font-semibold mb-1 block">{t('allLearnedPatternsListTitle')} ({allLearnedPatterns.length})</Label>
                                 <ScrollArea className="h-40 border rounded-md p-2 bg-background/50">
                                     {allLearnedPatterns.map(pattern => (
-                                        <div key={pattern.id} className={`p-2 mb-1.5 rounded-md border ${pattern.id === activeLearnedPatternId ? 'bg-accent/20 border-accent' : 'bg-muted/20'}`}>
-                                            <p className="text-xs font-medium truncate text-foreground">{pattern.sourceFileName}</p>
+                                        <div key={pattern.id} className={`p-2 mb-1.5 rounded-md border ${selectedLearnedPatternIds.includes(pattern.id) ? 'bg-accent/20 border-accent' : 'bg-muted/20'}`}>
+                                            <div className="flex items-center justify-between">
+                                                <p className="text-xs font-medium truncate text-foreground">{pattern.sourceFileName}</p>
+                                                <Checkbox
+                                                    id={`select-pattern-${pattern.id}`}
+                                                    checked={selectedLearnedPatternIds.includes(pattern.id)}
+                                                    onCheckedChange={() => handleTogglePatternSelection(pattern.id)}
+                                                    disabled={isUiDisabled}
+                                                    aria-label={`Select pattern from ${pattern.sourceFileName}`}
+                                                    className="ml-2"
+                                                />
+                                            </div>
                                             <p className="text-xs text-muted-foreground">
                                                 {pattern.stars.length} stars, {pattern.dimensions.width}x{pattern.dimensions.height}px
                                             </p>
@@ -3279,24 +3209,15 @@ const analyzeImageForStars = async (
                                             </p>
                                             <p className="text-xs text-muted-foreground">Learned: {new Date(pattern.timestamp).toLocaleDateString()}</p>
                                             <div className="flex gap-1 mt-1.5">
-                                                <Button 
-                                                    size="sm" 
-                                                    variant={pattern.id === activeLearnedPatternId ? "default" : "outline"} 
-                                                    onClick={() => handleSetActiveLearnedPattern(pattern.id)}
-                                                    className="h-6 px-1.5 py-0.5 text-xs flex-grow"
-                                                    disabled={isUiDisabled || pattern.id === activeLearnedPatternId}
-                                                >
-                                                   {pattern.id === activeLearnedPatternId ? <CheckCircle className="mr-1 h-3 w-3"/> : <Settings className="mr-1 h-3 w-3"/>} 
-                                                   {pattern.id === activeLearnedPatternId ? t('activeButtonText') : t('setActiveButtonText')}
-                                                </Button>
+                                                {/* "Set Active" button removed, using checkbox instead */}
                                                 <Button 
                                                     size="sm" 
                                                     variant="destructive" 
                                                     onClick={() => handleDeleteLearnedPattern(pattern.id)}
-                                                    className="h-6 px-1.5 py-0.5 text-xs"
+                                                    className="h-6 px-1.5 py-0.5 text-xs flex-grow"
                                                     disabled={isUiDisabled}
                                                 >
-                                                    <Trash2 className="h-3 w-3" />
+                                                    <Trash2 className="mr-1 h-3 w-3" /> {t('deletePatternButtonText')}
                                                 </Button>
                                             </div>
                                         </div>
@@ -3338,17 +3259,24 @@ const analyzeImageForStars = async (
                                             analysisHeight={testImageAnalysisDimensions.height}
                                             onCanvasClick={() => {}} 
                                             canvasDisplayWidth={STAR_ANNOTATION_MAX_DISPLAY_WIDTH / 1.5} 
-                                            starColorOverride="rgba(0, 255, 0, 0.8)" // Green for recognized
+                                            starColorOverride="rgba(0, 255, 0, 0.8)" 
                                         />
                                          {testImageDetectedStars.length > 0 && (
                                             <p className="text-xs text-center text-green-400">{t('recognizedStarsCount', {count: testImageDetectedStars.length})}</p>
                                         )}
                                     </div>
                                 )}
+                                 {selectedLearnedPatternIds.length !== 1 && testImageFile && (
+                                    <Alert variant="default" className="mt-2">
+                                        <Info className="h-4 w-4" />
+                                        <AlertTitle>{t('learnTestSelectSinglePatternTitle')}</AlertTitle>
+                                        <AlertDescription>{t('learnTestSelectSinglePatternDesc')}</AlertDescription>
+                                    </Alert>
+                                )}
                                 <Button 
                                     onClick={handleRunLearnTest} 
                                     className="w-full" 
-                                    disabled={isUiDisabled || !testImageFile || !activeLearnedPatternId}
+                                    disabled={isUiDisabled || !testImageFile || selectedLearnedPatternIds.length !== 1}
                                 >
                                     {isAnalyzingTestImage ? (
                                         <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> {t('analyzingTestImageProgress')}</>
@@ -3530,9 +3458,10 @@ const analyzeImageForStars = async (
                                  log.message.startsWith('[ALIGN WARN]') || log.message.startsWith('[LOCAL CENTROID WARN]') ||
                                  log.message.startsWith('[STACK SKIP WARN]') || log.message.startsWith('[AFFINE WARN]') ||
                                  log.message.startsWith('[AFFINE FAIL]') || log.message.startsWith('[STACK LEARN WARN]') ||
-                                 log.message.startsWith('[ALIGN REF WARN]') || log.message.startsWith('[ALIGN FALLBACK WARN]') ? 
+                                 log.message.startsWith('[ALIGN REF WARN]') || log.message.startsWith('[ALIGN FALLBACK WARN]') ||
+                                 log.message.startsWith('[MULTI-PATTERN WARN]') ? 
                                  'text-yellow-500' : 
-                                 (log.message.startsWith('[LEARN') || log.message.startsWith('[AFFINE REF PREP]') || log.message.startsWith('[AFFINE MATCH') ? 'text-sky-400' : 'text-foreground/80'))
+                                 (log.message.startsWith('[LEARN') || log.message.startsWith('[AFFINE REF PREP]') || log.message.startsWith('[AFFINE MATCH') || log.message.startsWith('[MULTI-PATTERN') ? 'text-sky-400' : 'text-foreground/80'))
                             }>{log.message}</span>
                           </div>
                         ))}
@@ -3685,3 +3614,4 @@ const analyzeImageForStars = async (
     
 
     
+
