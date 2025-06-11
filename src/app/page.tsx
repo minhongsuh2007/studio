@@ -4,6 +4,7 @@
 import type React from 'react';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { useToast } from '@/hooks/use-toast';
 import { fileToDataURL } from '@/lib/utils';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -16,7 +17,7 @@ import { ImageQueueItem } from '@/components/astrostacker/ImageQueueItem';
 import { ImagePreview } from '@/components/astrostacker/ImagePreview';
 import { ImagePostProcessEditor } from '@/components/astrostacker/ImagePostProcessEditor';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Star as StarIcon, ListChecks, CheckCircle, RefreshCcw, Edit3, Loader2, Orbit, Trash2, CopyCheck, AlertTriangle, Wand2, ShieldOff, UploadCloud, Layers, Baseline, X, FileImage, ChevronRight, SkipForward } from 'lucide-react';
+import { Star as StarIcon, ListChecks, CheckCircle, RefreshCcw, Edit3, Loader2, Orbit, Trash2, CopyCheck, AlertTriangle, Wand2, ShieldOff, UploadCloud, Layers, Baseline, X, FileImage, ChevronRight, SkipForward, Brain, KeyRound, BadgeAlert } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
@@ -24,9 +25,10 @@ import { Progress } from "@/components/ui/progress";
 import { Slider } from "@/components/ui/slider";
 import { StarAnnotationCanvas } from '@/components/astrostacker/StarAnnotationCanvas';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Switch } from '@/components/ui/switch';
 import NextImage from 'next/image';
+import { Badge } from '@/components/ui/badge';
 
 
 interface LogEntry {
@@ -41,7 +43,7 @@ export type StarSelectionMode = 'auto' | 'manual';
 export interface Star {
   x: number;
   y: number;
-  brightness: number; // This will now represent windowSumBrightness from DetectedStarPoint
+  brightness: number; 
   isManuallyAdded?: boolean;
   fwhm?: number;
 }
@@ -64,6 +66,12 @@ interface SourceImageForApplyMenu {
   fileName: string;
   stars: Star[];
   dimensions: { width: number; height: number };
+}
+
+interface LearnedStarPattern {
+  stars: Star[];
+  dimensions: { width: number; height: number };
+  sourceFileName: string;
 }
 
 
@@ -98,21 +106,18 @@ const PROGRESS_INITIAL_SETUP = 5;
 const PROGRESS_CENTROID_CALCULATION_TOTAL = 35;
 const PROGRESS_BANDED_STACKING_TOTAL = 60;
 
-// Constants for filtering stars used in Affine Alignment
 const ALIGNMENT_STAR_MIN_FWHM = 2.0;
 const ALIGNMENT_STAR_MAX_FWHM = 4.0;
 
-// New constants for star matching in affine alignment
 const AFFINE_MATCHING_RADIUS_PIXELS = 50;
 const AFFINE_MATCHING_RADIUS_SQ = AFFINE_MATCHING_RADIUS_PIXELS * AFFINE_MATCHING_RADIUS_PIXELS;
 
 
-// ==== New Star Detector (Self-Contained) Configuration ====
-const DETECTOR_MIN_CONTRAST = 20;
-const DETECTOR_MIN_BRIGHTNESS = 40; // For the center pixel of a candidate
-// DETECTOR_MAX_BRIGHTNESS removed as per user request
+const DETECTOR_MIN_CONTRAST = 25; // Increased from 20
+const DETECTOR_MIN_BRIGHTNESS = 50; // Increased from 40 (for center pixel)
+// DETECTOR_MAX_BRIGHTNESS removed
 const DETECTOR_MIN_DISTANCE = 6; 
-const DETECTOR_MAX_STARS = 5; 
+// DETECTOR_MAX_STARS is removed; all valid stars will be detected
 const DETECTOR_MIN_FWHM = 1.5;
 const DETECTOR_MAX_FWHM = 5.0;
 const DETECTOR_ANNULUS_INNER_RADIUS = 4; 
@@ -120,9 +125,9 @@ const DETECTOR_ANNULUS_OUTER_RADIUS = 8;
 const DETECTOR_FWHM_PROFILE_HALF_WIDTH = 5; 
 const DETECTOR_MARGIN = 6; 
 const DETECTOR_FLATNESS_TOLERANCE = 2; 
+const LEARNING_MODE_PIN = '20077002';
 
 
-// Type for the new detector
 type DetectedStarPoint = { x: number; y: number; value: number; windowSumBrightness: number; contrast: number; fwhm: number };
 
 
@@ -194,8 +199,6 @@ const applyImageAdjustmentsToDataURL = async (
   });
 };
 
-
-// --- New Star Detector (Self-Contained) Functions ---
 
 function getGrayscaleArrayFromCanvas(ctx: CanvasRenderingContext2D, addLog?: (message: string) => void): number[][] {
   const { width, height } = ctx.canvas;
@@ -289,7 +292,7 @@ function estimateFWHM(
     if (px >= 0 && px < imageWidth) {
       profile.push(image[y][px]);
     } else {
-      profile.push(0); // Pad with zero if out of bounds
+      profile.push(0); 
     }
   }
 
@@ -307,9 +310,8 @@ function estimateFWHM(
 
   let left = -1, right = -1;
 
-  // Find left edge (interpolated)
   for (let i = 0; i < profile.length - 1; i++) {
-      if (profile[i] >= halfMax && profile[i + 1] < halfMax) { // Crosses HM downwards
+      if (profile[i] >= halfMax && profile[i + 1] < halfMax) { 
           left = i + (profile[i] - halfMax) / (profile[i] - profile[i + 1]);
           break;
       }
@@ -318,10 +320,8 @@ function estimateFWHM(
       left = 0;
   }
 
-
-  // Find right edge (interpolated)
   for (let i = profile.length - 1; i > 0; i--) {
-      if (profile[i] >= halfMax && profile[i - 1] < halfMax) { // Crosses HM downwards when looking from right
+      if (profile[i] >= halfMax && profile[i - 1] < halfMax) { 
           right = i - (profile[i] - halfMax) / (profile[i] - profile[i - 1]);
           break;
       }
@@ -329,7 +329,6 @@ function estimateFWHM(
    if (right === -1 && profile[profile.length - 1] >= halfMax && profile.length > 1 && profile[profile.length - 1] > profile[profile.length - 2]) {
       right = profile.length - 1;
   }
-
 
   const fwhm = (left !== -1 && right !== -1 && right > left) ? Math.abs(right - left) : 0;
   
@@ -366,7 +365,7 @@ function detectStarsWithNewPipeline(
     addLog("[DETECTOR ERROR] Input grayscale image is empty. Cannot detect stars.");
     return [];
   }
-  addLog(`[DETECTOR] Starting detection on ${width}x${height} grayscale. Config: MinContrast=${DETECTOR_MIN_CONTRAST}, MinBright(CenterPx)=${DETECTOR_MIN_BRIGHTNESS}, MinDist=${DETECTOR_MIN_DISTANCE}, MaxStars=${DETECTOR_MAX_STARS}, MinFWHM=${DETECTOR_MIN_FWHM}, MaxFWHM=${DETECTOR_MAX_FWHM}, Margin=${DETECTOR_MARGIN}, FlatTol=${DETECTOR_FLATNESS_TOLERANCE}`);
+  addLog(`[DETECTOR] Starting detection on ${width}x${height} grayscale. Config: MinContrast=${DETECTOR_MIN_CONTRAST}, MinBright(CenterPx)=${DETECTOR_MIN_BRIGHTNESS}, MinDist=${DETECTOR_MIN_DISTANCE}, (No MaxStars limit), MinFWHM=${DETECTOR_MIN_FWHM}, MaxFWHM=${DETECTOR_MAX_FWHM}, Margin=${DETECTOR_MARGIN}, FlatTol=${DETECTOR_FLATNESS_TOLERANCE}`);
 
   const candidates: DetectedStarPoint[] = [];
   let consideredPixels = 0;
@@ -378,17 +377,14 @@ function detectStarsWithNewPipeline(
   for (let y = DETECTOR_MARGIN; y < height - DETECTOR_MARGIN; y++) {
     for (let x = DETECTOR_MARGIN; x < width - DETECTOR_MARGIN; x++) {
       consideredPixels++;
-      const value = grayscaleImage[y][x]; // Center pixel value
+      const value = grayscaleImage[y][x]; 
 
-      // 1. Center Pixel Minimum Brightness check
       if (value < DETECTOR_MIN_BRIGHTNESS) {
         if (value > 0  && Math.random() < 0.01) addLog(`[DETECTOR REJECT DIM] Center (${x},${y}) val ${value.toFixed(0)} < MIN_BRIGHTNESS ${DETECTOR_MIN_BRIGHTNESS}`);
         continue;
       }
-      // Max brightness check for center pixel is removed
       passedMinBrightness++;
 
-      // 2. Contrast check (for center pixel)
       const contrast = getLocalContrast(grayscaleImage, x, y, addLog);
       if (contrast < DETECTOR_MIN_CONTRAST) {
         if (value > (DETECTOR_MIN_BRIGHTNESS * 1.1) && Math.random() < 0.02) addLog(`[DETECTOR REJECT CONTRAST] Center (${x},${y}) val ${value.toFixed(0)}, contrast ${contrast.toFixed(1)} < MIN_CONTRAST ${DETECTOR_MIN_CONTRAST}`);
@@ -396,7 +392,6 @@ function detectStarsWithNewPipeline(
       }
       passedContrast++;
       
-      // 3. FWHM check (for center pixel)
       const fwhm = estimateFWHM(grayscaleImage, x, y, DETECTOR_FWHM_PROFILE_HALF_WIDTH, addLog);
       if (fwhm < DETECTOR_MIN_FWHM || fwhm > DETECTOR_MAX_FWHM) {
         if (value > (DETECTOR_MIN_BRIGHTNESS*1.1) && fwhm !==0 && Math.random() < 0.02) addLog(`[DETECTOR REJECT FWHM] Center (${x},${y}) val ${value.toFixed(0)}, FWHM ${fwhm.toFixed(1)} out of [${DETECTOR_MIN_FWHM}-${DETECTOR_MAX_FWHM}]`);
@@ -405,7 +400,6 @@ function detectStarsWithNewPipeline(
       }
       passedFWHMCount++;
 
-      // 4. Local maximum and flatness check (for center pixel)
       const neighbors = [
         grayscaleImage[y - 1][x], grayscaleImage[y + 1][x],
         grayscaleImage[y][x - 1], grayscaleImage[y][x + 1],
@@ -421,16 +415,10 @@ function detectStarsWithNewPipeline(
       }
       passedFlatnessAndLocalMax++;
 
-      // 5. Calculate 3x3 window sum of brightness
       let windowSumBrightness = 0;
       for (let dy = -1; dy <= 1; dy++) {
         for (let dx = -1; dx <= 1; dx++) {
-          const ny = y + dy;
-          const nx = x + dx;
-          // Bounds check is implicitly handled by DETECTOR_MARGIN for the 3x3 window around a valid (x,y)
-          // but good to be explicit if grayscaleImage access might go out of bounds.
-          // Assuming (x,y) is already DETECTOR_MARGIN away from edges, (x-1, y-1) to (x+1,y+1) should be fine.
-          windowSumBrightness += grayscaleImage[ny][nx];
+          windowSumBrightness += grayscaleImage[y + dy][x + dx];
         }
       }
 
@@ -439,19 +427,12 @@ function detectStarsWithNewPipeline(
   }
   addLog(`[DETECTOR STATS] Considered: ${consideredPixels}, Passed MinBrightness: ${passedMinBrightness}, Contrast: ${passedContrast}, FWHM: ${passedFWHMCount}, Flatness/LocalMax: ${passedFlatnessAndLocalMax}, Initial Candidates: ${candidates.length}`);
 
-  // Sorting: Prioritize stars with FWHM in the ALIGNMENT range,
-  // then by (windowSumBrightness * contrast).
   candidates.sort((a, b) => {
     const a_is_prime_fwhm = a.fwhm >= ALIGNMENT_STAR_MIN_FWHM && a.fwhm <= ALIGNMENT_STAR_MAX_FWHM;
     const b_is_prime_fwhm = b.fwhm >= ALIGNMENT_STAR_MIN_FWHM && b.fwhm <= ALIGNMENT_STAR_MAX_FWHM;
 
-    if (a_is_prime_fwhm && !b_is_prime_fwhm) {
-      return -1; // a comes first
-    }
-    if (!a_is_prime_fwhm && b_is_prime_fwhm) {
-      return 1;  // b comes first
-    }
-    // If both are prime OR both are not prime, sort by new significance metric
+    if (a_is_prime_fwhm && !b_is_prime_fwhm) return -1;
+    if (!a_is_prime_fwhm && b_is_prime_fwhm) return 1;
     return (b.windowSumBrightness * b.contrast) - (a.windowSumBrightness * a.contrast);
   });
   
@@ -462,7 +443,7 @@ function detectStarsWithNewPipeline(
 
   const stars: DetectedStarPoint[] = [];
   for (const cand of candidates) {
-    if (stars.length >= DETECTOR_MAX_STARS) break;
+    // No longer limited by DETECTOR_MAX_STARS here
     if (isFarEnough(stars, cand.x, cand.y, DETECTOR_MIN_DISTANCE)) {
       stars.push(cand);
     }
@@ -476,8 +457,6 @@ function detectStarsWithNewPipeline(
   }
   return stars;
 }
-
-// --- End of New Star Detector (Self-Contained) Functions ---
 
 
 function calculateStarArrayCentroid(starsInput: Star[], addLog: (message: string) => void): { x: number; y: number } | null {
@@ -498,7 +477,7 @@ function calculateStarArrayCentroid(starsInput: Star[], addLog: (message: string
   let weightedY = 0;
 
   for (const star of starsInput) {
-    weightedX += star.x * star.brightness; // Star.brightness now comes from windowSumBrightness
+    weightedX += star.x * star.brightness; 
     weightedY += star.y * star.brightness;
     totalBrightness += star.brightness;
   }
@@ -569,7 +548,6 @@ function calculateBrightnessCentroid(imageData: ImageData, addLog: (message: str
     };
 }
 
-// Calculate local brightness centroid for refining manual star clicks
 function calculateLocalBrightnessCentroid(
   fullImageData: ImageData,
   cropRect: { x: number; y: number; width: number; height: number },
@@ -938,6 +916,12 @@ export default function AstroStackerPage() {
   const [originalBiasFrameDimensionsList, setOriginalBiasFrameDimensionsList] = useState<Array<{ width: number; height: number } | null>>([]);
   const [useBiasFrames, setUseBiasFrames] = useState<boolean>(false);
   const [isProcessingBiasFrames, setIsProcessingBiasFrames] = useState(false);
+
+  // Learning Mode State
+  const [showLearnPinDialog, setShowLearnPinDialog] = useState(false);
+  const [learnPinInput, setLearnPinInput] = useState("");
+  const [isLearningModeActive, setIsLearningModeActive] = useState(false);
+  const [learnedStarPatternRef, setLearnedStarPatternRef] = useState<LearnedStarPattern | null>(null);
 
 
   const addLog = useCallback((message: string) => {
@@ -1337,7 +1321,7 @@ const analyzeImageForStars = async (
     const detectedStarsResult: Star[] = detectedPoints.map(pStar => ({
       x: pStar.x, 
       y: pStar.y, 
-      brightness: pStar.windowSumBrightness, // Use windowSumBrightness for Star.brightness
+      brightness: pStar.windowSumBrightness, 
       fwhm: pStar.fwhm,
       isManuallyAdded: false,
     }));
@@ -1349,7 +1333,6 @@ const analyzeImageForStars = async (
        if(!finalUpdatedEntry.analysisStars || finalUpdatedEntry.analysisStars.filter(s => s.isManuallyAdded).length === 0){
            finalUpdatedEntry.analysisStars = [...detectedStarsResult];
        } else {
-           // Keep existing manually added/reviewed stars if in manual mode and they exist
            finalUpdatedEntry.analysisStars = [...finalUpdatedEntry.analysisStars.filter(s => s.isManuallyAdded)];
        }
     }
@@ -1409,7 +1392,6 @@ const analyzeImageForStars = async (
         setAllImageStarData(prev => prev.map(e => e.id === imageId ? updatedEntry : e));
         
         setTimeout(async () => {
-            // Re-fetch the entry from the latest state after the map update
             const currentGlobalStateEntry = allImageStarData.find(e => e.id === imageId);
             if (currentGlobalStateEntry && !currentGlobalStateEntry.isAnalyzed && !currentGlobalStateEntry.isAnalyzing) {
                 addLog(`Image ${currentGlobalStateEntry.file.name} switched to manual mode, and needs analysis. Analyzing now...`);
@@ -1572,7 +1554,7 @@ const analyzeImageForStars = async (
           const newStar: Star = {
             x: finalStarX,
             y: finalStarY,
-            brightness: 150, // Default brightness for manually added stars (windowSumBrightness equivalent)
+            brightness: 150, 
             fwhm: 2.5, 
             isManuallyAdded: true,
           };
@@ -1626,31 +1608,46 @@ const analyzeImageForStars = async (
       idx === currentEditingImageIndex ? { ...entry, userReviewed: true, starSelectionMode: 'manual' } : entry
     ));
     
-    setIsStarEditingMode(false);
-    setCurrentEditingImageData(null); 
     toast({title: "Stars Confirmed", description: `Star selection saved for ${currentImageName}.`});
-
-    if (allImageStarData.length > 1 && confirmedEntry.analysisStars && confirmedEntry.analysisDimensions) {
-        setSourceImageForApplyMenu({
-            id: confirmedEntry.id,
-            fileName: confirmedEntry.file.name,
-            stars: [...confirmedEntry.analysisStars], 
-            dimensions: { ...confirmedEntry.analysisDimensions }, 
-        });
-        setShowApplyStarOptionsMenu(true);
+    
+    // Logic for Learning Mode and Apply to Others Menu
+    if (isLearningModeActive && !learnedStarPatternRef && confirmedEntry.analysisStars.length > 0) {
+      setLearnedStarPatternRef({
+        stars: [...confirmedEntry.analysisStars],
+        dimensions: { ...confirmedEntry.analysisDimensions },
+        sourceFileName: confirmedEntry.file.name,
+      });
+      toast({
+        title: t('starPatternLearnedToastTitle'),
+        description: t('starPatternLearnedToastDesc', { fileName: confirmedEntry.file.name }),
+      });
+      addLog(`[LEARN] Pattern learned from ${confirmedEntry.file.name} (${confirmedEntry.analysisStars.length} stars, ${confirmedEntry.analysisDimensions.width}x${confirmedEntry.analysisDimensions.height}px).`);
+      setIsStarEditingMode(false);
+      setCurrentEditingImageData(null);
+      setCurrentEditingImageIndex(null);
+    } else if (allImageStarData.length > 1 && confirmedEntry.analysisStars && confirmedEntry.analysisDimensions && !isLearningModeActive) {
+      setSourceImageForApplyMenu({
+        id: confirmedEntry.id,
+        fileName: confirmedEntry.file.name,
+        stars: [...confirmedEntry.analysisStars],
+        dimensions: { ...confirmedEntry.analysisDimensions },
+      });
+      setShowApplyStarOptionsMenu(true);
+      // Do not close editor yet, wait for ApplyMenu choice
     } else {
+      setIsStarEditingMode(false);
+      setCurrentEditingImageData(null);
       setCurrentEditingImageIndex(null);
     }
   };
+  
 
   const handleConfirmAndNext = async () => {
     if (currentEditingImageIndex === null) return; 
 
-    const hasNextImage = currentEditingImageIndex < allImageStarData.length - 1;
-    
     const currentImageEntry = allImageStarData[currentEditingImageIndex];
     const currentImageName = currentImageEntry?.file.name || "current image";
-    addLog(`Confirmed star selection for ${currentImageName} and ${hasNextImage ? 'moving to next' : 'closing (last image)'}. Total stars: ${currentImageEntry?.analysisStars.length}. Mode: Manual.`);
+    addLog(`Confirmed star selection for ${currentImageName}. Total stars: ${currentImageEntry?.analysisStars.length}. Mode: Manual.`);
 
     setAllImageStarData(prev => prev.map((entry, idx) =>
       idx === currentEditingImageIndex ? { ...entry, userReviewed: true, starSelectionMode: 'manual' } : entry
@@ -1658,16 +1655,52 @@ const analyzeImageForStars = async (
     
     toast({title: "Stars Confirmed", description: `Star selection saved for ${currentImageName}.`});
 
+    let patternJustLearned = false;
+    if (isLearningModeActive && !learnedStarPatternRef && currentImageEntry.analysisStars.length > 0) {
+      setLearnedStarPatternRef({
+        stars: [...currentImageEntry.analysisStars],
+        dimensions: { ...currentImageEntry.analysisDimensions },
+        sourceFileName: currentImageEntry.file.name,
+      });
+      toast({
+        title: t('starPatternLearnedToastTitle'),
+        description: t('starPatternLearnedToastDesc', { fileName: currentImageEntry.file.name }),
+      });
+      addLog(`[LEARN] Pattern learned from ${currentImageEntry.file.name} while using 'Confirm & Next'.`);
+      patternJustLearned = true;
+    }
+
+    const hasNextImage = currentEditingImageIndex < allImageStarData.length - 1;
     if (!hasNextImage) {
       setIsStarEditingMode(false);
       setCurrentEditingImageData(null);
       setCurrentEditingImageIndex(null);
+      // If it was the last image and a pattern was just learned, the "Apply to others" menu is skipped anyway.
+      // If not learning and it's the last image, no menu either.
       return;
     }
 
-    const nextImageIndex = currentEditingImageIndex + 1;
-    await handleEditStarsRequest(nextImageIndex); 
+    // If a pattern was just learned, or learning mode is active, or it's not the right conditions for apply menu, just go next.
+    if (patternJustLearned || isLearningModeActive || !(allImageStarData.length > 1 && currentImageEntry.analysisStars && currentImageEntry.analysisDimensions)) {
+      await handleEditStarsRequest(currentEditingImageIndex + 1);
+    } 
+    // This else-if condition is unlikely to be hit with current "ConfirmAndNext" logic because if a pattern is learned, the 'apply' menu is skipped.
+    // And if not learning, the "Apply to others" menu logic is typically handled by `handleConfirmStarsForCurrentImage`.
+    // However, keeping it for completeness or future refactoring.
+    else if (allImageStarData.length > 1 && currentImageEntry.analysisStars && currentImageEntry.analysisDimensions && !isLearningModeActive) {
+        setSourceImageForApplyMenu({
+            id: currentImageEntry.id,
+            fileName: currentImageEntry.file.name,
+            stars: [...currentImageEntry.analysisStars],
+            dimensions: { ...currentImageEntry.analysisDimensions },
+        });
+        setShowApplyStarOptionsMenu(true);
+        // Editor will close or move to next based on ApplyMenu choice
+    } else {
+        await handleEditStarsRequest(currentEditingImageIndex + 1);
+    }
   };
+
 
   const handleApplyStarsToMatchingDimensions = async () => {
     if (!sourceImageForApplyMenu) return;
@@ -1695,6 +1728,7 @@ const analyzeImageForStars = async (
     toast({title: t('toastStarsAppliedMatchingDimTitle'), description: t('toastStarsAppliedMatchingDimDesc')});
     setShowApplyStarOptionsMenu(false);
     setSourceImageForApplyMenu(null);
+    setIsStarEditingMode(false); 
     setCurrentEditingImageIndex(null); 
     setCurrentEditingImageData(null);
     setIsApplyingStarsFromMenu(false);
@@ -1713,6 +1747,7 @@ const analyzeImageForStars = async (
       setIsApplyingStarsFromMenu(false);
       setShowApplyStarOptionsMenu(false);
       setSourceImageForApplyMenu(null);
+      setIsStarEditingMode(false);
       setCurrentEditingImageIndex(null);
       setCurrentEditingImageData(null);
       return;
@@ -1725,6 +1760,7 @@ const analyzeImageForStars = async (
       setIsApplyingStarsFromMenu(false);
       setShowApplyStarOptionsMenu(false);
       setSourceImageForApplyMenu(null);
+      setIsStarEditingMode(false);
       setCurrentEditingImageIndex(null);
       setCurrentEditingImageData(null);
       return;
@@ -1774,6 +1810,7 @@ const analyzeImageForStars = async (
     setIsApplyingStarsFromMenu(false);
     setShowApplyStarOptionsMenu(false);
     setSourceImageForApplyMenu(null);
+    setIsStarEditingMode(false);
     setCurrentEditingImageIndex(null); 
     setCurrentEditingImageData(null);
   };
@@ -1781,6 +1818,7 @@ const analyzeImageForStars = async (
   const handleCancelApplyStarOptionsMenu = () => {
     setShowApplyStarOptionsMenu(false);
     setSourceImageForApplyMenu(null);
+    setIsStarEditingMode(false); 
     setCurrentEditingImageIndex(null); 
     setCurrentEditingImageData(null);
     addLog("User chose not to apply star selection to other images from the menu.");
@@ -1811,8 +1849,11 @@ const analyzeImageForStars = async (
     addLog(`Bias Frames: ${useBiasFrames && biasFrameFiles.length > 0 ? `${biasFrameFiles.length} frame(s)` : 'Not Used'}.`);
     addLog(`Dark Frames: ${useDarkFrames && darkFrameFiles.length > 0 ? `${darkFrameFiles.length} frame(s)` : 'Not Used'}.`);
     addLog(`Flat Frames: ${useFlatFrames && flatFrameFiles.length > 0 ? `${flatFrameFiles.length} frame(s)` : 'Not Used'}.`);
+    if (isLearningModeActive && learnedStarPatternRef) {
+      addLog(`[LEARN REF] Using learned pattern from ${learnedStarPatternRef.sourceFileName} (${learnedStarPatternRef.stars.length} stars) for alignment guidance.`);
+    }
     addLog(`Alignment: Affine (Min ${MIN_STARS_FOR_AFFINE_ALIGNMENT} stars, Match ${NUM_STARS_TO_USE_FOR_AFFINE_MATCHING}, Star FWHM Filter: ${ALIGNMENT_STAR_MIN_FWHM}-${ALIGNMENT_STAR_MAX_FWHM}, Match Radius: ${AFFINE_MATCHING_RADIUS_PIXELS}px), Fallback Centroid (Min ${MIN_STARS_FOR_CENTROID_ALIGNMENT} stars, Auto Target ${AUTO_ALIGN_TARGET_STAR_COUNT}).`);
-    addLog(`Star Detection (Self-Contained): MinContrast=${DETECTOR_MIN_CONTRAST}, MinBright(CenterPx)=${DETECTOR_MIN_BRIGHTNESS}, MinDist=${DETECTOR_MIN_DISTANCE}, MaxStars=${DETECTOR_MAX_STARS}, MinFWHM=${DETECTOR_MIN_FWHM}, MaxFWHM=${DETECTOR_MAX_FWHM}, Margin=${DETECTOR_MARGIN}, FlatTol=${DETECTOR_FLATNESS_TOLERANCE}.`);
+    addLog(`Star Detection (Self-Contained): MinContrast=${DETECTOR_MIN_CONTRAST}, MinBright(CenterPx)=${DETECTOR_MIN_BRIGHTNESS}, (No MaxStars limit), MinDist=${DETECTOR_MIN_DISTANCE}, MinFWHM=${DETECTOR_MIN_FWHM}, MaxFWHM=${DETECTOR_MAX_FWHM}, Margin=${DETECTOR_MARGIN}, FlatTol=${DETECTOR_FLATNESS_TOLERANCE}.`);
     addLog(`Brightness Centroid Fallback Threshold: ${BRIGHTNESS_CENTROID_FALLBACK_THRESHOLD_GRAYSCALE_EQUIVALENT} (grayscale equivalent).`);
 
     if (typeof window === 'undefined' || typeof document === 'undefined') {
@@ -2520,6 +2561,37 @@ const analyzeImageForStars = async (
     }).length;
   }, [allImageStarData, sourceImageForApplyMenu]);
 
+  const handleLearnPinSubmit = () => {
+    if (learnPinInput === LEARNING_MODE_PIN) {
+      setIsLearningModeActive(true);
+      setLearnedStarPatternRef(null); // Clear any previous pattern for new session
+      toast({ title: t('learningModeActivatedToastTitle'), description: t('learningModeActivatedToastDesc') });
+      addLog("[LEARN] Learning Mode Activated via PIN.");
+    } else {
+      toast({ title: t('incorrectPinToastTitle'), description: t('incorrectPinToastDesc'), variant: "destructive" });
+      addLog("[LEARN] Incorrect PIN entered for Learning Mode.");
+    }
+    setShowLearnPinDialog(false);
+    setLearnPinInput("");
+  };
+
+  const toggleLearningMode = () => {
+    if (isLearningModeActive) {
+      setIsLearningModeActive(false);
+      setLearnedStarPatternRef(null);
+      toast({ title: t('learningModeDeactivatedToastTitle'), description: t('learningModeDeactivatedToastDesc') });
+      addLog("[LEARN] Learning Mode Deactivated.");
+    } else {
+      setShowLearnPinDialog(true);
+    }
+  };
+  
+  const handleClearLearnedPattern = () => {
+    setLearnedStarPatternRef(null);
+    toast({ title: "Learned Pattern Cleared", description: "The reference star pattern for this session has been cleared." });
+    addLog("[LEARN] Learned star pattern cleared by user.");
+  };
+
 
   const canStartStacking = allImageStarData.length >= 2;
   const isUiDisabled = isProcessingStack || 
@@ -2710,6 +2782,42 @@ const analyzeImageForStars = async (
                                 </div>
                             )}
                         </CardContent>
+                    </Card>
+
+                     <Card className="mt-4 shadow-md">
+                      <CardHeader className="pb-3 pt-4">
+                          <CardTitle className="flex items-center text-lg">
+                              <Brain className="mr-2 h-5 w-5 text-accent" />
+                              {t('learningModeCardTitle')}
+                          </CardTitle>
+                          <CardDescription className="text-xs">{t('learningModeCardDescription')}</CardDescription>
+                      </CardHeader>
+                      <CardContent className="space-y-3 pb-4">
+                          {isLearningModeActive && (
+                            <Badge variant="outline" className="border-green-500 text-green-500">
+                              <BadgeAlert className="mr-1 h-3 w-3" /> {t('learningModeActiveIndicator')}
+                            </Badge>
+                          )}
+                          <Button onClick={toggleLearningMode} variant="outline" className="w-full" disabled={isUiDisabled}>
+                              {isLearningModeActive ? <><X className="mr-2 h-4 w-4" />{t('stopLearningSession')}</> : <><KeyRound className="mr-2 h-4 w-4" />{t('startLearningSession')}</>}
+                          </Button>
+                          {isLearningModeActive && learnedStarPatternRef && (
+                            <div className="text-xs text-muted-foreground p-2 border rounded-md">
+                              <p>{t('learnedPatternSource', {
+                                fileName: learnedStarPatternRef.sourceFileName,
+                                starCount: learnedStarPatternRef.stars.length,
+                                width: learnedStarPatternRef.dimensions.width,
+                                height: learnedStarPatternRef.dimensions.height
+                              })}</p>
+                              <Button onClick={handleClearLearnedPattern} size="sm" variant="link" className="text-destructive p-0 h-auto mt-1" disabled={isUiDisabled}>
+                                {t('clearLearnedPatternButton')}
+                              </Button>
+                            </div>
+                          )}
+                          {isLearningModeActive && !learnedStarPatternRef && (
+                             <p className="text-xs text-muted-foreground italic">{t('noPatternLearnedYet')}</p>
+                          )}
+                      </CardContent>
                     </Card>
 
 
@@ -2907,6 +3015,30 @@ const analyzeImageForStars = async (
         </div>
       </footer>
 
+      <AlertDialog open={showLearnPinDialog} onOpenChange={setShowLearnPinDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('enterPinDialogTitle')}</AlertDialogTitle>
+            <AlertDialogDescription>{t('enterPinDialogDesc')}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="learn-pin-input">{t('pinPlaceholder')}</Label>
+            <Input
+              id="learn-pin-input"
+              type="password"
+              value={learnPinInput}
+              onChange={(e) => setLearnPinInput(e.target.value)}
+              placeholder={t('pinPlaceholder')}
+            />
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => { setLearnPinInput(""); setShowLearnPinDialog(false); }}>{t('cancelEditing')}</AlertDialogCancel>
+            <AlertDialogAction onClick={handleLearnPinSubmit}>{t('submitPinButton')}</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+
       {showApplyStarOptionsMenu && sourceImageForApplyMenu && (
         <AlertDialog open={showApplyStarOptionsMenu} onOpenChange={(open) => { if (!open) handleCancelApplyStarOptionsMenu(); }}>
             <AlertDialogContent className="max-w-md">
@@ -2990,5 +3122,7 @@ const analyzeImageForStars = async (
 
 
 
+
+    
 
     

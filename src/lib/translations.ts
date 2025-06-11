@@ -91,6 +91,27 @@ export const translations: Translations = {
     logDarkFrameLoaded: "Dark frame {fileName} loaded ({width}x{height}).",
     logFlatFrameLoaded: "Flat frame {fileName} loaded ({width}x{height}).",
     logBiasFrameLoaded: "Bias frame {fileName} loaded ({width}x{height}).",
+
+    startLearningSession: "Start Learning Session",
+    stopLearningSession: "Stop Learning Session",
+    learningModeActiveIndicator: "LEARNING MODE ACTIVE",
+    enterPinDialogTitle: "Enter PIN to Activate Learning Mode",
+    enterPinDialogDesc: "Enter the designated PIN to start a learning session. This allows you to define a reference star pattern.",
+    pinPlaceholder: "PIN Code",
+    submitPinButton: "Submit PIN",
+    incorrectPinToastTitle: "Incorrect PIN",
+    incorrectPinToastDesc: "The PIN you entered is incorrect. Learning mode not activated.",
+    learningModeActivatedToastTitle: "Learning Mode Activated",
+    learningModeActivatedToastDesc: "You can now define a star pattern by editing stars on an image and confirming.",
+    learningModeDeactivatedToastTitle: "Learning Mode Deactivated",
+    learningModeDeactivatedToastDesc: "The current learning session has ended. Any learned pattern is cleared.",
+    starPatternLearnedToastTitle: "Star Pattern Learned",
+    starPatternLearnedToastDesc: "Pattern from '{fileName}' captured. It will be used as a reference for this session.",
+    clearLearnedPatternButton: "Clear Learned Pattern",
+    learnedPatternSource: "Learned Pattern Source: {fileName} ({starCount} stars, {width}x{height}px)",
+    noPatternLearnedYet: "No star pattern has been learned in this session yet.",
+    learningModeCardTitle: "Pattern Learning Mode",
+    learningModeCardDescription: "Activate to manually teach the system a reference star pattern for improved alignment.",
   },
   ko: {
     appTitle: '아스트로스태커',
@@ -129,7 +150,7 @@ export const translations: Translations = {
     toastStarsAppliedMatchingDimTitle: "별 적용됨 (동일 크기)",
     toastStarsAppliedMatchingDimDesc: "선택한 별들이 동일한 크기의 다른 이미지들에 적용되었습니다.",
     toastProportionalApplySkippedTitle: "비례 적용 건너뜀",
-    toastProportionalApplySkippedDesc: "원본 이미지 '{fileName}'에 선택된 별이 없습니다. 비례 적용을 건너<0xEB><0x9B><0x88>습니다.",
+    toastProportionalApplySkippedDesc: "원본 이미지 '{fileName}'에 선택된 별이 없습니다. 비례 적용을 건너뛰었습니다.",
     toastProportionalApplyDoneTitle: "별 적용됨 (비례)",
     toastProportionalApplyDoneDesc: "별들이 유사한 종횡비의 다른 이미지들에 비례하여 적용되었습니다.",
 
@@ -171,6 +192,27 @@ export const translations: Translations = {
     logDarkFrameLoaded: "다크 프레임 {fileName} 로드됨 ({width}x{height}).",
     logFlatFrameLoaded: "플랫 프레임 {fileName} 로드됨 ({width}x{height}).",
     logBiasFrameLoaded: "바이어스 프레임 {fileName} 로드됨 ({width}x{height}).",
+
+    startLearningSession: "학습 세션 시작",
+    stopLearningSession: "학습 세션 중지",
+    learningModeActiveIndicator: "학습 모드 활성",
+    enterPinDialogTitle: "학습 모드 활성화를 위한 PIN 입력",
+    enterPinDialogDesc: "학습 세션을 시작하려면 지정된 PIN을 입력하세요. 이를 통해 참조 별 패턴을 정의할 수 있습니다.",
+    pinPlaceholder: "PIN 코드",
+    submitPinButton: "PIN 제출",
+    incorrectPinToastTitle: "잘못된 PIN",
+    incorrectPinToastDesc: "입력한 PIN이 잘못되었습니다. 학습 모드가 활성화되지 않았습니다.",
+    learningModeActivatedToastTitle: "학습 모드 활성화됨",
+    learningModeActivatedToastDesc: "이제 이미지에서 별을 편집하고 확인하여 별 패턴을 정의할 수 있습니다.",
+    learningModeDeactivatedToastTitle: "학습 모드 비활성화됨",
+    learningModeDeactivatedToastDesc: "현재 학습 세션이 종료되었습니다. 학습된 패턴이 지워집니다.",
+    starPatternLearnedToastTitle: "별 패턴 학습됨",
+    starPatternLearnedToastDesc: "'{fileName}'의 패턴이 캡처되었습니다. 이 세션의 참조로 사용됩니다.",
+    clearLearnedPatternButton: "학습된 패턴 지우기",
+    learnedPatternSource: "학습된 패턴 출처: {fileName} (별 {starCount}개, {width}x{height}px)",
+    noPatternLearnedYet: "이 세션에서 아직 학습된 별 패턴이 없습니다.",
+    learningModeCardTitle: "패턴 학습 모드",
+    learningModeCardDescription: "활성화하여 시스템에 참조 별 패턴을 수동으로 학습시켜 정렬 정확도를 향상시킵니다.",
   },
   zh: {
     appTitle: '天文图像叠加器 (AstroStacker)',
@@ -251,6 +293,27 @@ export const translations: Translations = {
     logDarkFrameLoaded: "暗场 {fileName} 已加载 ({width}x{height})。",
     logFlatFrameLoaded: "平场 {fileName} 已加载 ({width}x{height})。",
     logBiasFrameLoaded: "偏置场 {fileName} 已加载 ({width}x{height})。",
+
+    startLearningSession: "开始学习会话",
+    stopLearningSession: "停止学习会话",
+    learningModeActiveIndicator: "学习模式已激活",
+    enterPinDialogTitle: "输入 PIN 码以激活学习模式",
+    enterPinDialogDesc: "输入指定的 PIN 码以开始学习会话。这将允许您定义一个参考星点图案。",
+    pinPlaceholder: "PIN 码",
+    submitPinButton: "提交 PIN 码",
+    incorrectPinToastTitle: "PIN 码错误",
+    incorrectPinToastDesc: "您输入的 PIN 码不正确。学习模式未激活。",
+    learningModeActivatedToastTitle: "学习模式已激活",
+    learningModeActivatedToastDesc: "您现在可以通过编辑图像上的星点并确认来定义星点图案。",
+    learningModeDeactivatedToastTitle: "学习模式已停用",
+    learningModeDeactivatedToastDesc: "当前学习会话已结束。任何已学习的图案均已清除。",
+    starPatternLearnedToastTitle: "星点图案已学习",
+    starPatternLearnedToastDesc: "已捕获来自“{fileName}”的图案。它将用作此会话的参考。",
+    clearLearnedPatternButton: "清除已学图案",
+    learnedPatternSource: "已学图案来源: {fileName} (星点 {starCount}个, {width}x{height}px)",
+    noPatternLearnedYet: "此会话中尚未学习任何星点图案。",
+    learningModeCardTitle: "图案学习模式",
+    learningModeCardDescription: "激活此模式可手动教导系统一个参考星点图案，以提高对齐精度。",
   }
 };
 
@@ -263,3 +326,6 @@ export const getTranslations = (locale: Locale) => translations[locale] || trans
 
     
 
+
+
+    
