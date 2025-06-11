@@ -944,27 +944,25 @@ export default function AstroStackerPage() {
   }, [logs]);
 
   useEffect(() => {
-    // Load learned pattern and learning mode status from localStorage on mount
     try {
       const storedPatternString = localStorage.getItem('astrostacker-learned-pattern');
       if (storedPatternString) {
         const storedPattern = JSON.parse(storedPatternString) as LearnedStarPattern | null;
         if (storedPattern) {
           setLearnedStarPatternRef(storedPattern);
-          addLog("[LEARN] Loaded previously learned pattern from storage.");
+          addLog("[LEARN] Loaded previously learned pattern from localStorage.");
         }
       }
       
       const storedLearningModeActive = localStorage.getItem('astrostacker-learning-mode-active');
       if (storedLearningModeActive === 'true') {
          setIsLearningModeActive(true);
-         addLog("[LEARN] Activated Learning Mode from storage.");
-         // If mode is active and a pattern was loaded, it's good.
-         // If mode is active but no pattern was loaded (e.g., cleared then refreshed), it's also fine.
+         addLog("[LEARN] Learning Mode status restored from localStorage.");
+         // If mode is active, the pattern (if it exists) would have been loaded above.
       }
     } catch (error) {
       console.error("Error loading data from localStorage:", error);
-      addLog("[ERROR] Could not load learning data from local storage. Clearing potentially corrupted data.");
+      addLog("[ERROR] Could not load learning data from localStorage. Clearing potentially corrupted data.");
       localStorage.removeItem('astrostacker-learned-pattern');
       localStorage.removeItem('astrostacker-learning-mode-active');
     }
@@ -1638,10 +1636,9 @@ const analyzeImageForStars = async (
     setAllImageStarData(prev => prev.map((entry, idx) =>
       idx === currentEditingImageIndex ? { ...entry, userReviewed: true, starSelectionMode: 'manual' } : entry
     ));
-    
-    toast({title: "Stars Confirmed", description: `Star selection saved for ${currentImageName}.`});
-    
-    if (isLearningModeActive && confirmedEntry.analysisStars.length > 0) { // Only learn if stars exist
+        
+    if (isLearningModeActive && confirmedEntry.analysisStars.length > 0) {
+      const wasPatternAlreadyLearned = !!learnedStarPatternRef;
       const characteristics = {
         avgBrightness: calculateMean(confirmedEntry.analysisStars.map(s => s.brightness)),
         avgContrast: calculateMean(confirmedEntry.analysisStars.filter(s => s.contrast !== undefined).map(s => s.contrast!)),
@@ -1656,15 +1653,19 @@ const analyzeImageForStars = async (
       setLearnedStarPatternRef(newLearnedPattern);
       try {
         localStorage.setItem('astrostacker-learned-pattern', JSON.stringify(newLearnedPattern));
-        localStorage.setItem('astrostacker-learning-mode-active', 'true'); // Ensure mode active is also saved
+        localStorage.setItem('astrostacker-learning-mode-active', 'true'); 
         addLog("[LEARN] Saved learned pattern and mode to localStorage.");
       } catch (error) {
         console.error("Error saving learned pattern to localStorage:", error);
         addLog("[ERROR] Could not save learned pattern to localStorage.");
       }
+
+      const toastTitleKey = wasPatternAlreadyLearned ? 'starPatternOverwrittenToastTitle' : 'starPatternFirstLearnedToastTitle';
+      const toastDescKey = wasPatternAlreadyLearned ? 'starPatternOverwrittenToastDesc' : 'starPatternFirstLearnedToastDesc';
+      
       toast({
-        title: t('starPatternLearnedToastTitle'),
-        description: t('starPatternLearnedToastDesc', { 
+        title: t(toastTitleKey),
+        description: t(toastDescKey, { 
             fileName: confirmedEntry.file.name, 
             starCount: newLearnedPattern.stars.length,
             avgBrightness: characteristics.avgBrightness?.toFixed(1),
@@ -1672,22 +1673,25 @@ const analyzeImageForStars = async (
             avgFwhm: characteristics.avgFwhm?.toFixed(1),
         }),
       });
-      addLog(`[LEARN] Pattern & characteristics learned from ${confirmedEntry.file.name} (${confirmedEntry.analysisStars.length} stars). AvgBr: ${characteristics.avgBrightness?.toFixed(1)}, AvgCo: ${characteristics.avgContrast?.toFixed(1)}, AvgFw: ${characteristics.avgFwhm?.toFixed(1)}`);
+      addLog(`[LEARN] ${wasPatternAlreadyLearned ? 'Overwritten' : 'New'} pattern & characteristics learned from ${confirmedEntry.file.name}.`);
       setIsStarEditingMode(false);
       setCurrentEditingImageData(null);
       setCurrentEditingImageIndex(null);
-    } else if (allImageStarData.length > 1 && confirmedEntry.analysisStars && confirmedEntry.analysisDimensions && !isLearningModeActive) {
-      setSourceImageForApplyMenu({
-        id: confirmedEntry.id,
-        fileName: confirmedEntry.file.name,
-        stars: [...confirmedEntry.analysisStars],
-        dimensions: { ...confirmedEntry.analysisDimensions },
-      });
-      setShowApplyStarOptionsMenu(true);
     } else {
-      setIsStarEditingMode(false);
-      setCurrentEditingImageData(null);
-      setCurrentEditingImageIndex(null);
+      toast({title: "Stars Confirmed", description: `Star selection saved for ${currentImageName}.`});
+      if (allImageStarData.length > 1 && confirmedEntry.analysisStars && confirmedEntry.analysisDimensions && !isLearningModeActive) {
+        setSourceImageForApplyMenu({
+          id: confirmedEntry.id,
+          fileName: confirmedEntry.file.name,
+          stars: [...confirmedEntry.analysisStars],
+          dimensions: { ...confirmedEntry.analysisDimensions },
+        });
+        setShowApplyStarOptionsMenu(true);
+      } else {
+        setIsStarEditingMode(false);
+        setCurrentEditingImageData(null);
+        setCurrentEditingImageIndex(null);
+      }
     }
   };
   
@@ -1703,10 +1707,9 @@ const analyzeImageForStars = async (
       idx === currentEditingImageIndex ? { ...entry, userReviewed: true, starSelectionMode: 'manual' } : entry
     ));
     
-    toast({title: "Stars Confirmed", description: `Star selection saved for ${currentImageName}.`});
-
-    let patternJustLearned = false;
+    let patternJustLearnedOrOverwritten = false;
     if (isLearningModeActive && currentImageEntry.analysisStars.length > 0) {
+      const wasPatternAlreadyLearned = !!learnedStarPatternRef;
       const characteristics = {
         avgBrightness: calculateMean(currentImageEntry.analysisStars.map(s => s.brightness)),
         avgContrast: calculateMean(currentImageEntry.analysisStars.filter(s => s.contrast !== undefined).map(s => s.contrast!)),
@@ -1725,9 +1728,12 @@ const analyzeImageForStars = async (
         addLog("[LEARN] Saved learned pattern and mode to localStorage (via Confirm & Next).");
       } catch (e) { console.error("LS save error", e); addLog("[ERROR] Confirm&Next: Could not save to localStorage."); }
 
+      const toastTitleKey = wasPatternAlreadyLearned ? 'starPatternOverwrittenToastTitle' : 'starPatternFirstLearnedToastTitle';
+      const toastDescKey = wasPatternAlreadyLearned ? 'starPatternOverwrittenToastDesc' : 'starPatternFirstLearnedToastDesc';
+
       toast({
-        title: t('starPatternLearnedToastTitle'),
-        description: t('starPatternLearnedToastDesc', { 
+        title: t(toastTitleKey),
+        description: t(toastDescKey, { 
             fileName: currentImageEntry.file.name,
             starCount: newLearnedPattern.stars.length,
             avgBrightness: characteristics.avgBrightness?.toFixed(1),
@@ -1735,8 +1741,10 @@ const analyzeImageForStars = async (
             avgFwhm: characteristics.avgFwhm?.toFixed(1),
         }),
       });
-      addLog(`[LEARN] Pattern & characteristics learned from ${currentImageEntry.file.name} while using 'Confirm & Next'.`);
-      patternJustLearned = true;
+      addLog(`[LEARN] ${wasPatternAlreadyLearned ? 'Overwritten' : 'New'} pattern & characteristics learned from ${currentImageEntry.file.name} while using 'Confirm & Next'.`);
+      patternJustLearnedOrOverwritten = true;
+    } else {
+        toast({title: "Stars Confirmed", description: `Star selection saved for ${currentImageName}.`});
     }
 
     const hasNextImage = currentEditingImageIndex < allImageStarData.length - 1;
@@ -1747,7 +1755,7 @@ const analyzeImageForStars = async (
       return;
     }
 
-    if (patternJustLearned || isLearningModeActive || !(allImageStarData.length > 1 && currentImageEntry.analysisStars && currentImageEntry.analysisDimensions)) {
+    if (patternJustLearnedOrOverwritten || isLearningModeActive || !(allImageStarData.length > 1 && currentImageEntry.analysisStars && currentImageEntry.analysisDimensions)) {
       await handleEditStarsRequest(currentEditingImageIndex + 1);
     } 
     else if (allImageStarData.length > 1 && currentImageEntry.analysisStars && currentImageEntry.analysisDimensions && !isLearningModeActive) {
@@ -2736,18 +2744,18 @@ const analyzeImageForStars = async (
   };
 
   const toggleLearningMode = () => {
-    if (isLearningModeActive) { // If currently active, we are deactivating
+    if (isLearningModeActive) { 
       setIsLearningModeActive(false);
-      setLearnedStarPatternRef(null); // Clear from component state, but not localStorage
+      setLearnedStarPatternRef(null); // Clear from component state, but not necessarily localStorage yet.
       try {
         localStorage.removeItem('astrostacker-learning-mode-active');
-        addLog("[LEARN] Learning Mode deactivated. Status cleared from localStorage. Pattern remains in localStorage.");
+        addLog("[LEARN] Learning Mode deactivated. Status cleared from localStorage. Pattern remains in localStorage unless explicitly cleared.");
       } catch (error) {
         console.error("Error clearing learning mode status from localStorage:", error);
         addLog("[ERROR] Could not clear learning mode status from localStorage.");
       }
       toast({ title: t('learningModeDeactivatedToastTitle'), description: t('learningModeDeactivatedToastDesc') });
-    } else { // If currently inactive, we are activating (via PIN dialog)
+    } else { 
       setShowLearnPinDialog(true);
     }
   };
@@ -2977,8 +2985,8 @@ const analyzeImageForStars = async (
                           {isLearningModeActive && learnedStarPatternRef && (
                             <div className="text-xs text-muted-foreground p-2 border rounded-md space-y-0.5">
                               <p className="font-semibold text-foreground">{t('currentLearnedPatternTitle')}</p>
-                              <p>{t('learnedPatternSource', {
-                                fileName: learnedStarPatternRef.sourceFileName,
+                              <p>{t('learnedPatternSource', { 
+                                fileName: learnedStarPatternRef.sourceFileName, 
                                 starCount: learnedStarPatternRef.stars.length,
                                 width: learnedStarPatternRef.dimensions.width,
                                 height: learnedStarPatternRef.dimensions.height

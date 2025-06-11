@@ -105,19 +105,21 @@ export const translations: Translations = {
     learningModeActivatedToastDesc: "You can now define a star pattern by editing stars on an image and confirming.",
     learningModeActivatedExistingPatternToastDesc: "Learning Mode activated. Previously learned pattern has been loaded.",
     learningModeDeactivatedToastTitle: "Learning Mode Deactivated",
-    learningModeDeactivatedToastDesc: "The current learning session has ended. The learned pattern remains stored.",
-    starPatternLearnedToastTitle: "Star Pattern Learned",
-    starPatternLearnedToastDesc: "Pattern from '{fileName}' ({starCount} stars) with Avg Brightness: {avgBrightness}, Avg Contrast: {avgContrast}, Avg FWHM: {avgFwhm} captured. It will be used as a reference.",
+    learningModeDeactivatedToastDesc: "The current learning session has ended. The learned pattern remains stored locally.",
+    starPatternFirstLearnedToastTitle: "Star Pattern Learned",
+    starPatternFirstLearnedToastDesc: "Pattern & characteristics from '{fileName}' ({starCount} stars; AvgBr: {avgBrightness}, AvgCo: {avgContrast}, AvgFw: {avgFwhm}) captured. It will be used as a reference and stored locally.",
+    starPatternOverwrittenToastTitle: "Learned Star Pattern Updated",
+    starPatternOverwrittenToastDesc: "Existing pattern overwritten. New pattern & characteristics from '{fileName}' ({starCount} stars; AvgBr: {avgBrightness}, AvgCo: {avgContrast}, AvgFw: {avgFwhm}) captured. Stored locally.",
     clearLearnedPatternButton: "Clear Learned Pattern",
     learnedPatternSource: "Source: {fileName} ({starCount} stars, {width}x{height}px)",
     noPatternLearnedYetInfo: "No star pattern has been learned. Edit stars on an image and confirm to create one.",
-    patternStoredButModeOffInfo: "A pattern is stored, but Learning Mode is currently off. Activate to use it.",
+    patternStoredButModeOffInfo: "A pattern is stored locally, but Learning Mode is currently off. Activate to use it or view details.",
     currentLearnedPatternTitle: "Current Learned Pattern:",
     avgBrightnessLabel: "Avg Brightness",
     avgContrastLabel: "Avg Contrast",
     avgFwhmLabel: "Avg FWHM",
     learningModeCardTitle: "Pattern Learning Mode",
-    learningModeCardDescription: "Activate to manually teach the system a reference star pattern for improved alignment.",
+    learningModeCardDescription: "Activate to manually teach the system a reference star pattern for improved alignment. The pattern is stored in your browser.",
   },
   ko: {
     appTitle: '아스트로스태커',
@@ -212,19 +214,21 @@ export const translations: Translations = {
     learningModeActivatedToastDesc: "이제 이미지에서 별을 편집하고 확인하여 별 패턴을 정의할 수 있습니다.",
     learningModeActivatedExistingPatternToastDesc: "학습 모드가 활성화되었습니다. 이전에 학습된 패턴이 로드되었습니다.",
     learningModeDeactivatedToastTitle: "학습 모드 비활성화됨",
-    learningModeDeactivatedToastDesc: "현재 학습 세션이 종료되었습니다. 학습된 패턴은 저장된 상태로 유지됩니다.",
-    starPatternLearnedToastTitle: "별 패턴 학습됨",
-    starPatternLearnedToastDesc: "'{fileName}' ({starCount}개 별) 패턴 (평균 밝기: {avgBrightness}, 평균 대비: {avgContrast}, 평균 FWHM: {avgFwhm})이 캡처되었습니다. 이 세션의 참조로 사용됩니다.",
+    learningModeDeactivatedToastDesc: "현재 학습 세션이 종료되었습니다. 학습된 패턴은 로컬에 저장된 상태로 유지됩니다.",
+    starPatternFirstLearnedToastTitle: "별 패턴 학습됨",
+    starPatternFirstLearnedToastDesc: "'{fileName}' ({starCount}개 별; 평균밝기: {avgBrightness}, 평균대비: {avgContrast}, 평균FWHM: {avgFwhm}) 패턴 및 특성 캡처됨. 참조로 사용되며 로컬에 저장됩니다.",
+    starPatternOverwrittenToastTitle: "학습된 별 패턴 업데이트됨",
+    starPatternOverwrittenToastDesc: "기존 패턴 덮어씀. '{fileName}' ({starCount}개 별; 평균밝기: {avgBrightness}, 평균대비: {avgContrast}, 평균FWHM: {avgFwhm})의 새 패턴 및 특성 캡처됨. 로컬에 저장됩니다.",
     clearLearnedPatternButton: "학습된 패턴 지우기",
     learnedPatternSource: "출처: {fileName} (별 {starCount}개, {width}x{height}px)",
     noPatternLearnedYetInfo: "학습된 별 패턴이 없습니다. 이미지에서 별을 편집하고 확인하여 패턴을 만드세요.",
-    patternStoredButModeOffInfo: "패턴이 저장되어 있지만 학습 모드가 현재 꺼져 있습니다. 사용하려면 활성화하세요.",
+    patternStoredButModeOffInfo: "패턴이 로컬에 저장되어 있지만 학습 모드가 현재 꺼져 있습니다. 사용하거나 세부 정보를 보려면 활성화하세요.",
     currentLearnedPatternTitle: "현재 학습된 패턴:",
     avgBrightnessLabel: "평균 밝기",
     avgContrastLabel: "평균 대비",
     avgFwhmLabel: "평균 FWHM",
     learningModeCardTitle: "패턴 학습 모드",
-    learningModeCardDescription: "활성화하여 시스템에 참조 별 패턴을 수동으로 학습시켜 정렬 정확도를 향상시킵니다.",
+    learningModeCardDescription: "활성화하여 시스템에 참조 별 패턴을 수동으로 학습시켜 정렬 정확도를 향상시킵니다. 패턴은 브라우저에 저장됩니다.",
   },
   zh: {
     appTitle: '天文图像叠加器 (AstroStacker)',
@@ -319,31 +323,24 @@ export const translations: Translations = {
     learningModeActivatedToastDesc: "您现在可以通过编辑图像上的星点并确认来定义星点图案。",
     learningModeActivatedExistingPatternToastDesc: "学习模式已激活。已加载先前学习的图案。",
     learningModeDeactivatedToastTitle: "学习模式已停用",
-    learningModeDeactivatedToastDesc: "当前学习会话已结束。已学习的图案仍会保留。",
-    starPatternLearnedToastTitle: "星点图案已学习",
-    starPatternLearnedToastDesc: "已捕获来自“{fileName}”({starCount}颗星)的图案 (平均亮度: {avgBrightness}, 平均对比度: {avgContrast}, 平均 FWHM: {avgFwhm})。它将用作此会话的参考。",
+    learningModeDeactivatedToastDesc: "当前学习会话已结束。已学习的图案仍保留在本地。",
+    starPatternFirstLearnedToastTitle: "星点图案已学习",
+    starPatternFirstLearnedToastDesc: "已捕获来自“{fileName}”({starCount}颗星；平均亮度: {avgBrightness}, 平均对比度: {avgContrast}, 平均FWHM: {avgFwhm})的图案和特征。它将用作参考并本地存储。",
+    starPatternOverwrittenToastTitle: "学习的星点图案已更新",
+    starPatternOverwrittenToastDesc: "现有图案已覆盖。已捕获来自“{fileName}”({starCount}颗星；平均亮度: {avgBrightness}, 平均对比度: {avgContrast}, 平均FWHM: {avgFwhm})的新图案和特征。本地存储。",
     clearLearnedPatternButton: "清除已学图案",
     learnedPatternSource: "来源: {fileName} (星点 {starCount}个, {width}x{height}px)",
     noPatternLearnedYetInfo: "尚未学习任何星点图案。请编辑图像上的星点并确认以创建一个。",
-    patternStoredButModeOffInfo: "已存储图案，但学习模式当前已关闭。请激活以使用它。",
+    patternStoredButModeOffInfo: "图案已本地存储，但学习模式当前已关闭。请激活以使用或查看详细信息。",
     currentLearnedPatternTitle: "当前学习的图案:",
     avgBrightnessLabel: "平均亮度",
     avgContrastLabel: "平均对比度",
     avgFwhmLabel: "平均 FWHM",
     learningModeCardTitle: "图案学习模式",
-    learningModeCardDescription: "激活此模式可手动教导系统一个参考星点图案，以提高对齐精度。",
+    learningModeCardDescription: "激活此模式可手动教导系统一个参考星点图案，以提高对齐精度。该图案存储在您的浏览器中。",
   }
 };
 
 export const defaultLocale: Locale = 'en';
 
 export const getTranslations = (locale: Locale) => translations[locale] || translations[defaultLocale];
-
-
-    
-
-    
-
-
-
-    
