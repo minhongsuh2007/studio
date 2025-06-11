@@ -113,11 +113,9 @@ const AFFINE_MATCHING_RADIUS_PIXELS = 50;
 const AFFINE_MATCHING_RADIUS_SQ = AFFINE_MATCHING_RADIUS_PIXELS * AFFINE_MATCHING_RADIUS_PIXELS;
 
 
-const DETECTOR_MIN_CONTRAST = 25; // Increased from 20
-const DETECTOR_MIN_BRIGHTNESS = 50; // Increased from 40 (for center pixel)
-// DETECTOR_MAX_BRIGHTNESS removed
+const DETECTOR_MIN_CONTRAST = 25; 
+const DETECTOR_MIN_BRIGHTNESS = 50; 
 const DETECTOR_MIN_DISTANCE = 6; 
-// DETECTOR_MAX_STARS is removed; all valid stars will be detected
 const DETECTOR_MIN_FWHM = 1.5;
 const DETECTOR_MAX_FWHM = 5.0;
 const DETECTOR_ANNULUS_INNER_RADIUS = 4; 
@@ -365,7 +363,7 @@ function detectStarsWithNewPipeline(
     addLog("[DETECTOR ERROR] Input grayscale image is empty. Cannot detect stars.");
     return [];
   }
-  addLog(`[DETECTOR] Starting detection on ${width}x${height} grayscale. Config: MinContrast=${DETECTOR_MIN_CONTRAST}, MinBright(CenterPx)=${DETECTOR_MIN_BRIGHTNESS}, MinDist=${DETECTOR_MIN_DISTANCE}, (No MaxStars limit), MinFWHM=${DETECTOR_MIN_FWHM}, MaxFWHM=${DETECTOR_MAX_FWHM}, Margin=${DETECTOR_MARGIN}, FlatTol=${DETECTOR_FLATNESS_TOLERANCE}`);
+  addLog(`[DETECTOR] Starting detection on ${width}x${height} grayscale. Config: MinContrast=${DETECTOR_MIN_CONTRAST}, MinBright(CenterPx)=${DETECTOR_MIN_BRIGHTNESS}, (No MaxStars limit), MinDist=${DETECTOR_MIN_DISTANCE}, MinFWHM=${DETECTOR_MIN_FWHM}, MaxFWHM=${DETECTOR_MAX_FWHM}, Margin=${DETECTOR_MARGIN}, FlatTol=${DETECTOR_FLATNESS_TOLERANCE}`);
 
   const candidates: DetectedStarPoint[] = [];
   let consideredPixels = 0;
@@ -443,7 +441,6 @@ function detectStarsWithNewPipeline(
 
   const stars: DetectedStarPoint[] = [];
   for (const cand of candidates) {
-    // No longer limited by DETECTOR_MAX_STARS here
     if (isFarEnough(stars, cand.x, cand.y, DETECTOR_MIN_DISTANCE)) {
       stars.push(cand);
     }
@@ -1321,7 +1318,7 @@ const analyzeImageForStars = async (
     const detectedStarsResult: Star[] = detectedPoints.map(pStar => ({
       x: pStar.x, 
       y: pStar.y, 
-      brightness: pStar.windowSumBrightness, 
+      brightness: pStar.windowSumBrightness, // Use windowSumBrightness
       fwhm: pStar.fwhm,
       isManuallyAdded: false,
     }));
@@ -1675,18 +1672,12 @@ const analyzeImageForStars = async (
       setIsStarEditingMode(false);
       setCurrentEditingImageData(null);
       setCurrentEditingImageIndex(null);
-      // If it was the last image and a pattern was just learned, the "Apply to others" menu is skipped anyway.
-      // If not learning and it's the last image, no menu either.
       return;
     }
 
-    // If a pattern was just learned, or learning mode is active, or it's not the right conditions for apply menu, just go next.
     if (patternJustLearned || isLearningModeActive || !(allImageStarData.length > 1 && currentImageEntry.analysisStars && currentImageEntry.analysisDimensions)) {
       await handleEditStarsRequest(currentEditingImageIndex + 1);
     } 
-    // This else-if condition is unlikely to be hit with current "ConfirmAndNext" logic because if a pattern is learned, the 'apply' menu is skipped.
-    // And if not learning, the "Apply to others" menu logic is typically handled by `handleConfirmStarsForCurrentImage`.
-    // However, keeping it for completeness or future refactoring.
     else if (allImageStarData.length > 1 && currentImageEntry.analysisStars && currentImageEntry.analysisDimensions && !isLearningModeActive) {
         setSourceImageForApplyMenu({
             id: currentImageEntry.id,
@@ -1695,7 +1686,6 @@ const analyzeImageForStars = async (
             dimensions: { ...currentImageEntry.analysisDimensions },
         });
         setShowApplyStarOptionsMenu(true);
-        // Editor will close or move to next based on ApplyMenu choice
     } else {
         await handleEditStarsRequest(currentEditingImageIndex + 1);
     }
@@ -1849,12 +1839,6 @@ const analyzeImageForStars = async (
     addLog(`Bias Frames: ${useBiasFrames && biasFrameFiles.length > 0 ? `${biasFrameFiles.length} frame(s)` : 'Not Used'}.`);
     addLog(`Dark Frames: ${useDarkFrames && darkFrameFiles.length > 0 ? `${darkFrameFiles.length} frame(s)` : 'Not Used'}.`);
     addLog(`Flat Frames: ${useFlatFrames && flatFrameFiles.length > 0 ? `${flatFrameFiles.length} frame(s)` : 'Not Used'}.`);
-    if (isLearningModeActive && learnedStarPatternRef) {
-      addLog(`[LEARN REF] Using learned pattern from ${learnedStarPatternRef.sourceFileName} (${learnedStarPatternRef.stars.length} stars) for alignment guidance.`);
-    }
-    addLog(`Alignment: Affine (Min ${MIN_STARS_FOR_AFFINE_ALIGNMENT} stars, Match ${NUM_STARS_TO_USE_FOR_AFFINE_MATCHING}, Star FWHM Filter: ${ALIGNMENT_STAR_MIN_FWHM}-${ALIGNMENT_STAR_MAX_FWHM}, Match Radius: ${AFFINE_MATCHING_RADIUS_PIXELS}px), Fallback Centroid (Min ${MIN_STARS_FOR_CENTROID_ALIGNMENT} stars, Auto Target ${AUTO_ALIGN_TARGET_STAR_COUNT}).`);
-    addLog(`Star Detection (Self-Contained): MinContrast=${DETECTOR_MIN_CONTRAST}, MinBright(CenterPx)=${DETECTOR_MIN_BRIGHTNESS}, (No MaxStars limit), MinDist=${DETECTOR_MIN_DISTANCE}, MinFWHM=${DETECTOR_MIN_FWHM}, MaxFWHM=${DETECTOR_MAX_FWHM}, Margin=${DETECTOR_MARGIN}, FlatTol=${DETECTOR_FLATNESS_TOLERANCE}.`);
-    addLog(`Brightness Centroid Fallback Threshold: ${BRIGHTNESS_CENTROID_FALLBACK_THRESHOLD_GRAYSCALE_EQUIVALENT} (grayscale equivalent).`);
 
     if (typeof window === 'undefined' || typeof document === 'undefined') {
         const envErrorMsg = "Stacking cannot proceed outside a browser environment.";
@@ -1936,19 +1920,25 @@ const analyzeImageForStars = async (
       setIsProcessingStack(false); setProgressPercent(0); return;
     }
     
-    const referenceImageEntry = currentImageEntriesForStacking[firstValidImageIndex];
+    const defaultReferenceImageEntry = currentImageEntriesForStacking[firstValidImageIndex];
 
-    if (!referenceImageEntry?.analysisDimensions || referenceImageEntry.analysisDimensions.width === 0 || referenceImageEntry.analysisDimensions.height === 0) {
-      const invalidRefMsg = `The reference image (${referenceImageEntry?.file?.name || 'unknown'}) is invalid or its analysis dimensions are missing/zero. Cannot proceed.`;
+    let targetWidth: number;
+    let targetHeight: number;
+
+    if (isLearningModeActive && learnedStarPatternRef) {
+        targetWidth = learnedStarPatternRef.dimensions.width;
+        targetHeight = learnedStarPatternRef.dimensions.height;
+        addLog(`Target stacking dimensions from learned pattern '${learnedStarPatternRef.sourceFileName}': ${targetWidth}x${targetHeight}.`);
+    } else if (defaultReferenceImageEntry?.analysisDimensions && defaultReferenceImageEntry.analysisDimensions.width > 0 && defaultReferenceImageEntry.analysisDimensions.height > 0) {
+        targetWidth = defaultReferenceImageEntry.analysisDimensions.width;
+        targetHeight = defaultReferenceImageEntry.analysisDimensions.height;
+        addLog(`Target stacking dimensions from default reference image '${defaultReferenceImageEntry.file.name}': ${targetWidth}x${targetHeight}.`);
+    } else {
+      const invalidRefMsg = `The reference image ('${defaultReferenceImageEntry?.file?.name || 'unknown'}') is invalid or its analysis dimensions are missing/zero. Cannot proceed.`;
       addLog(`[ERROR] ${invalidRefMsg}`);
       toast({ title: "Invalid Reference Image", description: invalidRefMsg, variant: "destructive" });
       setIsProcessingStack(false); setProgressPercent(0); return;
     }
-
-    let targetWidth = referenceImageEntry.analysisDimensions.width;
-    let targetHeight = referenceImageEntry.analysisDimensions.height;
-    addLog(`Target stacking dimensions (from reference image '${referenceImageEntry.file.name}' analysisDimensions): ${targetWidth}x${targetHeight}.`);
-
 
     if (targetWidth === 0 || targetHeight === 0) {
       const zeroDimMsg = "Calculated target stacking dimensions are zero. Cannot proceed.";
@@ -2076,13 +2066,13 @@ const analyzeImageForStars = async (
 
 
     const numValidLightImages = imageElements.length; 
-    const totalPixels = targetWidth * targetHeight;
+    const totalPixelsInTarget = targetWidth * targetHeight;
     const normalizedImageFactor = Math.min(1, numValidLightImages / 20); 
     const veryLargePixelCount = 10000 * 10000; 
-    const normalizedPixelFactor = Math.min(1, totalPixels / veryLargePixelCount);
+    const normalizedPixelFactor = Math.min(1, totalPixelsInTarget / veryLargePixelCount);
     const loadScore = (0.3 * normalizedImageFactor) + (0.7 * normalizedPixelFactor); 
     const dynamicDelayMs = Math.max(10, Math.min(100, 10 + Math.floor(loadScore * 90))); 
-    addLog(`Calculated dynamic yield delay: ${dynamicDelayMs}ms (Load score: ${loadScore.toFixed(2)}, Images: ${numValidLightImages}, Pixels: ${totalPixels})`);
+    addLog(`Calculated dynamic yield delay: ${dynamicDelayMs}ms (Load score: ${loadScore.toFixed(2)}, Images: ${numValidLightImages}, Pixels: ${totalPixelsInTarget})`);
 
     const centroids: ({ x: number; y: number } | null)[] = [];
     let successfulCentroidBasedAlignments = 0;
@@ -2154,29 +2144,68 @@ const analyzeImageForStars = async (
     
     
     let referenceStarsForAffine: AstroAlignPoint[] = []; 
-    if (referenceImageEntry && referenceImageEntry.isAnalyzed && referenceImageEntry.analysisStars.length >= MIN_STARS_FOR_AFFINE_ALIGNMENT) {
-        const goodFWHMRefStars = referenceImageEntry.analysisStars
-            .filter(s => s.fwhm !== undefined && s.fwhm >= ALIGNMENT_STAR_MIN_FWHM && s.fwhm <= ALIGNMENT_STAR_MAX_FWHM)
-            .sort((a,b) => b.brightness - a.brightness) 
-            .slice(0, NUM_STARS_TO_USE_FOR_AFFINE_MATCHING);
-        
-        addLog(`[AFFINE REF PREP] Ref Img ${referenceImageEntry.file.name}: Total analysis stars: ${referenceImageEntry.analysisStars.length}. After FWHM filter (${ALIGNMENT_STAR_MIN_FWHM}-${ALIGNMENT_STAR_MAX_FWHM}) & slice(${NUM_STARS_TO_USE_FOR_AFFINE_MATCHING}): ${goodFWHMRefStars.length} stars.`);
+    let referenceCentroidForAffineFallback: { x: number; y: number } | null = null;
+    let effectiveReferenceDimensions = { width: targetWidth, height: targetHeight };
 
-        if (goodFWHMRefStars.length >= MIN_STARS_FOR_AFFINE_ALIGNMENT) {
-            referenceStarsForAffine = goodFWHMRefStars.map(s => {
-                addLog(`[AFFINE REF STAR] Using: x=${s.x.toFixed(2)}, y=${s.y.toFixed(2)}, fwhm=${s.fwhm?.toFixed(2)}, bright=${s.brightness.toFixed(0)}`);
-                return { x: s.x, y: s.y };
-            });
-            addLog(`[AFFINE REF] Using ${referenceStarsForAffine.length} FWHM-filtered stars from reference image ${referenceImageEntry.file.name} for affine.`);
+    if (isLearningModeActive && learnedStarPatternRef) {
+        addLog(`[LEARN REF] Using learned pattern from ${learnedStarPatternRef.sourceFileName} (${learnedStarPatternRef.stars.length} stars, ${learnedStarPatternRef.dimensions.width}x${learnedStarPatternRef.dimensions.height}px) for alignment guidance.`);
+        
+        const learnedStarsToUse = learnedStarPatternRef.stars
+            .filter(s => s.fwhm !== undefined && s.fwhm >= ALIGNMENT_STAR_MIN_FWHM && s.fwhm <= ALIGNMENT_STAR_MAX_FWHM)
+            .sort((a, b) => b.brightness - a.brightness)
+            .slice(0, NUM_STARS_TO_USE_FOR_AFFINE_MATCHING);
+
+        if (learnedStarsToUse.length >= MIN_STARS_FOR_AFFINE_ALIGNMENT) {
+            referenceStarsForAffine = learnedStarsToUse.map(s => ({ x: s.x, y: s.y })); // These are in learnedStarPatternRef.dimensions space
+            addLog(`[LEARN REF] Using ${referenceStarsForAffine.length} FWHM-filtered stars from learned pattern for affine.`);
         } else {
-            addLog(`[AFFINE REF WARN] Ref image ${referenceImageEntry.file.name} has only ${goodFWHMRefStars.length} stars after FWHM filter & slice (min ${MIN_STARS_FOR_AFFINE_ALIGNMENT} needed). Affine will be disabled for all frames.`);
-            referenceStarsForAffine = []; 
+            addLog(`[LEARN REF WARN] Learned pattern has only ${learnedStarsToUse.length} stars after FWHM filter & slice (min ${MIN_STARS_FOR_AFFINE_ALIGNMENT} needed). Affine will be disabled if relying on this pattern.`);
+            referenceStarsForAffine = [];
         }
-    } else {
-         addLog(`[AFFINE REF INFO] Reference image ${referenceImageEntry?.file?.name || 'N/A'} not suitable for affine (isAnalyzed=${referenceImageEntry?.isAnalyzed}, stars=${referenceImageEntry?.analysisStars?.length || 0} vs min ${MIN_STARS_FOR_AFFINE_ALIGNMENT} before FWHM). Affine alignment will be skipped for all images.`);
-         referenceStarsForAffine = [];
+        referenceCentroidForAffineFallback = calculateStarArrayCentroid(learnedStarPatternRef.stars, addLog); // Centroid of stars in learnedStarPatternRef.dimensions space
+        if (!referenceCentroidForAffineFallback) {
+             addLog(`[LEARN REF WARN] Could not calculate centroid from learned pattern stars. Centroid fallback might be compromised.`);
+        } else { // Scale this centroid to targetWidth/targetHeight space for dxCentroid calculation
+            referenceCentroidForAffineFallback = {
+                x: (referenceCentroidForAffineFallback.x / learnedStarPatternRef.dimensions.width) * targetWidth,
+                y: (referenceCentroidForAffineFallback.y / learnedStarPatternRef.dimensions.height) * targetHeight
+            };
+        }
+        effectiveReferenceDimensions = { ...learnedStarPatternRef.dimensions };
+    } else { 
+        if (defaultReferenceImageEntry && defaultReferenceImageEntry.isAnalyzed && defaultReferenceImageEntry.analysisStars.length >= MIN_STARS_FOR_AFFINE_ALIGNMENT) {
+            const goodFWHMRefStars = defaultReferenceImageEntry.analysisStars
+                .filter(s => s.fwhm !== undefined && s.fwhm >= ALIGNMENT_STAR_MIN_FWHM && s.fwhm <= ALIGNMENT_STAR_MAX_FWHM)
+                .sort((a,b) => b.brightness - a.brightness) 
+                .slice(0, NUM_STARS_TO_USE_FOR_AFFINE_MATCHING);
+            
+            addLog(`[AFFINE REF PREP] Default Ref Img ${defaultReferenceImageEntry.file.name}: Total analysis stars: ${defaultReferenceImageEntry.analysisStars.length}. After FWHM filter (${ALIGNMENT_STAR_MIN_FWHM}-${ALIGNMENT_STAR_MAX_FWHM}) & slice(${NUM_STARS_TO_USE_FOR_AFFINE_MATCHING}): ${goodFWHMRefStars.length} stars.`);
+
+            if (goodFWHMRefStars.length >= MIN_STARS_FOR_AFFINE_ALIGNMENT) {
+                referenceStarsForAffine = goodFWHMRefStars.map(s => {
+                    addLog(`[AFFINE REF STAR] Using: x=${s.x.toFixed(2)}, y=${s.y.toFixed(2)}, fwhm=${s.fwhm?.toFixed(2)}, bright=${s.brightness.toFixed(0)}`);
+                    return { x: s.x, y: s.y }; // These are in defaultReferenceImageEntry.analysisDimensions space
+                });
+                addLog(`[AFFINE REF] Using ${referenceStarsForAffine.length} FWHM-filtered stars from default reference image ${defaultReferenceImageEntry.file.name} for affine.`);
+            } else {
+                addLog(`[AFFINE REF WARN] Default Ref image ${defaultReferenceImageEntry.file.name} has only ${goodFWHMRefStars.length} stars after FWHM filter & slice (min ${MIN_STARS_FOR_AFFINE_ALIGNMENT} needed). Affine will be disabled for all frames.`);
+                referenceStarsForAffine = []; 
+            }
+        } else {
+             addLog(`[AFFINE REF INFO] Default Reference image ${defaultReferenceImageEntry?.file?.name || 'N/A'} not suitable for affine (isAnalyzed=${defaultReferenceImageEntry?.isAnalyzed}, stars=${defaultReferenceImageEntry?.analysisStars?.length || 0} vs min ${MIN_STARS_FOR_AFFINE_ALIGNMENT} before FWHM). Affine alignment will be skipped for all images.`);
+             referenceStarsForAffine = [];
+        }
+        referenceCentroidForAffineFallback = centroids[firstValidImageIndex]; // This is already in targetWidth/targetHeight space
+        if (defaultReferenceImageEntry?.analysisDimensions) {
+            effectiveReferenceDimensions = { ...defaultReferenceImageEntry.analysisDimensions }; // These are the dimensions of the reference space
+        }
     }
-    const referenceCentroidForFallback = centroids[firstValidImageIndex]; 
+    
+    if (effectiveReferenceDimensions.width === 0 || effectiveReferenceDimensions.height === 0) {
+        addLog(`[ALIGN REF WARN] Effective reference dimensions are zero (${effectiveReferenceDimensions.width}x${effectiveReferenceDimensions.height}). Defaulting to target stacking dimensions ${targetWidth}x${targetHeight}.`);
+        effectiveReferenceDimensions = { width: targetWidth, height: targetHeight };
+    }
+
 
     const finalImageData = new Uint8ClampedArray(targetWidth * targetHeight * 4); 
     let validImagesStackedCount = 0;
@@ -2212,15 +2241,14 @@ const analyzeImageForStars = async (
       for (let i = 0; i < imageElements.length; i++) {
         const imgElement = imageElements[i];
         const currentImageEntry = currentImageEntriesForStacking.find(entry => entry.previewUrl === imgElement.src);
-        if (!currentImageEntry) { 
-            addLog(`[STACK SKIP WARN] Cannot find entry data for image element ${i} (src: ${imgElement.src.substring(0,50)}...). This image will be skipped.`); 
+        if (!currentImageEntry || !currentImageEntry.analysisDimensions || currentImageEntry.analysisDimensions.width === 0) { 
+            addLog(`[STACK SKIP WARN] Cannot find entry data or valid analysis dimensions for image element ${i}. This image will be skipped.`); 
             continue; 
         }
         if (!currentImageEntry.isAnalyzed) { 
-             addLog(`[STACK SKIP WARN] Image ${currentImageEntry.file.name} (ID: ${currentImageEntry.id}) was not successfully analyzed (isAnalyzed=false in currentImageEntriesForStacking). Skipping for stacking.`);
+             addLog(`[STACK SKIP WARN] Image ${currentImageEntry.file.name} (ID: ${currentImageEntry.id}) was not successfully analyzed. Skipping for stacking.`);
              continue;
         }
-
 
         currentImageCtx.clearRect(0,0,targetWidth,targetHeight);
         currentImageCtx.drawImage(imgElement, 0,0,targetWidth,targetHeight); 
@@ -2266,9 +2294,12 @@ const analyzeImageForStars = async (
 
 
         let useAffineTransform = false;
-        let estimatedMatrix: number[][] | null = null;
+        let finalMatrixForWarp: number[][] | null = null;
 
-        if (currentImageEntry.id !== referenceImageEntry.id && 
+        const isCurrentTheReferenceSource = (isLearningModeActive && learnedStarPatternRef && learnedStarPatternRef.sourceFileName === currentImageEntry.file.name) ||
+                                         (!isLearningModeActive && defaultReferenceImageEntry && currentImageEntry.id === defaultReferenceImageEntry.id);
+
+        if (!isCurrentTheReferenceSource &&
             referenceStarsForAffine.length >= MIN_STARS_FOR_AFFINE_ALIGNMENT &&
             currentImageEntry.isAnalyzed &&
             currentImageEntry.analysisStars &&
@@ -2278,35 +2309,42 @@ const analyzeImageForStars = async (
                 .filter(s => s.fwhm !== undefined && s.fwhm >= ALIGNMENT_STAR_MIN_FWHM && s.fwhm <= ALIGNMENT_STAR_MAX_FWHM)
                 .sort((a,b) => b.brightness - a.brightness);
             
-            if (yBandStart === 0) addLog(`[AFFINE CURR PREP] Img ${i} (${currentImageEntry.file.name}): Total analysis stars: ${currentImageEntry.analysisStars.length}. Good FWHM stars for matching: ${goodFWHMCurrentStarsRaw.length}.`);
+            if (yBandStart === 0) addLog(`[AFFINE CURR PREP] Img ${i} (${currentImageEntry.file.name}): Total analysis stars: ${currentImageEntry.analysisStars.length}. Good FWHM stars for matching: ${goodFWHMCurrentStarsRaw.length}. Ref Dims: ${effectiveReferenceDimensions.width}x${effectiveReferenceDimensions.height}`);
             
             if (goodFWHMCurrentStarsRaw.length >= MIN_STARS_FOR_AFFINE_ALIGNMENT) {
-                const srcPtsMatched: AstroAlignPoint[] = [];
-                const dstPtsMatched: AstroAlignPoint[] = []; 
+                const srcPtsMatched: AstroAlignPoint[] = []; // In currentImageEntry.analysisDimensions space
+                const dstPtsMatched: AstroAlignPoint[] = []; // In effectiveReferenceDimensions space
                 const usedCurrentStarIndices = new Set<number>();
 
                 const originalEntryIndexInCentroids = currentImageEntriesForStacking.findIndex(e => e.id === currentImageEntry.id);
-                const currentCentroid = originalEntryIndexInCentroids !== -1 ? centroids[originalEntryIndexInCentroids] : null;
+                const currentImageGlobalCentroid = originalEntryIndexInCentroids !== -1 ? centroids[originalEntryIndexInCentroids] : null; // In targetWidth/targetHeight space
         
-                let dxCentroid = 0;
-                let dyCentroid = 0;
-                if (currentCentroid && referenceCentroidForFallback) {
-                    dxCentroid = referenceCentroidForFallback.x - currentCentroid.x;
-                    dyCentroid = referenceCentroidForFallback.y - currentCentroid.y;
+                let dxCentroidShiftTargetSpace = 0;
+                let dyCentroidShiftTargetSpace = 0;
+                if (currentImageGlobalCentroid && referenceCentroidForAffineFallback) { // Both are in targetWidth/targetHeight space
+                    dxCentroidShiftTargetSpace = referenceCentroidForAffineFallback.x - currentImageGlobalCentroid.x;
+                    dyCentroidShiftTargetSpace = referenceCentroidForAffineFallback.y - currentImageGlobalCentroid.y;
                 }
 
-                for (const refStar of referenceStarsForAffine) { 
-                    const predictedXInCurrent = refStar.x - dxCentroid; 
-                    const predictedYInCurrent = refStar.y - dyCentroid; 
+                for (const refStar of referenceStarsForAffine) { // refStar is in effectiveReferenceDimensions space
+                    // Predict refStar's location in currentImageEntry.analysisDimensions space
+                    const refStarInTargetSpaceX = (refStar.x / effectiveReferenceDimensions.width) * targetWidth;
+                    const refStarInTargetSpaceY = (refStar.y / effectiveReferenceDimensions.height) * targetHeight;
+
+                    const predictedTargetXInCurrentFrame = refStarInTargetSpaceX - dxCentroidShiftTargetSpace;
+                    const predictedTargetYInCurrentFrame = refStarInTargetSpaceY - dyCentroidShiftTargetSpace;
+
+                    const predictedXInCurrentAnalysis = (predictedTargetXInCurrentFrame / targetWidth) * currentImageEntry.analysisDimensions.width;
+                    const predictedYInCurrentAnalysis = (predictedTargetYInCurrentFrame / targetHeight) * currentImageEntry.analysisDimensions.height;
+
 
                     let bestMatchIndexInCurrent = -1;
-                    let minDistanceSqToPredicted = AFFINE_MATCHING_RADIUS_SQ;
+                    let minDistanceSqToPredicted = AFFINE_MATCHING_RADIUS_SQ; // Radius is in analysis space of current image
 
-                    for (let k = 0; k < goodFWHMCurrentStarsRaw.length; k++) {
+                    for (let k = 0; k < goodFWHMCurrentStarsRaw.length; k++) { // These stars are in currentImageEntry.analysisDimensions space
                         if (usedCurrentStarIndices.has(k)) continue;
-
                         const currentCandStar = goodFWHMCurrentStarsRaw[k];
-                        const distSq = Math.pow(currentCandStar.x - predictedXInCurrent, 2) + Math.pow(currentCandStar.y - predictedYInCurrent, 2);
+                        const distSq = Math.pow(currentCandStar.x - predictedXInCurrentAnalysis, 2) + Math.pow(currentCandStar.y - predictedYInCurrentAnalysis, 2);
 
                         if (distSq < minDistanceSqToPredicted) {
                             minDistanceSqToPredicted = distSq;
@@ -2320,7 +2358,7 @@ const analyzeImageForStars = async (
                         dstPtsMatched.push({ x: refStar.x, y: refStar.y });
                         usedCurrentStarIndices.add(bestMatchIndexInCurrent);
                         if (yBandStart === 0 && srcPtsMatched.length <= NUM_STARS_TO_USE_FOR_AFFINE_MATCHING && Math.random() < 0.3) { 
-                            addLog(`[AFFINE MATCH] Ref(${refStar.x.toFixed(1)},${refStar.y.toFixed(1)}) to Curr(${matchedCurrentStar.x.toFixed(1)},${matchedCurrentStar.y.toFixed(1)}) via Pred(${predictedXInCurrent.toFixed(1)},${predictedYInCurrent.toFixed(1)}), dist ${Math.sqrt(minDistanceSqToPredicted).toFixed(1)}px`);
+                             addLog(`[AFFINE MATCH] Ref(${refStar.x.toFixed(1)},${refStar.y.toFixed(1)} in ${effectiveReferenceDimensions.width}x${effectiveReferenceDimensions.height}) to Curr(${matchedCurrentStar.x.toFixed(1)},${matchedCurrentStar.y.toFixed(1)} in ${currentImageEntry.analysisDimensions.width}x${currentImageEntry.analysisDimensions.height}) via Pred(${predictedXInCurrentAnalysis.toFixed(1)},${predictedYInCurrentAnalysis.toFixed(1)}), dist ${Math.sqrt(minDistanceSqToPredicted).toFixed(1)}px`);
                         }
                     }
                     if (srcPtsMatched.length >= NUM_STARS_TO_USE_FOR_AFFINE_MATCHING) break; 
@@ -2332,20 +2370,30 @@ const analyzeImageForStars = async (
 
                 if (srcPtsMatched.length >= MIN_STARS_FOR_AFFINE_ALIGNMENT) {
                     try {
-                        if (srcPtsMatched.some(pt => isNaN(pt.x) || isNaN(pt.y)) || dstPtsMatched.some(pt => isNaN(pt.x) || isNaN(pt.y))) {
-                          addLog(`[AFFINE WARN] ${currentImageEntry.file.name}: NaN coords in matched points. Falling back.`);
-                          estimatedMatrix = null;
+                        let estimatedMatrixAnalysis = estimateAffineTransform(srcPtsMatched, dstPtsMatched); // Transforms currentAnalysis to refAnalysis
+                        
+                        // Adjust matrix for warpImage, which operates on canvases scaled to targetWidth/targetHeight
+                        // M_display = M_analysis * Inv(S_draw_curr_to_analysis)
+                        // Inv(S_draw_curr_to_analysis) = diag(analysisW_curr/targetW, analysisH_curr/targetH, 1)
+                        // M_display_coeffs = [ a*Wac/Wt, b*Hac/Ht, c; d*Wac/Wt, e*Hac/Ht, f ]
+                        const scaleFactorX = currentImageEntry.analysisDimensions.width / targetWidth;
+                        const scaleFactorY = currentImageEntry.analysisDimensions.height / targetHeight;
+
+                        finalMatrixForWarp = [
+                            [estimatedMatrixAnalysis[0][0] * scaleFactorX, estimatedMatrixAnalysis[0][1] * scaleFactorY, estimatedMatrixAnalysis[0][2]],
+                            [estimatedMatrixAnalysis[1][0] * scaleFactorX, estimatedMatrixAnalysis[1][1] * scaleFactorY, estimatedMatrixAnalysis[1][2]]
+                        ];
+                        
+                        if (finalMatrixForWarp.flat().some(val => !isFinite(val))) {
+                            addLog(`[AFFINE ERROR] ${currentImageEntry.file.name}: Adjusted matrix has non-finite values. Falling back.`);
+                            finalMatrixForWarp = null;
                         } else {
-                          estimatedMatrix = estimateAffineTransform(srcPtsMatched, dstPtsMatched);
-                          if (estimatedMatrix && estimatedMatrix.flat().some(val => !isFinite(val))) {
-                              addLog(`[AFFINE ERROR] ${currentImageEntry.file.name}: Matrix has non-finite values. ${JSON.stringify(estimatedMatrix)}. Falling back.`);
-                              estimatedMatrix = null;
-                          }
+                           useAffineTransform = true;
                         }
                     } catch (e) {
                         const affineErrorMsg = e instanceof Error ? e.message : String(e);
-                        addLog(`[AFFINE FAIL] ${currentImageEntry.file.name}: estimateAffineTransform ('${affineErrorMsg}'). Falling back.`);
-                        estimatedMatrix = null;
+                        addLog(`[AFFINE FAIL] ${currentImageEntry.file.name}: estimateAffineTransform or matrix adjustment ('${affineErrorMsg}'). Falling back.`);
+                        finalMatrixForWarp = null;
                     }
                 } else {
                      if (yBandStart === 0) addLog(`[AFFINE INFO] ${currentImageEntry.file.name}: Not enough matched points (${srcPtsMatched.length}) for affine. Need ${MIN_STARS_FOR_AFFINE_ALIGNMENT}. Falling back.`);
@@ -2354,7 +2402,7 @@ const analyzeImageForStars = async (
                  if (yBandStart === 0) addLog(`[AFFINE INFO] ${currentImageEntry.file.name}: Not enough FWHM-ok stars (${goodFWHMCurrentStarsRaw.length}) for matching. Need ${MIN_STARS_FOR_AFFINE_ALIGNMENT}. Falling back.`);
             }
         } else { 
-            if (yBandStart === 0 && currentImageEntry.id !== referenceImageEntry.id) {
+            if (yBandStart === 0 && !isCurrentTheReferenceSource) {
                 let reason = "Unknown";
                 if (referenceStarsForAffine.length < MIN_STARS_FOR_AFFINE_ALIGNMENT) reason = `ref stars ${referenceStarsForAffine.length} < min ${MIN_STARS_FOR_AFFINE_ALIGNMENT}`;
                 else if (!currentImageEntry.isAnalyzed) reason = "current not analyzed";
@@ -2363,31 +2411,30 @@ const analyzeImageForStars = async (
             }
         }
         
-        useAffineTransform = !!estimatedMatrix;
         if (useAffineTransform && yBandStart === 0) {
             affineAlignmentsUsed++;
-            addLog(`[AFFINE SUCCESS] Matrix for ${currentImageEntry.file.name}: ${JSON.stringify(estimatedMatrix?.map(row => row.map(val => val.toFixed(3))))}`);
+            addLog(`[AFFINE SUCCESS] Final matrix for warp for ${currentImageEntry.file.name}: ${JSON.stringify(finalMatrixForWarp?.map(row => row.map(val => val.toFixed(3))))}`);
         }
 
         tempWarpedImageCtx.clearRect(0,0,targetWidth,targetHeight); 
-        if (useAffineTransform && estimatedMatrix && currentImageEntry.id !== referenceImageEntry.id) {
-            warpImage(currentImageCtx, tempWarpedImageCtx, estimatedMatrix, addLog);
+        if (useAffineTransform && finalMatrixForWarp && !isCurrentTheReferenceSource) {
+            warpImage(currentImageCtx, tempWarpedImageCtx, finalMatrixForWarp, addLog);
         } else { 
             const originalEntryIndexInCentroids = currentImageEntriesForStacking.findIndex(e => e.id === currentImageEntry.id);
-            const currentCentroid = originalEntryIndexInCentroids !== -1 ? centroids[originalEntryIndexInCentroids] : null;
+            const currentImageGlobalCentroid = originalEntryIndexInCentroids !== -1 ? centroids[originalEntryIndexInCentroids] : null;
             
             let dx = 0, dy = 0;
-            if (currentImageEntry.id !== referenceImageEntry.id && currentCentroid && referenceCentroidForFallback) {
-                dx = referenceCentroidForFallback.x - currentCentroid.x;
-                dy = referenceCentroidForFallback.y - currentCentroid.y;
-            } else if (currentImageEntry.id === referenceImageEntry.id) {
+            if (!isCurrentTheReferenceSource && currentImageGlobalCentroid && referenceCentroidForAffineFallback) {
+                dx = referenceCentroidForAffineFallback.x - currentImageGlobalCentroid.x; // Both are in targetWidth/targetHeight space
+                dy = referenceCentroidForAffineFallback.y - currentImageGlobalCentroid.y;
+            } else if (isCurrentTheReferenceSource) {
                 dx = 0; dy = 0; 
             } else {
                if(yBandStart === 0) addLog(`[ALIGN FALLBACK WARN] ${currentImageEntry.file.name}: Centroid data missing for fallback translation or is ref. No translation if not ref.`);
             }
             tempWarpedImageCtx.drawImage(currentImageCanvas, dx, dy);
-            if (yBandStart === 0 && (!useAffineTransform || currentImageEntry.id === referenceImageEntry.id) ) { 
-                 addLog(`[ALIGN FALLBACK/REF] ${currentImageEntry.file.name}: Using centroid (dx:${dx.toFixed(2)}, dy:${dy.toFixed(2)}) or is reference. Affine status: ${useAffineTransform}, Matrix: ${useAffineTransform && estimatedMatrix ? 'Valid' : 'None/Invalid'}`);
+            if (yBandStart === 0 && (!useAffineTransform || isCurrentTheReferenceSource) ) { 
+                 addLog(`[ALIGN FALLBACK/REF] ${currentImageEntry.file.name}: Using centroid (dx:${dx.toFixed(2)}, dy:${dy.toFixed(2)}) or is reference. Affine status: ${useAffineTransform}, Matrix: ${useAffineTransform && finalMatrixForWarp ? 'Valid' : 'None/Invalid'}`);
             }
         }
 
@@ -2564,7 +2611,7 @@ const analyzeImageForStars = async (
   const handleLearnPinSubmit = () => {
     if (learnPinInput === LEARNING_MODE_PIN) {
       setIsLearningModeActive(true);
-      setLearnedStarPatternRef(null); // Clear any previous pattern for new session
+      setLearnedStarPatternRef(null); 
       toast({ title: t('learningModeActivatedToastTitle'), description: t('learningModeActivatedToastDesc') });
       addLog("[LEARN] Learning Mode Activated via PIN.");
     } else {
@@ -3122,6 +3169,8 @@ const analyzeImageForStars = async (
 
 
 
+
+    
 
     
 
