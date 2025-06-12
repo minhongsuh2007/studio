@@ -1640,8 +1640,7 @@ const analyzeImageForStars = async (
              const tempFWHM = estimateFWHM(currentEditingGrayscaleData, Math.round(finalStarX), Math.round(finalStarY), DETECTOR_FWHM_PROFILE_HALF_WIDTH, addLog);
 
              if (tempBrightness > 0) estimatedBrightness = tempBrightness;
-             // Contrast can be negative, ensure it's meaningful if used later (e.g. abs value or ensure positive for "star-like")
-             estimatedContrast = tempContrast; // Store raw contrast, can be negative.
+             estimatedContrast = tempContrast; 
              if (tempFWHM > 0) estimatedFWHM = tempFWHM;
              addLog(`Estimated props for manual star at (${finalStarX.toFixed(0)}, ${finalStarY.toFixed(0)}): Br=${estimatedBrightness.toFixed(1)}, Co=${estimatedContrast.toFixed(1)}, Fw=${estimatedFWHM.toFixed(1)}`);
           } else {
@@ -3665,3 +3664,4 @@ const analyzeImageForStars = async (
   );
 }
 
+    
