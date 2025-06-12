@@ -1630,9 +1630,9 @@ const analyzeImageForStars = async (
         });
 
         if (!starFoundAndRemoved) {
-          let estimatedBrightness = 150;
-          let estimatedContrast = 50;
-          let estimatedFWHM = 2.5;
+          let estimatedBrightness = 150; // Default
+          let estimatedContrast = 50; // Default
+          let estimatedFWHM = 2.5; // Default
 
           if (currentEditingGrayscaleData && finalStarX >= 0 && finalStarY >= 0 && finalStarX < entry.analysisDimensions.width && finalStarY < entry.analysisDimensions.height) {
              const tempBrightness = calculateWindowSumBrightness(currentEditingGrayscaleData, finalStarX, finalStarY);
@@ -1640,7 +1640,8 @@ const analyzeImageForStars = async (
              const tempFWHM = estimateFWHM(currentEditingGrayscaleData, Math.round(finalStarX), Math.round(finalStarY), DETECTOR_FWHM_PROFILE_HALF_WIDTH, addLog);
 
              if (tempBrightness > 0) estimatedBrightness = tempBrightness;
-             if (tempContrast > 0) estimatedContrast = tempContrast; // Contrast can be negative, but we're interested in magnitude of difference or positive contrast for stars
+             // Contrast can be negative, ensure it's meaningful if used later (e.g. abs value or ensure positive for "star-like")
+             estimatedContrast = tempContrast; // Store raw contrast, can be negative.
              if (tempFWHM > 0) estimatedFWHM = tempFWHM;
              addLog(`Estimated props for manual star at (${finalStarX.toFixed(0)}, ${finalStarY.toFixed(0)}): Br=${estimatedBrightness.toFixed(1)}, Co=${estimatedContrast.toFixed(1)}, Fw=${estimatedFWHM.toFixed(1)}`);
           } else {
@@ -2521,7 +2522,7 @@ const analyzeImageForStars = async (
                 let candidateStarsForMatching: Star[] = [];
                 const { avgBrightness, avgContrast, avgFwhm } = activeLearnedPattern; 
                 if (avgBrightness !== undefined && avgContrast !== undefined) { 
-                    addLog(`[MULTI-PATTERN SIMILARITY] Img ${i}: Using learned characteristics from pattern ${activeLearnedPattern.sourceFileName} (AvgBr: ${avgBrightness.toFixed(1)}, AvgCo: ${avgContrast.toFixed(1)}, AvgFw: ${avgFwhm?.toFixed(1)})`);
+                    if (yBandStart === 0) addLog(`[MULTI-PATTERN SIMILARITY] Img ${i}: Using learned characteristics from pattern ${activeLearnedPattern.sourceFileName} (AvgBr: ${avgBrightness.toFixed(1)}, AvgCo: ${avgContrast.toFixed(1)}, AvgFw: ${avgFwhm?.toFixed(1)})`);
                     candidateStarsForMatching = candidateStarsForMatchingQuery
                         .filter(s => s.fwhm !== undefined && s.fwhm >= ALIGNMENT_STAR_MIN_FWHM && s.fwhm <= ALIGNMENT_STAR_MAX_FWHM)
                         .map(s => { 
@@ -2537,7 +2538,7 @@ const analyzeImageForStars = async (
                         .slice(0, NUM_STARS_TO_USE_FOR_AFFINE_MATCHING * 4); 
                     if (yBandStart === 0 && candidateStarsForMatching.length > 0) addLog(`[MULTI-PATTERN SIMILARITY] Img ${i} vs Pattern ${activeLearnedPattern.sourceFileName}: ${candidateStarsForMatching.length} candidates after similarity. Top score: ${candidateStarsForMatching[0]?.similarityScore?.toFixed(2)}`);
                 } else { 
-                     addLog(`[MULTI-PATTERN BRIGHT*CONTR] Img ${i}: Pattern ${activeLearnedPattern.sourceFileName} has no detailed characteristics. Using brightness*contrast sort for candidates.`);
+                     if (yBandStart === 0) addLog(`[MULTI-PATTERN BRIGHT*CONTR] Img ${i}: Pattern ${activeLearnedPattern.sourceFileName} has no detailed characteristics. Using brightness*contrast sort for candidates.`);
                     candidateStarsForMatching = candidateStarsForMatchingQuery
                         .filter(s => s.fwhm !== undefined && s.fwhm >= ALIGNMENT_STAR_MIN_FWHM && s.fwhm <= ALIGNMENT_STAR_MAX_FWHM)
                         .sort((a, b) => (b.brightness * (b.contrast || 1)) - (a.brightness * (a.contrast || 1))) 
@@ -3275,13 +3276,13 @@ const analyzeImageForStars = async (
                                                 />
                                                 <p className="text-xs font-medium truncate text-foreground flex-grow">{pattern.sourceFileName}</p>
                                             </div>
-                                            <p className="text-xs text-muted-foreground pl-6"> {/* Indent details to align with text */}
+                                            <p className="text-xs text-muted-foreground pl-6">
                                                 {pattern.stars.length} stars, {pattern.dimensions.width}x{pattern.dimensions.height}px
                                             </p>
                                              <p className="text-xs text-muted-foreground truncate pl-6">
                                                 AvgBr: {pattern.avgBrightness?.toFixed(1)}, AvgCo: {pattern.avgContrast?.toFixed(1)}, AvgFw: {pattern.avgFwhm?.toFixed(1)}
                                             </p>
-                                            <p className="text-xs text-muted-foreground pl-6">Learned: {new Date(pattern.timestamp).toLocaleDateString()}</p>
+                                            <p className="text-xs text-muted-foreground pl-6">{t('learnedDateLabel', {date: new Date(pattern.timestamp).toLocaleDateString()})}</p>
                                             <div className="flex gap-1 mt-1.5 pl-6">
                                                 <Button
                                                     size="sm"

@@ -127,6 +127,7 @@ export const translations: Translations = {
     allPatternsClearedToastTitle: "All Patterns Cleared",
     allPatternsClearedToastDesc: "All learned star patterns have been removed from local storage.",
     noActivePatternSelectedInfo: "No patterns are currently selected. Check boxes in the list below to select patterns for alignment guidance or for testing.",
+    learnedDateLabel: "Learned: {date}",
 
     learnTestCardTitle: "Learn Test Module",
     learnTestCardDescription: "Upload an image here to see which stars are recognized based on a *single selected* learned pattern's characteristics.",
@@ -260,6 +261,7 @@ export const translations: Translations = {
     allPatternsClearedToastTitle: "모든 패턴 지워짐",
     allPatternsClearedToastDesc: "모든 학습된 별 패턴이 로컬 저장소에서 제거되었습니다.",
     noActivePatternSelectedInfo: "현재 선택된 패턴이 없습니다. 정렬 지침이나 테스트를 위해 아래 목록에서 패턴을 선택하세요.",
+    learnedDateLabel: "학습일: {date}",
 
     learnTestCardTitle: "학습 테스트 모듈",
     learnTestCardDescription: "여기에 이미지를 업로드하여 *단일 선택된* 학습 패턴의 특성을 기반으로 어떤 별이 인식되는지 확인하세요.",
@@ -393,6 +395,7 @@ export const translations: Translations = {
     allPatternsClearedToastTitle: "所有图案已清除",
     allPatternsClearedToastDesc: "所有学习的星点图案已从本地存储中移除。",
     noActivePatternSelectedInfo: "当前没有选择任何图案。请在下面的列表中勾选图案以用于对齐指导或测试。",
+    learnedDateLabel: "学习于: {date}",
 
     learnTestCardTitle: "学习测试模块",
     learnTestCardDescription: "在此上传图像，以查看基于*单个选定*学习图案的特征识别出哪些星点。",
