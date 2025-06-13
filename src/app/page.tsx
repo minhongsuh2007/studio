@@ -3663,5 +3663,4 @@ const analyzeImageForStars = async (
     </div>
   );
 }
-
     
