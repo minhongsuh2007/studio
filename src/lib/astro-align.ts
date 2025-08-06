@@ -267,8 +267,8 @@ function descriptorDist(d1: number[], d2: number[]): number {
 function matchFeatures(
   stars1: Star[],
   stars2: Star[],
-  maxDistance = 25,
-  descriptorThreshold = 0.5
+  maxDistance = 50, // Increased tolerance
+  descriptorThreshold = 0.6 // Increased tolerance
 ): [Star, Star][] {
     if (stars1.length === 0 || stars2.length === 0) return [];
     
@@ -550,21 +550,30 @@ function findSharedStars(
   allEntries: ImageQueueEntry[],
   addLog: (message: string) => void
 ): Star[] {
-  if (allEntries.length < 2) return allEntries[0]?.detectedStars || [];
-  
-  const refStars = allEntries[0].detectedStars;
-  let sharedStars = refStars;
-
-  for (let i = 1; i < allEntries.length; i++) {
-    const targetStars = allEntries[i].detectedStars;
-    const matches = matchFeatures(sharedStars, targetStars);
-    
-    // The new set of shared stars are the ones from the *original* reference list
-    // that had a match in this target image.
-    sharedStars = matches.map(([refStar, _]) => refStar);
-    addLog(`Found ${sharedStars.length} shared stars between reference and image ${i}`);
+  if (allEntries.length < 2) {
+    const stars = allEntries[0]?.detectedStars || [];
+    addLog(`Only one image, using its ${stars.length} detected stars.`);
+    return stars;
   }
-  
+
+  const refStars = allEntries[0].detectedStars;
+  const sharedStars: Star[] = [];
+
+  for (const refStar of refStars) {
+    let isShared = true;
+    for (let i = 1; i < allEntries.length; i++) {
+      const targetStars = allEntries[i].detectedStars;
+      const matches = matchFeatures([refStar], targetStars);
+      if (matches.length === 0) {
+        isShared = false;
+        break; // Stop checking other images for this refStar
+      }
+    }
+    if (isShared) {
+      sharedStars.push(refStar);
+    }
+  }
+
   addLog(`Found a final set of ${sharedStars.length} stars common to all images.`);
   return sharedStars;
 }
