@@ -194,84 +194,85 @@ export function detectStars(
     return stars.sort((a, b) => b.brightness - a.brightness);
 }
 
-// --- STAGE 2: TRIANGLE-BASED PATTERN MATCHING ---
 
-interface Triangle {
-    indices: [number, number, number];
-    hash: string;
+// --- STAGE 2: FIND TRANSFORMATION ---
+type Descriptor = [number, number, number]; // dist1, dist2, angle
+
+function getNearestNeighbors(star: Star, allStars: Star[], k: number): Star[] {
+  return allStars
+    .filter(s => s !== star)
+    .sort((a, b) => euclideanDist(star, a) - euclideanDist(star, b))
+    .slice(0, k);
 }
 
-/**
- * Creates a list of rotation/scale/translation invariant triangles from a list of stars.
- */
-function createStarTriangles(stars: Star[]): Triangle[] {
-    const triangles: Triangle[] = [];
-    if (stars.length < 3) return [];
+function createDescriptor(star: Star, neighbors: Star[]): Descriptor | null {
+  if (neighbors.length < 2) return null;
+  const [n1, n2] = neighbors;
+  
+  const d1 = euclideanDist(star, n1);
+  const d2 = euclideanDist(star, n2);
 
-    // Use only top 50 brightest stars for pattern creation to reduce complexity and improve reliability
-    const starCandidates = stars.slice(0, 50);
+  if (d1 < 1e-6) return null;
 
-    for (let i = 0; i < starCandidates.length; i++) {
-        for (let j = i + 1; j < starCandidates.length; j++) {
-            for (let k = j + 1; k < starCandidates.length; k++) {
-                const s1 = starCandidates[i];
-                const s2 = starCandidates[j];
-                const s3 = starCandidates[k];
+  const v1 = { x: n1.x - star.x, y: n1.y - star.y };
+  const v2 = { x: n2.x - star.x, y: n2.y - star.y };
 
-                const sides = [
-                    euclideanDist(s2, s3),
-                    euclideanDist(s1, s3),
-                    euclideanDist(s1, s2)
-                ].sort((a, b) => a - b);
+  const angle = Math.atan2(v2.y, v2.x) - Math.atan2(v1.y, v1.x);
 
-                if (sides[0] < 1e-6) continue; // Degenerate triangle
+  return [d2 / d1, d1, angle]; // Scale-invariant part, scale part, rotation part
+}
 
-                // Hash is based on the ratio of the side lengths, making it scale-invariant
-                const ratio1 = sides[1] / sides[0];
-                const ratio2 = sides[2] / sides[0];
-                const hash = `${ratio1.toFixed(3)}:${ratio2.toFixed(3)}`;
+function matchFeatures(
+  descriptors1: { star: Star, desc: Descriptor }[],
+  descriptors2: { star: Star, desc: Descriptor }[]
+): { p1: Point, p2: Point }[] {
+  const matches: { p1: Point, p2: Point, score: number }[] = [];
 
-                triangles.push({ indices: [i, j, k], hash });
-            }
+  for (const { star: s1, desc: d1 } of descriptors1) {
+    let bestMatch: { star: Star, score: number } | null = null;
+    
+    for (const { star: s2, desc: d2 } of descriptors2) {
+      const ratioScore = Math.abs(d1[0] - d2[0]) / d1[0];
+      const angleScore = Math.abs((d1[2] - d2[2]) % (2 * Math.PI)) / (2*Math.PI);
+      const score = ratioScore + angleScore;
+
+      if (ratioScore < 0.1 && angleScore < 0.1) { // thresholds
+        if (bestMatch === null || score < bestMatch.score) {
+          bestMatch = { star: s2, score };
         }
+      }
     }
-    return triangles;
+
+    if (bestMatch) {
+      matches.push({ p1: s1, p2: bestMatch.star, score: bestMatch.score });
+    }
+  }
+  
+  return matches.sort((a, b) => a.score - b.score).slice(0, 50); // Return top 50 best matches
 }
 
-
-// --- STAGE 3: FIND TRANSFORMATION ---
-
 /**
- * Finds the similarity transform between two sets of stars using triangle matching.
+ * Finds the similarity transform between two sets of stars.
  */
 function findTransform(refStars: Star[], targetStars: Star[]): { scale: number; rotation: number; translation: Point } | null {
     if (refStars.length < 3 || targetStars.length < 3) return null;
-    const refTriangles = createStarTriangles(refStars);
-    const targetTriangles = createStarTriangles(targetStars);
+    
+    const topRefStars = refStars.slice(0, 100);
+    const topTargetStars = targetStars.slice(0, 100);
+    
+    const refDescriptors = topRefStars.map(s => ({
+        star: s,
+        desc: createDescriptor(s, getNearestNeighbors(s, topRefStars, 2))
+    })).filter(d => d.desc !== null) as { star: Star, desc: Descriptor }[];
+    
+    const targetDescriptors = topTargetStars.map(s => ({
+        star: s,
+        desc: createDescriptor(s, getNearestNeighbors(s, topTargetStars, 2))
+    })).filter(d => d.desc !== null) as { star: Star, desc: Descriptor }[];
 
-    const triangleMap = new Map<string, Triangle[]>();
-    for (const tri of targetTriangles) {
-        if (!triangleMap.has(tri.hash)) {
-            triangleMap.set(tri.hash, []);
-        }
-        triangleMap.get(tri.hash)!.push(tri);
-    }
-
-    const correspondences: { p1: Point; p2: Point }[] = [];
-    for (const refTri of refTriangles) {
-        if (triangleMap.has(refTri.hash)) {
-            const matchedTargetTris = triangleMap.get(refTri.hash)!;
-            for (const targetTri of matchedTargetTris) {
-                 // Create correspondences for all 3 vertices of the matched triangles
-                for (let i = 0; i < 3; i++) {
-                    correspondences.push({
-                        p1: refStars[refTri.indices[i]],
-                        p2: targetStars[targetTri.indices[i]]
-                    });
-                }
-            }
-        }
-    }
+    if (refDescriptors.length < 3 || targetDescriptors.length < 3) return null;
+    
+    const correspondences = matchFeatures(refDescriptors, targetDescriptors);
 
     if (correspondences.length < 3) return null;
 
@@ -280,7 +281,7 @@ function findTransform(refStars: Star[], targetStars: Star[]): { scale: number; 
         correspondences.map(c => c.p1),
         correspondences.map(c => c.p2),
         100, // iterations
-        2.0  // threshold in pixels
+        5.0  // threshold in pixels - increased tolerance
     );
 }
 
@@ -335,6 +336,7 @@ function estimateSimilarityTransformRANSAC(
 ): { scale: number; rotation: number; translation: Point } | null {
     if (points1.length < 3) return null;
     let bestInliers: number[] = [];
+    let bestTransform: { scale: number; rotation: number; translation: Point } | null = null;
 
     for (let iter = 0; iter < iterations; iter++) {
         const indices: number[] = [];
@@ -358,6 +360,7 @@ function estimateSimilarityTransformRANSAC(
 
         if (inliers.length > bestInliers.length) {
             bestInliers = inliers;
+            bestTransform = candidate;
         }
     }
 
