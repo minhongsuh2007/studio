@@ -45,21 +45,19 @@ export function TutorialDialog({ isOpen, onClose }: TutorialDialogProps) {
         <DialogHeader>
           <DialogTitle>{t('tutorialTitle')}</DialogTitle>
         </DialogHeader>
-        <div className="flex-grow overflow-hidden pr-2">
-            <ScrollArea className="h-full pr-4">
-                <Accordion type="single" collapsible defaultValue="1" className="w-full">
-                    {tutorialSteps.map(step => (
-                        <AccordionItem value={step.id} key={step.id}>
-                        <AccordionTrigger>{t(step.titleKey)}</AccordionTrigger>
-                        <AccordionContent className="text-base text-muted-foreground">
-                            {t(step.contentKey)}
-                        </AccordionContent>
-                        </AccordionItem>
-                    ))}
-                </Accordion>
-            </ScrollArea>
+        <div className="flex-grow overflow-y-auto pr-2">
+          <Accordion type="single" collapsible defaultValue="1" className="w-full">
+            {tutorialSteps.map(step => (
+              <AccordionItem value={step.id} key={step.id}>
+                <AccordionTrigger>{t(step.titleKey)}</AccordionTrigger>
+                <AccordionContent className="text-base text-muted-foreground whitespace-pre-wrap">
+                  {t(step.contentKey)}
+                </AccordionContent>
+              </AccordionItem>
+            ))}
+          </Accordion>
         </div>
-        <DialogFooter className="mt-4 pt-4 border-t">
+        <DialogFooter className="mt-4 pt-4 border-t flex-shrink-0">
           <DialogClose asChild>
             <Button variant="outline" onClick={onClose}>Close</Button>
           </DialogClose>
