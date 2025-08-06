@@ -1,4 +1,3 @@
-
 // --- Types ---
 export type Point = { x: number; y: number };
 export type Star = Point & { brightness: number; size: number; descriptor: number[] };
@@ -22,7 +21,8 @@ function detectStars(
   width: number,
   height: number,
   threshold: number,
-  minSize = 3
+  minSize = 3,
+  maxSize = 50 // Add max size to filter out large non-star objects
 ): Star[] {
   const visited = new Uint8Array(gray.length);
   const stars: Star[] = [];
@@ -59,10 +59,18 @@ function detectStars(
     const queue = [i];
     visited[i] = 1;
     let sumX = 0, sumY = 0, count = 0, brightnessSum = 0;
+    let minBlobX = width, maxBlobX = 0, minBlobY = height, maxBlobY = 0;
+
     while (queue.length > 0) {
       const p = queue.pop()!;
       const x = p % width;
       const y = Math.floor(p / width);
+
+      minBlobX = Math.min(minBlobX, x);
+      maxBlobX = Math.max(maxBlobX, x);
+      minBlobY = Math.min(minBlobY, y);
+      maxBlobY = Math.max(maxBlobY, y);
+
       sumX += x;
       sumY += y;
       brightnessSum += gray[p];
@@ -74,7 +82,12 @@ function detectStars(
         }
       }
     }
-    if (count >= minSize) {
+    
+    // Compactness Test: A simple test to filter out non-star-like blobs (e.g. from nebulae)
+    const boundingBoxArea = (maxBlobX - minBlobX + 1) * (maxBlobY - minBlobY + 1);
+    const compactness = count / boundingBoxArea;
+
+    if (count >= minSize && count <= maxSize && compactness > 0.4) {
       const cx = sumX / count;
       const cy = sumY / count;
       const brightness = brightnessSum / count;
@@ -390,11 +403,13 @@ export async function alignAndStack(
   
   const allRefStars = manualRefStars.length > 0 ? manualRefStars : refEntry.detectedStars;
   if (allRefStars.length < 3) {
-    addLog("Warning: Fewer than 3 reference stars. Alignment quality may be poor. Falling back to simple feature matching.");
+    addLog("Warning: Fewer than 3 reference stars. Alignment quality may be poor.");
   }
   
   const anchors_ref: Star[] = [];
-  const tempRefStars = [...allRefStars];
+  const tempRefStars = [...allRefStars].sort((a,b) => b.brightness - a.brightness); // Prioritize brighter stars
+  
+  // Select up to 3 well-separated anchor stars
   while (anchors_ref.length < 3 && tempRefStars.length > 0) {
     const candidate = tempRefStars.shift()!;
     if (anchors_ref.every(anchor => euclideanDist(anchor, candidate) > 50)) {
@@ -402,13 +417,13 @@ export async function alignAndStack(
     }
   }
   if (anchors_ref.length < 2) {
-    addLog("Warning: Could not select at least 2 unique anchor stars for rotation calculation. Falling back to simple matching.");
+    addLog("Warning: Could not select at least 2 unique anchor stars for rotation calculation. Alignment may fail.");
   }
 
   const patterns_ref = anchors_ref.map(anchor => 
       allRefStars.filter(s => s !== anchor).map(s => ({ x: s.x - anchor.x, y: s.y - anchor.y }))
   );
-  addLog(`Created ${patterns_ref.length} star patterns for propagation.`);
+  addLog(`Created ${patterns_ref.length} star patterns for propagation from ${anchors_ref.length} anchors.`);
   
   let last_known_anchors: (Point | null)[] = [...anchors_ref];
 
@@ -423,68 +438,68 @@ export async function alignAndStack(
     
     let transform: { scale: number; rotation: number; translation: Point } | null = null;
     
-    if (anchors_ref.length >= 2) {
-        const p1: Point[] = [];
-        const p2: Point[] = [];
-        const new_last_knowns: (Point | null)[] = [];
+    // --- Start: 3-point propagation logic ---
+    const p1: Point[] = []; // Points from original reference image
+    const p2: Point[] = []; // Corresponding points found in target image
+    const new_last_knowns: (Point | null)[] = [];
 
-        for (let j = 0; j < anchors_ref.length; j++) {
-            const lastKnownPos = last_known_anchors[j];
-            if (!lastKnownPos) {
-              new_last_knowns.push(null);
-              continue; 
-            }; 
-            const pattern = patterns_ref[j];
-            const targetStars = targetEntry.detectedStars;
-            
-            const SEARCH_RADIUS = 30;
-            const candidates = targetStars
-                .filter(s => euclideanDist(s, lastKnownPos) < SEARCH_RADIUS)
-                .sort((a,b) => euclideanDist(a, lastKnownPos) - euclideanDist(b, lastKnownPos))
-                .slice(0, 5);
+    for (let j = 0; j < anchors_ref.length; j++) {
+        const lastKnownPos = last_known_anchors[j];
+        if (!lastKnownPos) {
+          new_last_knowns.push(null); 
+          continue; 
+        }; 
+        const pattern = patterns_ref[j];
+        const targetStars = targetEntry.detectedStars;
+        
+        const SEARCH_RADIUS = 30;
+        const candidates = targetStars
+            .filter(s => euclideanDist(s, lastKnownPos) < SEARCH_RADIUS)
+            .sort((a,b) => euclideanDist(a, lastKnownPos) - euclideanDist(b, lastKnownPos))
+            .slice(0, 5);
 
-            let bestMatch = { score: -1, star: null as Star | null };
+        let bestMatch = { score: -1, star: null as Star | null };
 
-            for (const candidate of candidates) {
-                let score = 0;
-                for (const patternVector of pattern) {
-                    const expectedPos = { x: candidate.x + patternVector.x, y: candidate.y + patternVector.y };
-                    if (targetStars.some(s => euclideanDist(s, expectedPos) < 5)) {
-                        score++;
-                    }
-                }
-                if (score > bestMatch.score) {
-                    bestMatch = { score, star: candidate };
+        for (const candidate of candidates) {
+            let score = 0;
+            for (const patternVector of pattern) {
+                const expectedPos = { x: candidate.x + patternVector.x, y: candidate.y + patternVector.y };
+                if (targetStars.some(s => euclideanDist(s, expectedPos) < 5)) {
+                    score++;
                 }
             }
-
-            if (bestMatch.star) {
-                p1.push(anchors_ref[j]);
-                p2.push(bestMatch.star);
-                new_last_knowns.push(bestMatch.star);
-            } else {
-                new_last_knowns.push(null); // Mark as not found
+            if (score > bestMatch.score) {
+                bestMatch = { score, star: candidate };
             }
         }
-        
-        last_known_anchors = new_last_knowns;
-        
-        if (p1.length >= 2) {
-            transform = estimateSimilarityTransform(p1, p2);
-            if (transform) {
-                addLog(`Image ${i}: Aligned using ${p1.length}-point propagated pattern.`);
-            }
+
+        if (bestMatch.star) {
+            p1.push(anchors_ref[j]);
+            p2.push(bestMatch.star);
+            new_last_knowns.push(bestMatch.star);
+        } else {
+            new_last_knowns.push(null); // Mark as not found
         }
     }
+    
+    last_known_anchors = new_last_knowns;
+    
+    if (p1.length >= 2) { // Need at least 2 points for similarity transform
+        transform = estimateSimilarityTransform(p1, p2);
+        if (transform) {
+            addLog(`Image ${i}: Aligned using ${p1.length}-point propagated pattern.`);
+        }
+    }
+    // --- End: 3-point propagation logic ---
 
+    // Fallback to RANSAC if propagation fails
     if (!transform) {
-      addLog(`Image ${i}: Pattern propagation failed or had too few points. Resetting anchors and falling back to feature matching.`);
-      last_known_anchors = [...anchors_ref]; // Reset for next image
+      addLog(`Image ${i}: Pattern propagation failed or had too few points. Falling back to feature matching.`);
       const matches = matchFeatures(allRefStars, targetEntry.detectedStars);
       if (matches.length >= 3) {
-        const points1 = matches.map(m => m[0]);
-        const points2 = matches.map(m => m[1]);
-        transform = estimateSimilarityTransformRANSAC(points1, points2);
+        const ransacPoints1 = matches.map(m => m[0]);
+        const ransacPoints2 = matches.map(m => m[1]);
+        transform = estimateSimilarityTransformRANSAC(ransacPoints1, ransacPoints2);
         if (transform) {
           addLog(`Image ${i}: Aligned using RANSAC fallback (${matches.length} initial matches).`);
         }
@@ -496,7 +511,7 @@ export async function alignAndStack(
       alignedImageDatas.push(warpedData);
     } else {
       addLog(`Image ${i}: Could not determine transform. Stacking unaligned.`);
-      alignedImageDatas.push(targetEntry.imageData.data);
+      alignedImageDatas.push(targetEntry.imageData.data); // Add unaligned if transform fails
     }
     setProgress(i / imageEntries.length);
   }
