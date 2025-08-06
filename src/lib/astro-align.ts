@@ -495,23 +495,22 @@ export async function alignAndStack(
     addLog(`--- Aligning Image ${i+1}/${imageEntries.length} ---`);
 
     if (!targetEntry.imageData) {
-      addLog(`Skipping image ${i}: missing image data.`);
+      addLog(`Skipping image ${i+1}: missing image data.`);
       alignedImageDatas.push(null);
       setProgress(progress);
       continue;
     }
     if (targetEntry.detectedStars.length < 3) {
-      addLog(`Skipping image ${i}: not enough stars detected (${targetEntry.detectedStars.length}).`);
+      addLog(`Skipping image ${i+1}: not enough stars detected (${targetEntry.detectedStars.length}).`);
       alignedImageDatas.push(null);
       setProgress(progress);
       continue;
     }
 
-    // Match the shared reference stars to the current target image's stars
     const matches = findTriangleMatches(refStars, targetEntry.detectedStars, addLog);
     
     if (matches.length < 3) {
-      addLog(`Skipping image ${i}: Could not find enough triangle matches (${matches.length}).`);
+      addLog(`Skipping image ${i+1}: Could not find enough triangle matches (${matches.length}).`);
       alignedImageDatas.push(null);
       setProgress(progress);
       continue;
@@ -522,11 +521,11 @@ export async function alignAndStack(
     const transform = estimateSimilarityTransformRANSAC(ransacPoints1, ransacPoints2);
       
     if (transform) {
-      addLog(`Image ${i}: Found transform: S: ${transform.scale.toFixed(3)}, R: ${(transform.rotation * 180 / Math.PI).toFixed(3)}°, T:(${transform.translation.x.toFixed(2)}, ${transform.translation.y.toFixed(2)})`);
+      addLog(`Image ${i+1}: Found transform: S: ${transform.scale.toFixed(3)}, R: ${(transform.rotation * 180 / Math.PI).toFixed(3)}°, T:(${transform.translation.x.toFixed(2)}, ${transform.translation.y.toFixed(2)})`);
       const warpedData = warpImage(targetEntry.imageData.data, width, height, transform);
       alignedImageDatas.push(warpedData);
     } else {
-      addLog(`Skipping image ${i}: Could not determine transform with RANSAC.`);
+      addLog(`Skipping image ${i+1}: Could not determine transform with RANSAC.`);
       alignedImageDatas.push(null);
     }
     setProgress(progress);
