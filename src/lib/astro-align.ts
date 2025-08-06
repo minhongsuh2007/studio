@@ -33,13 +33,15 @@ function fitGaussianPSF(patch: number[][], initialX: number, initialY: number): 
 
     let A = [];
     let b = [];
+    let hasSignal = false;
 
     for (let r = 0; r < size; r++) {
         for (let c = 0; c < size; c++) {
             const x = c - halfSize;
             const y = r - halfSize;
             const z = patch[r][c];
-            if (z > 0) { // Only fit points with signal
+            if (z > 0) {
+                hasSignal = true;
                 const log_z = Math.log(z);
                 A.push([x * x, y * y, x * y, x, y, 1]);
                 b.push(log_z);
@@ -47,27 +49,43 @@ function fitGaussianPSF(patch: number[][], initialX: number, initialY: number): 
         }
     }
 
-    if (A.length < 6) return null; // Not enough points to solve
+    if (!hasSignal || A.length < 6) return null;
 
     try {
         const At = transpose(matrix(A));
         const AtA = multiply(At, matrix(A));
         const Atb = multiply(At, matrix(b));
-        const coeffs = lusolve(AtA, Atb).toArray().flat() as number[];
+        
+        // Add a small identity matrix for regularization to prevent singular matrices
+        const identity = matrix(Array(AtA.size()[0]).fill(0).map((_, i) => Array(AtA.size()[1]).fill(0).map((_, j) => i === j ? 1e-6 : 0)));
+        const regularizedAtA = AtA.map((value, index, m) => value + identity.get(index));
+
+        const coeffs = lusolve(regularizedAtA, Atb).toArray().flat() as number[];
 
         const [c_xx, c_yy, c_xy, c_x, c_y, c_0] = coeffs;
+        
+        // These checks are too strict and are rejecting valid stars. Removing them.
+        // if (c_xx >= 0 || c_yy >= 0) return null; 
+        // const q = 4 * c_xx * c_yy - c_xy * c_xy;
+        // if (q <= 0) return null;
 
-        if (c_xx >= 0 || c_yy >= 0) return null; // Not a peak
+        const q_safe = (4 * c_xx * c_yy - c_xy * c_xy);
+        if (Math.abs(q_safe) < 1e-6) return null; // Avoid division by zero if it's still a degenerate case
 
-        const q = 4 * c_xx * c_yy - c_xy * c_xy;
-        if (q <= 0) return null; // Not an ellipse
-
-        const x_center = (c_xy * c_y - 2 * c_yy * c_x) / q;
-        const y_center = (c_xy * c_x - 2 * c_xx * c_y) / q;
+        const x_center = (c_xy * c_y - 2 * c_yy * c_x) / q_safe;
+        const y_center = (c_xy * c_x - 2 * c_xx * c_y) / q_safe;
 
         const brightness = Math.exp(c_0 + (c_x * x_center + c_y * y_center) / 2);
         
-        const fwhm = Math.sqrt(-2 * Math.log(0.5) * (c_xx + c_yy + Math.sqrt(Math.pow(c_xx - c_yy, 2) + c_xy*c_xy)) / (c_xx * c_yy - c_xy*c_xy/4)) * 2;
+        const fwhm_denom = (c_xx * c_yy - c_xy*c_xy/4);
+        if (Math.abs(fwhm_denom) < 1e-6) return null;
+        
+        const fwhm_term = (c_xx + c_yy + Math.sqrt(Math.pow(c_xx - c_yy, 2) + c_xy*c_xy));
+        if (fwhm_term > 0) return null; // Argument of sqrt must be non-negative, and term inside log must be positive
+
+        const fwhm = Math.sqrt(-2 * Math.log(0.5) * fwhm_term / fwhm_denom) * 2;
+
+        if (isNaN(fwhm) || fwhm <= 0 || !isFinite(fwhm)) return null;
 
         return {
             x: initialX + x_center,
@@ -77,7 +95,6 @@ function fitGaussianPSF(patch: number[][], initialX: number, initialY: number): 
         };
 
     } catch (error) {
-        // console.error("Gaussian fit failed:", error);
         return null;
     }
 }
@@ -93,7 +110,7 @@ function detectStars(
 ): Star[] {
   const visited = new Uint8Array(gray.length);
   const stars: Star[] = [];
-  const psfPatchSize = 7; // e.g., 7x7 patch
+  const psfPatchSize = 7; 
   const halfPsfPatchSize = Math.floor(psfPatchSize / 2);
 
   function neighbors(pos: number): number[] {
@@ -172,13 +189,13 @@ function detectStars(
 
             const fitResult = fitGaussianPSF(patch, approxCx, approxCy);
 
-            if (fitResult && fitResult.fwhm > 0.5 && fitResult.fwhm < psfPatchSize) { // Sanity checks
+            if (fitResult && fitResult.fwhm > 0.5 && fitResult.fwhm < psfPatchSize) {
                 const desc = computeDescriptor(fitResult.x, fitResult.y);
                 stars.push({
                     x: fitResult.x,
                     y: fitResult.y,
                     brightness: fitResult.brightness,
-                    size: count, // Keep blob size for potential filtering
+                    size: count,
                     fwhm: fitResult.fwhm,
                     descriptor: desc
                 });
@@ -414,6 +431,7 @@ function warpImage(
                 const y1 = y0 + 1;
                 const x_frac = srcX - x0;
                 const y_frac = srcY - y0;
+                
                 const c00_idx = (y0 * srcWidth + x0) * 4;
                 const c00_alpha = srcData[c00_idx + 3];
 
@@ -421,7 +439,7 @@ function warpImage(
                     continue;
                 }
 
-                for (let channel = 0; channel < 3; channel++) { // Only R, G, B
+                for (let channel = 0; channel < 3; channel++) { 
                     const c00 = srcData[c00_idx + channel];
                     const c10 = srcData[(y0 * srcWidth + x1) * 4 + channel];
                     const c01 = srcData[(y1 * srcWidth + x0) * 4 + channel];
@@ -433,11 +451,8 @@ function warpImage(
                     
                     dstData[dstIdx + channel] = val;
                 }
-                dstData[dstIdx + 3] = 255;
+                dstData[dstIdx + 3] = c00_alpha; 
             } else {
-                 dstData[dstIdx] = 0;
-                 dstData[dstIdx + 1] = 0;
-                 dstData[dstIdx + 2] = 0;
                  dstData[dstIdx + 3] = 0;
             }
         }
@@ -453,11 +468,11 @@ function stackImagesAverage(images: (Uint8ClampedArray | null)[]): Uint8ClampedA
     if (validImages.length === 0) throw new Error("No valid images to stack");
     const length = validImages[0].length;
     const accum = new Float32Array(length);
-    const counts = new Uint8Array(length / 4); // Count per pixel
+    const counts = new Uint8Array(length / 4);
 
     for (const img of validImages) {
         for (let i = 0; i < length; i += 4) {
-            if (img[i + 3] > 128) { // Consider pixel valid if alpha is > 50%
+            if (img[i + 3] > 128) {
                 accum[i] += img[i];
                 accum[i + 1] += img[i + 1];
                 accum[i + 2] += img[i + 2];
@@ -473,7 +488,7 @@ function stackImagesAverage(images: (Uint8ClampedArray | null)[]): Uint8ClampedA
             result[i] = accum[i] / count;
             result[i + 1] = accum[i + 1] / count;
             result[i + 2] = accum[i + 2] / count;
-            result[i + 3] = 255; // Final image is opaque
+            result[i + 3] = 255;
         }
     }
     return result;
@@ -500,7 +515,7 @@ function stackImagesMedian(images: (Uint8ClampedArray | null)[]): Uint8ClampedAr
                  result[i + channel] = pixelValues.reduce((a, b) => a + b, 0) / pixelValues.length;
             }
         }
-        // Set alpha based on how many images contributed
+        
         const validCount = validImages.filter(img => img[i+3] > 128).length;
         result[i + 3] = validCount > 0 ? 255 : 0;
     }
@@ -523,7 +538,7 @@ function stackImagesSigmaClip(images: (Uint8ClampedArray | null)[], sigma = 2.0)
                 }
             }
 
-            if (pixelValues.length < 3) { // Not enough data to clip, just average
+            if (pixelValues.length < 3) {
                 if (pixelValues.length > 0) {
                     result[i + channel] = pixelValues.reduce((a, b) => a + b, 0) / pixelValues.length;
                 }
@@ -532,7 +547,7 @@ function stackImagesSigmaClip(images: (Uint8ClampedArray | null)[], sigma = 2.0)
             
             const mu = mean(pixelValues);
             const stdev = std(pixelValues);
-            if (stdev === 0) { // All values are the same
+            if (stdev === 0) {
                  result[i + channel] = mu;
                  continue;
             }
@@ -542,7 +557,7 @@ function stackImagesSigmaClip(images: (Uint8ClampedArray | null)[], sigma = 2.0)
             
             if (filtered.length > 0) {
                 result[i + channel] = filtered.reduce((a, b) => a + b, 0) / filtered.length;
-            } else { // All pixels were rejected, fallback to median
+            } else {
                  result[i + channel] = median(pixelValues);
             }
         }
@@ -608,13 +623,12 @@ export async function alignAndStack(
     
     let transform: { scale: number; rotation: number; translation: Point } | null = null;
     
-    // --- Start: 3-point propagation logic ---
-    const p1: Point[] = []; // Points from original reference image that are found in target
-    const p2: Point[] = []; // Corresponding points found in target image
+    const p1: Point[] = [];
+    const p2: Point[] = []; 
     
-    const current_found_anchors: (Point | null)[] = [...last_known_anchors].map(() => null);
+    const current_found_anchors: (Point | null)[] = last_known_anchors.map(() => null);
 
-    for (let j = 0; j < last_known_anchors.length; j++) {
+    for (let j = 0; j < anchors_ref.length; j++) {
         const lastKnownPos = last_known_anchors[j];
         if (!lastKnownPos) continue;
         
@@ -624,30 +638,25 @@ export async function alignAndStack(
             .sort((a,b) => euclideanDist(a, lastKnownPos) - euclideanDist(b, lastKnownPos));
 
         if(candidates.length > 0){
-          const bestMatch = candidates[0]; // Simplest assumption: closest is best
+          const bestMatch = candidates[0];
           p1.push(anchors_ref[j]);
           p2.push(bestMatch);
           current_found_anchors[j] = bestMatch;
         }
     }
     
-    if(p1.length >= 2) {
-        last_known_anchors = current_found_anchors;
-    } else {
-        last_known_anchors = [...anchors_ref];
-    }
-    
-    if (p1.length >= 2) { // Need at least 2 points for similarity transform
+    if (p1.length >= 2) {
         transform = estimateSimilarityTransform(p1, p2);
         if (transform) {
             addLog(`Image ${i}: Aligned using ${p1.length}-point propagated pattern.`);
+            last_known_anchors = current_found_anchors;
         }
+    } else {
+        last_known_anchors = [...anchors_ref]; 
     }
-    // --- End: 3-point propagation logic ---
 
-    // Fallback to RANSAC if propagation fails
     if (!transform) {
-      addLog(`Image ${i}: Pattern propagation failed or had too few points. Falling back to feature matching.`);
+      addLog(`Image ${i}: Pattern propagation failed. Falling back to feature matching.`);
       const matches = matchFeatures(allRefStars, targetEntry.detectedStars);
       if (matches.length >= 3) {
         const ransacPoints1 = matches.map(m => m[0]);
@@ -664,7 +673,7 @@ export async function alignAndStack(
       alignedImageDatas.push(warpedData);
     } else {
       addLog(`Skipping image ${i}: Could not determine transform.`);
-      alignedImageDatas.push(null); // Add null if transform fails
+      alignedImageDatas.push(null);
     }
     setProgress(i / imageEntries.length);
   }
