@@ -1,6 +1,6 @@
 
 // --- Types ---
-import { lusolve, multiply, transpose, inv, matrix, Matrix, eigs, abs, mean, std, median } from 'mathjs';
+import { matrix, inv, multiply, transpose, lusolve, median, mean, std } from 'mathjs';
 
 export type Point = { x: number; y: number };
 export type Star = Point & { brightness: number; size: number; fwhm: number, descriptor: number[] };
@@ -24,18 +24,88 @@ function toGrayscale(imageData: ImageData): Uint8Array {
   return gray;
 }
 
-// --- 2) Star Detection (Center of Mass) ---
+// --- 2) PSF Fitting ---
+function fitGaussianPSF(
+    patch: number[],
+    patchSize: number,
+    initialX: number,
+    initialY: number
+): { x: number; y: number; fwhm: number; peak: number } | null {
+    if (patch.length === 0) return null;
+    const patchDim = 2 * patchSize + 1;
+    const centerOffset = patchSize;
 
+    const coords: { x: number, y: number }[] = [];
+    const values: number[] = [];
+
+    let hasSignal = false;
+    for (let i = 0; i < patch.length; i++) {
+        if (patch[i] > 1) { 
+            hasSignal = true;
+            const x = (i % patchDim) - centerOffset;
+            const y = Math.floor(i / patchDim) - centerOffset;
+            coords.push({ x, y });
+            values.push(Math.log(patch[i]));
+        }
+    }
+
+    if (!hasSignal || coords.length < 6) return null;
+
+    const X_data = coords.map(c => [c.x * c.x, c.y * c.y, c.x * c.y, c.x, c.y, 1]);
+    try {
+        const X = matrix(X_data);
+        const y = matrix(values);
+
+        const Xt = transpose(X);
+        const XtX = multiply(Xt, X);
+        const XtX_inv = inv(XtX);
+        const XtY = multiply(Xt, y);
+        const c = multiply(XtX_inv, XtY).valueOf().flat() as number[];
+
+        const [c_xx, c_yy, c_xy, c_x, c_y, c_0] = c;
+
+        const det = 4 * c_xx * c_yy - c_xy * c_xy;
+        if (det === 0) return null;
+
+        const x_center = (c_xy * c_y - 2 * c_yy * c_x) / det;
+        const y_center = (c_xy * c_x - 2 * c_xx * c_y) / det;
+
+        const sigma_x_sq = -2 / (4 * c_xx + (c_xy * c_xy) / c_yy - c_xy * c_xy / c_yy);
+        const sigma_y_sq = -2 / (4 * c_yy + (c_xy * c_xy) / c_xx - c_xy * c_xy / c_xx);
+        
+        if (sigma_x_sq <= 0 || sigma_y_sq <= 0) return null;
+
+        const fwhm = 2.3548 * Math.sqrt((Math.sqrt(sigma_x_sq) + Math.sqrt(sigma_y_sq)) / 2);
+        const peak = Math.exp(c_0 + c_x*x_center + c_y*y_center + c_xx*x_center*x_center + c_yy*y_center*y_center + c_xy*x_center*y_center);
+        
+        if (isNaN(fwhm) || fwhm < 1 || fwhm > patchSize || Math.abs(x_center) > patchSize || Math.abs(y_center) > patchSize) {
+          return null;
+        }
+
+        return {
+            x: initialX + x_center,
+            y: initialY + y_center,
+            fwhm: fwhm,
+            peak: peak
+        };
+    } catch (error) {
+        return null; 
+    }
+}
+
+
+// --- 3) Star Detection (Blob + PSF) ---
 function detectStars(
   gray: Uint8Array,
   width: number,
   height: number,
   threshold: number,
   minSize = 3,
-  maxSize = 100
+  maxSize = 150
 ): Star[] {
   const visited = new Uint8Array(gray.length);
   const stars: Star[] = [];
+  const psfPatchSize = 5; 
 
   function getNeighbors(pos: number): number[] {
     const neighbors = [];
@@ -70,16 +140,25 @@ function detectStars(
     return patch;
   }
 
+
   for (let i = 0; i < gray.length; i++) {
     if (visited[i] || gray[i] < threshold) continue;
 
     const queue = [i];
     visited[i] = 1;
     const blobPixelsPos: number[] = [];
+    let sumX = 0, sumY = 0, totalBrightness = 0;
 
     while (queue.length > 0) {
       const p = queue.shift()!;
       blobPixelsPos.push(p);
+
+      const x = p % width;
+      const y = Math.floor(p / width);
+      const brightness = gray[p];
+      sumX += x * brightness;
+      sumY += y * brightness;
+      totalBrightness += brightness;
 
       for (const n of getNeighbors(p)) {
         if (!visited[n] && gray[n] >= threshold) {
@@ -91,45 +170,43 @@ function detectStars(
 
     const count = blobPixelsPos.length;
     if (count >= minSize && count <= maxSize) {
-      let sumX = 0, sumY = 0, totalBrightness = 0;
+        if (totalBrightness === 0) continue;
+        const initialX = sumX / totalBrightness;
+        const initialY = sumY / totalBrightness;
 
-      for (const pos of blobPixelsPos) {
-        const brightness = gray[pos];
-        sumX += (pos % width) * brightness;
-        sumY += Math.floor(pos / width) * brightness;
-        totalBrightness += brightness;
-      }
-      
-      if (totalBrightness === 0) continue;
-
-      const centerX = sumX / totalBrightness;
-      const centerY = sumY / totalBrightness;
-      
-      let fwhmRadiusSum = 0;
-      for (const pos of blobPixelsPos) {
-        const dx = (pos % width) - centerX;
-        const dy = Math.floor(pos / width) - centerY;
-        fwhmRadiusSum += Math.sqrt(dx * dx + dy * dy);
-      }
-      const fwhm = (fwhmRadiusSum / count) * 2.355;
-      
-      if (!isNaN(centerX) && !isNaN(centerY) && isFinite(centerX) && isFinite(centerY)) {
-        stars.push({
-          x: centerX,
-          y: centerY,
-          brightness: totalBrightness / count,
-          size: count,
-          fwhm: fwhm,
-          descriptor: computeDescriptor(centerX, centerY),
-        });
-      }
+        const patch: number[] = [];
+        const patchDim = 2 * psfPatchSize + 1;
+        for (let y = -psfPatchSize; y <= psfPatchSize; y++) {
+            for (let x = -psfPatchSize; x <= psfPatchSize; x++) {
+                const sampleX = Math.round(initialX + x);
+                const sampleY = Math.round(initialY + y);
+                if (sampleX >= 0 && sampleX < width && sampleY >= 0 && sampleY < height) {
+                    patch.push(gray[sampleY * width + sampleX]);
+                } else {
+                    patch.push(0);
+                }
+            }
+        }
+        
+        const psfResult = fitGaussianPSF(patch, psfPatchSize, initialX, initialY);
+        
+        if (psfResult && psfResult.peak > threshold * 1.1) {
+             stars.push({
+              x: psfResult.x,
+              y: psfResult.y,
+              brightness: psfResult.peak,
+              size: count,
+              fwhm: psfResult.fwhm,
+              descriptor: computeDescriptor(psfResult.x, psfResult.y),
+            });
+        }
     }
   }
   return stars;
 }
 
 
-// --- 3) Multi-scale detection (simple 2x downscale) ---
+// --- 4) Multi-scale detection (simple 2x downscale) ---
 export function detectStarsMultiScale(
   imageData: ImageData,
   width: number,
@@ -164,13 +241,13 @@ export function detectStarsMultiScale(
   return combined;
 }
 
-// --- 4) Euclidean distance ---
+// --- 5) Euclidean distance ---
 function euclideanDist(p1: Point, p2: Point): number {
   const dx = p1.x - p2.x, dy = p1.y - p2.y;
   return Math.sqrt(dx * dx + dy * dy);
 }
 
-// --- 5) Descriptor distance ---
+// --- 6) Descriptor distance ---
 function descriptorDist(d1: number[], d2: number[]): number {
   let sum = 0;
   for (let i = 0; i < d1.length; i++) {
@@ -180,7 +257,7 @@ function descriptorDist(d1: number[], d2: number[]): number {
   return Math.sqrt(sum);
 }
 
-// --- 6) KD-tree for stars ---
+// --- 7) KD-tree for stars ---
 class KDNode {
     point: Star;
     left: KDNode | null = null;
@@ -210,7 +287,7 @@ class KDNode {
     }
   }
 
-// --- 7) Feature matching with kd-tree + ratio test ---
+// --- 8) Feature matching with kd-tree + ratio test ---
 function matchFeatures(
   stars1: Star[],
   stars2: Star[],
@@ -240,7 +317,7 @@ function matchFeatures(
   return matches;
 }
 
-// --- 8) Estimate similarity transform ---
+// --- 9) Estimate similarity transform ---
 function estimateSimilarityTransform(
   points1: Point[],
   points2: Point[]
@@ -276,7 +353,7 @@ function estimateSimilarityTransform(
   return { scale, rotation, translation };
 }
 
-// --- 9) RANSAC to robustly estimate similarity transform ---
+// --- 10) RANSAC to robustly estimate similarity transform ---
 function estimateSimilarityTransformRANSAC(
   points1: Point[],
   points2: Point[],
@@ -312,7 +389,7 @@ function estimateSimilarityTransformRANSAC(
   return estimateSimilarityTransform(inlierPoints1, inlierPoints2);
 }
 
-// --- 10) Warp a single point ---
+// --- 11) Warp a single point ---
 function warpPoint(p: Point, params: { scale: number; rotation: number; translation: Point }): Point {
   const { scale, rotation, translation } = params;
   const cosR = Math.cos(rotation);
@@ -323,7 +400,7 @@ function warpPoint(p: Point, params: { scale: number; rotation: number; translat
   };
 }
 
-// --- 11) Warp image with BILINEAR INTERPOLATION ---
+// --- 12) Warp image with BILINEAR INTERPOLATION ---
 function warpImage(
     srcData: Uint8ClampedArray,
     srcWidth: number,
@@ -383,7 +460,7 @@ function warpImage(
 }
 
 
-// --- 12) Stacking implementations ---
+// --- 13) Stacking implementations ---
 
 function stackImagesAverage(images: (Uint8ClampedArray | null)[]): Uint8ClampedArray {
     const validImages = images.filter((img): img is Uint8ClampedArray => img !== null);
@@ -489,7 +566,7 @@ function stackImagesSigmaClip(images: (Uint8ClampedArray | null)[], sigma = 2.0)
     return result;
 }
 
-// --- 13) Main alignment function ---
+// --- 14) Main alignment function ---
 export async function alignAndStack(
   imageEntries: ImageQueueEntry[],
   manualRefStars: Star[],
