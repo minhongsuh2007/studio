@@ -144,7 +144,20 @@ export const translations: Translations = {
     testAnalysisCompleteToastDesc: "{count} stars on '{fileName}' matched the selected learned pattern.",
     testAnalysisNoStarsFoundToastDesc: "No stars on '{fileName}' matched the selected learned pattern well enough.",
     testImagePreviewTitle: "Test Image: {fileName}",
-    recognizedStarsCount: "{count} stars recognized by pattern"
+    recognizedStarsCount: "{count} stars recognized by pattern",
+
+    tutorialButton: "Tutorial",
+    tutorialTitle: "How to Use AstroStacker",
+    tutorialStep1Title: "Step 1: Upload Light Frames",
+    tutorialStep1Content: "Click the 'Drag & drop images here' area or drop your main astrophotography images (your 'lights') into it. These are the main images of your target object. You can upload multiple files at once. After uploading, the app will automatically analyze each image to detect stars.",
+    tutorialStep2Title: "Step 2: (Optional) Manual Star Selection",
+    tutorialStep2Content: "For the best alignment accuracy, you can manually guide the process. The first image in the queue is the 'Reference Image'. Click 'Select Stars' on it. In the main preview window, you can now click near stars to manually select them for alignment. A red circle will appear. A minimum of two stars is required. This tells the app exactly which points to use for alignment.",
+    tutorialStep3Title: "Step 3: Choose Stacking Options",
+    tutorialStep3Content: "On the left panel, you can configure how the images are stacked. 'Stacking Mode' (Average, Median, Sigma Clip) determines how pixel values are combined. 'Output Format' lets you choose between PNG (lossless) and JPG (smaller file size).",
+    tutorialStep4Title: "Step 4: Stack Images",
+    tutorialStep4Content: "Once your images are uploaded and you're happy with the settings, click the 'Stack Images' button. The app will align each image to your reference frame and then combine them. The progress bar will show the status.",
+    tutorialStep5Title: "Step 5: Post-Process and Download",
+    tutorialStep5Content: "After stacking is complete, the final image will appear. Click 'Finalize & Download Image' to open the post-processing editor. Here, you can adjust Brightness, Exposure, and Saturation to enhance your image. When you are satisfied, click the 'Download Image' button to save the result to your computer."
   },
   ko: {
     appTitle: '아스트로스태커',
@@ -278,7 +291,20 @@ export const translations: Translations = {
     testAnalysisCompleteToastDesc: "{count} stars on '{fileName}' matched the selected learned pattern.",
     testAnalysisNoStarsFoundToastDesc: "No stars on '{fileName}' matched the selected learned pattern well enough.",
     testImagePreviewTitle: "Test Image: {fileName}",
-    recognizedStarsCount: "{count} stars recognized by pattern"
+    recognizedStarsCount: "{count} stars recognized by pattern",
+
+    tutorialButton: "사용법",
+    tutorialTitle: "AstroStacker 사용 방법",
+    tutorialStep1Title: "1단계: 라이트 프레임 업로드",
+    tutorialStep1Content: "'여기에 이미지 끌어다 놓기' 영역을 클릭하거나 주 천체 사진('라이트')을 그곳으로 끌어다 놓으십시오. 이것은 대상의 주요 이미지입니다. 한 번에 여러 파일을 업로드할 수 있습니다. 업로드 후 앱은 각 이미지를 자동으로 분석하여 별을 감지합니다.",
+    tutorialStep2Title: "2단계: (선택) 수동 별 선택",
+    tutorialStep2Content: "최고의 정렬 정확도를 위해 수동으로 프로세스를 안내할 수 있습니다. 대기열의 첫 번째 이미지는 '참조 이미지'입니다. '별 선택'을 클릭하십시오. 주 미리보기 창에서 이제 별 근처를 클릭하여 정렬을 위해 수동으로 선택할 수 있습니다. 빨간색 원이 나타납니다. 최소 2개의 별이 필요합니다. 이것은 앱에 정렬에 사용할 지점을 정확히 알려줍니다.",
+    tutorialStep3Title: "3단계: 스태킹 옵션 선택",
+    tutorialStep3Content: "왼쪽 패널에서 이미지를 쌓는 방법을 구성할 수 있습니다. '스태킹 모드'(평균, 중앙값, 시그마 클립)는 픽셀 값이 결합되는 방식을 결정합니다. '출력 형식'을 사용하면 PNG(무손실)와 JPG(파일 크기 작음) 중에서 선택할 수 있습니다.",
+    tutorialStep4Title: "4단계: 이미지 스태킹",
+    tutorialStep4Content: "이미지를 업로드하고 설정에 만족하면 '이미지 스태킹' 버튼을 클릭하십시오. 앱은 각 이미지를 참조 프레임에 정렬한 다음 결합합니다. 진행률 표시줄에 상태가 표시됩니다.",
+    tutorialStep5Title: "5단계: 후처리 및 다운로드",
+    tutorialStep5Content: "스태킹이 완료되면 최종 이미지가 나타납니다. '이미지 확정 및 다운로드'를 클릭하여 후처리 편집기를 엽니다. 여기에서 밝기, 노출 및 채도를 조정하여 이미지를 향상시킬 수 있습니다. 만족스러우면 '이미지 다운로드' 버튼을 클릭하여 결과를 컴퓨터에 저장하십시오."
   },
   zh: {
     appTitle: '天文图像叠加器 (AstroStacker)',
@@ -412,12 +438,23 @@ export const translations: Translations = {
     testAnalysisCompleteToastDesc: "{count} stars on '{fileName}' matched the selected learned pattern.",
     testAnalysisNoStarsFoundToastDesc: "No stars on '{fileName}' matched the selected learned pattern well enough.",
     testImagePreviewTitle: "Test Image: {fileName}",
-    recognizedStarsCount: "{count} stars recognized by pattern"
+    recognizedStarsCount: "{count} stars recognized by pattern",
+
+    tutorialButton: "教程",
+    tutorialTitle: "如何使用天文图像叠加器",
+    tutorialStep1Title: "第一步：上传亮场",
+    tutorialStep1Content: "点击“在此处拖放图像”区域或将您的主要天文摄影图像（您的“亮场”）拖放到其中。这些是您目标天体的主要图像。您可以一次上传多个文件。上传后，应用程序将自动分析每个图像以检测星点。",
+    tutorialStep2Title: "第二步：（可选）手动选择星点",
+    tutorialStep2Content: "为获得最佳对齐精度，您可以手动指导该过程。队列中的第一张图像是“参考图像”。单击其上的“选择星点”。在主预览窗口中，您现在可以单击星点附近以手动选择它们进行对齐。将出现一个红色圆圈。至少需要两颗星。这会准确地告诉应用程序使用哪些点进行对齐。",
+    tutorialStep3Title: "第三步：选择叠加选项",
+    tutorialStep3Content: "在左侧面板上，您可以配置图像的叠加方式。“叠加模式”（平均、中位数、西格玛裁剪）决定了像素值的组合方式。“输出格式”让您可以在PNG（无损）和JPG（文件更小）之间进行选择。",
+    tutorialStep4Title: "第四步：叠加图像",
+    tutorialStep4Content: "上传图像并对设置满意后，单击“叠加图像”按钮。应用程序会将每个图像与您的参考帧对齐，然后将它们组合起来。进度条将显示状态。",
+    tutorialStep5Title: "第五步：后期处理和下载",
+    tutorialStep5Content: "叠加完成后，将显示最终图像。单击“完成并下载图像”以打开后期处理编辑器。在这里，您可以调整亮度、曝光和饱和度以增强图像。满意后，单击“下载图像”按钮将结果保存到您的计算机。"
   }
 };
 
 export const defaultLocale: Locale = 'en';
 
 export const getTranslations = (locale: Locale) => translations[locale] || translations[defaultLocale];
-
-    

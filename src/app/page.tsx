@@ -13,6 +13,7 @@ import { ImageUploadArea } from '@/components/astrostacker/ImageUploadArea';
 import { ImageQueueItem } from '@/components/astrostacker/ImageQueueItem';
 import { ImagePreview } from '@/components/astrostacker/ImagePreview';
 import { ImagePostProcessEditor } from '@/components/astrostacker/ImagePostProcessEditor';
+import { TutorialDialog } from '@/components/astrostacker/TutorialDialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Star as StarIcon, ListChecks, CheckCircle, RefreshCcw, Edit3, Loader2, Orbit, Trash2, Wand2, ShieldOff, Layers, Baseline, X, AlertTriangle } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
@@ -69,6 +70,7 @@ export default function AstroStackerPage() {
   const [exposure, setExposure] = useState(0);
   const [saturation, setSaturation] = useState(100);
   const [isApplyingAdjustments, setIsApplyingAdjustments] = useState(false);
+  const [isTutorialOpen, setIsTutorialOpen] = useState(false);
 
   const [darkFrameFiles, setDarkFrameFiles] = useState<File[]>([]);
   const [flatFrameFiles, setFlatFrameFiles] = useState<File[]>([]);
@@ -487,7 +489,7 @@ export default function AstroStackerPage() {
 
   return (
     <div className="flex flex-col min-h-screen bg-background">
-      <AppHeader />
+      <AppHeader onTutorialClick={() => setIsTutorialOpen(true)} />
       <main className="flex-grow container mx-auto py-6 px-2 sm:px-4 md:px-6">
         <div className="flex flex-col lg:flex-row gap-6">
           <div className="w-full lg:w-2/5 xl:w-1/3 space-y-6">
@@ -654,6 +656,7 @@ export default function AstroStackerPage() {
         {t('creditsLine2Part1')}
         </div>
       </footer>
+      <TutorialDialog isOpen={isTutorialOpen} onClose={() => setIsTutorialOpen(false)} />
     {showPostProcessEditor && imageForPostProcessing && (
         <ImagePostProcessEditor
           isOpen={showPostProcessEditor}

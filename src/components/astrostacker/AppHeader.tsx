@@ -1,11 +1,16 @@
 
 "use client"; // Added 'use client' for hooks
-import { Rocket } from 'lucide-react';
+import { Rocket, BookOpen } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext'; // Added import
 import { Button } from '@/components/ui/button'; // Added import
 import type { Locale } from '@/lib/translations'; // Added import
 
-export function AppHeader() {
+interface AppHeaderProps {
+  onTutorialClick: () => void;
+}
+
+
+export function AppHeader({ onTutorialClick }: AppHeaderProps) {
   const { language, setLanguage, t } = useLanguage(); // Added hook usage
 
   const handleLanguageChange = (lang: Locale) => {
@@ -21,35 +26,39 @@ export function AppHeader() {
             {t('appTitle')} {/* Translated title */}
           </h1>
         </div>
-        <div className="flex items-center gap-2">
-          <Button
-            variant={language === 'en' ? 'default' : 'outline'}
-            size="sm"
-            onClick={() => handleLanguageChange('en')}
-            className="text-xs px-2 py-1 h-auto"
-          >
-            {t('switchToEnglish')}
+        <div className="flex items-center gap-4">
+          <Button variant="outline" size="sm" onClick={onTutorialClick} className="flex items-center gap-2">
+            <BookOpen className="h-4 w-4" />
+            {t('tutorialButton')}
           </Button>
-          <Button
-            variant={language === 'ko' ? 'default' : 'outline'}
-            size="sm"
-            onClick={() => handleLanguageChange('ko')}
-            className="text-xs px-2 py-1 h-auto"
-          >
-            {t('switchToKorean')}
-          </Button>
-          <Button
-            variant={language === 'zh' ? 'default' : 'outline'}
-            size="sm"
-            onClick={() => handleLanguageChange('zh')}
-            className="text-xs px-2 py-1 h-auto"
-          >
-            {t('switchToChinese')}
-          </Button>
+          <div className="flex items-center gap-2">
+              <Button
+                variant={language === 'en' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => handleLanguageChange('en')}
+                className="text-xs px-2 py-1 h-auto"
+              >
+                {t('switchToEnglish')}
+              </Button>
+              <Button
+                variant={language === 'ko' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => handleLanguageChange('ko')}
+                className="text-xs px-2 py-1 h-auto"
+              >
+                {t('switchToKorean')}
+              </Button>
+              <Button
+                variant={language === 'zh' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => handleLanguageChange('zh')}
+                className="text-xs px-2 py-1 h-auto"
+              >
+                {t('switchToChinese')}
+              </Button>
+            </div>
         </div>
       </div>
     </header>
   );
 }
-
-    
