@@ -29,8 +29,6 @@ export function ImageUploadArea({ onFilesAdded, isProcessing, multiple = true }:
       'image/png': ['.png'],
       'image/gif': ['.gif'],
       'image/webp': ['.webp'],
-      'image/tiff': ['.tif', '.tiff'],
-      'image/x-adobe-dng': ['.dng'],
     },
     multiple: multiple, 
     disabled: isProcessing,
@@ -52,13 +50,8 @@ export function ImageUploadArea({ onFilesAdded, isProcessing, multiple = true }:
           {multiple ? "Drag & drop images here" : "Drag & drop a single image here"}
         </p>
         <p className="text-sm text-muted-foreground">
-          or click to select {multiple ? "files" : "a file"} (JPG, PNG, TIFF, DNG supported).
+          or click to select {multiple ? "files" : "a file"} (JPG, PNG supported).
         </p>
-        {multiple && (
-          <p className="text-xs text-muted-foreground mt-1">
-            RAW files are converted to 8-bit PNGs for processing.
-          </p>
-        )}
         <Button
             type="button"
             variant="outline"
