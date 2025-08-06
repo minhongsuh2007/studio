@@ -46,12 +46,14 @@ function fitGaussianPSF(
 ): { x: number; y: number; fwhm: number; amplitude: number; } | null {
   if (blob.pixels.length < 5) return null; // Need enough points for a stable fit
 
-  const patchRadius = Math.ceil(Math.sqrt(blob.pixels.length / Math.PI)) + 2;
   const initialX = blob.pixels.reduce((sum, p) => sum + (p % width), 0) / blob.pixels.length;
   const initialY = blob.pixels.reduce((sum, p) => sum + Math.floor(p / width), 0) / blob.pixels.length;
 
+  const patchRadius = Math.ceil(Math.sqrt(blob.pixels.length / Math.PI)) + 2;
+
   const patchPixels: { x: number, y: number, value: number }[] = [];
   let minVal = 255;
+  let hasSignal = false;
 
   for (const p of blob.pixels) {
     const x = p % width;
@@ -60,17 +62,18 @@ function fitGaussianPSF(
         const value = gray[p];
         patchPixels.push({ x, y, value });
         if (value < minVal) minVal = value;
+        if (value > minVal + 5) hasSignal = true;
     }
   }
   
-  if (patchPixels.length < 6) return null; // Need at least 6 points for the 6-parameter fit
+  if (patchPixels.length < 6 || !hasSignal) return null;
 
   const A: number[][] = [];
   const b: number[] = [];
 
   for (const p of patchPixels) {
-    const x = p.x - initialX;
-    const y = p.y - initialY;
+    const x = p.x;
+    const y = p.y;
     const val = p.value - minVal;
     if (val > 0) {
       A.push([x * x, y * y, x * y, x, y, 1]);
@@ -82,44 +85,45 @@ function fitGaussianPSF(
 
   try {
     const At = transpose(A);
-    const AtA = multiply(At, A);
+    let AtA = multiply(At, A);
+    
+    // Regularization: add a small identity matrix to prevent singularity
+    const regularizedAtA = matrix(AtA.valueOf());
+    for(let i=0; i<regularizedAtA.size()[0]; ++i){
+        (regularizedAtA as any)._data[i][i] += 1e-6;
+    }
+
     const Atb = multiply(At, b);
-    const coeffs = lusolve(AtA, Atb).valueOf().flat() as number[];
+    const coeffs = lusolve(regularizedAtA, Atb).valueOf().flat() as number[];
 
     const [c_xx, c_yy, c_xy, c_x, c_y, c_logA] = coeffs;
+
+    const M = matrix([[c_xx, c_xy / 2], [c_xy / 2, c_yy]]);
+    const V = matrix([[-c_x], [-c_y]]);
     
-    // Check for non-elliptic shape
-    if (4 * c_xx * c_yy - c_xy * c_xy <= 0) return null;
+    const centerOffset = multiply(inv(M), V).valueOf() as [[number], [number]];
+    const x_center = centerOffset[0][0] / 2;
+    const y_center = centerOffset[1][0] / 2;
+    
+    if (isNaN(x_center) || isNaN(y_center) || Math.abs(x_center - initialX) > patchRadius || Math.abs(y_center - initialY) > patchRadius) {
+      return null;
+    }
 
-    const det = c_xy * c_xy - 4 * c_xx * c_yy;
-    const x_center = (2 * c_yy * c_x - c_xy * c_y) / det + initialX;
-    const y_center = (2 * c_xx * c_y - c_xy * c_x) / det + initialY;
+    const amplitude = Math.exp(c_logA - (c_xx * x_center * x_center) - (c_yy * y_center * y_center) - (c_xy * x_center * y_center));
+    
+    const eigenvalues = (eigs(multiply(M, -2)) as any).values.valueOf() as number[];
+    if (eigenvalues.some(e => e <= 0)) return null;
 
-    // Check if center has moved too far
-    if (euclideanDist({x: initialX, y: initialY}, {x: x_center, y: y_center}) > patchRadius) return null;
-
-    const amplitude = Math.exp(c_logA + c_xx*Math.pow(x_center-initialX,2) + c_yy*Math.pow(y_center-initialY,2) + c_xy*(x_center-initialX)*(y_center-initialY));
-
-    // FWHM calculation
-    const alpha = Math.atan2(c_xy, c_xx - c_yy) / 2;
-    const cos_a = Math.cos(alpha);
-    const sin_a = Math.sin(alpha);
-    const term1 = c_xx * cos_a * cos_a + c_yy * sin_a * sin_a + c_xy * sin_a * cos_a;
-    const term2 = c_xx * sin_a * sin_a + c_yy * cos_a * cos_a - c_xy * sin_a * cos_a;
-
-    if (term1 >= 0 || term2 >= 0) return null; // Must be negative for Gaussian
-
-    const fwhm_x = 2 * Math.sqrt(Math.log(2) / -term1);
-    const fwhm_y = 2 * Math.sqrt(Math.log(2) / -term2);
-    const fwhm = (fwhm_x + fwhm_y) / 2;
-
+    const fwhm1 = 2 * Math.sqrt(2 * Math.log(2) / eigenvalues[0]);
+    const fwhm2 = 2 * Math.sqrt(2 * Math.log(2) / eigenvalues[1]);
+    const fwhm = (fwhm1 + fwhm2) / 2;
+    
     if (isNaN(fwhm) || fwhm < 1.0 || fwhm > patchRadius * 2) return null;
-    if (isNaN(amplitude) || amplitude < 0) return null;
 
     return { x: x_center, y: y_center, fwhm, amplitude };
 
   } catch (e) {
-    return null; // Matrix solve failed
+    return null;
   }
 }
 
@@ -188,8 +192,7 @@ export function detectStars(
         }
     }
 
-    // Return top 300 brightest stars to ensure we have enough candidates for matching
-    return stars.sort((a, b) => b.brightness - a.brightness).slice(0, 300);
+    return stars.sort((a, b) => b.brightness - a.brightness);
 }
 
 // --- STAGE 2: TRIANGLE-BASED PATTERN MATCHING ---
@@ -243,6 +246,7 @@ function createStarTriangles(stars: Star[]): Triangle[] {
  * Finds the similarity transform between two sets of stars using triangle matching.
  */
 function findTransform(refStars: Star[], targetStars: Star[]): { scale: number; rotation: number; translation: Point } | null {
+    if (refStars.length < 3 || targetStars.length < 3) return null;
     const refTriangles = createStarTriangles(refStars);
     const targetTriangles = createStarTriangles(targetStars);
 
@@ -257,7 +261,9 @@ function findTransform(refStars: Star[], targetStars: Star[]): { scale: number; 
     const correspondences: { p1: Point; p2: Point }[] = [];
     for (const refTri of refTriangles) {
         if (triangleMap.has(refTri.hash)) {
-            for (const targetTri of triangleMap.get(refTri.hash)!) {
+            const matchedTargetTris = triangleMap.get(refTri.hash)!;
+            for (const targetTri of matchedTargetTris) {
+                 // Create correspondences for all 3 vertices of the matched triangles
                 for (let i = 0; i < 3; i++) {
                     correspondences.push({
                         p1: refStars[refTri.indices[i]],
@@ -542,7 +548,7 @@ function stackImagesSigmaClip(images: (Uint8ClampedArray | null)[], sigma = 2.0)
 // --- MAIN ALIGNMENT & STACKING FUNCTION ---
 export async function alignAndStack(
   imageEntries: ImageQueueEntry[],
-  manualRefStars: Star[], // Manual stars are not used in this robust version
+  manualRefStars: Star[],
   mode: StackingMode,
   addLog: (message: string) => void,
   setProgress: (progress: number) => void
@@ -559,7 +565,6 @@ export async function alignAndStack(
   
   if (refStars.length < 3) {
     addLog(`Error: Reference image has fewer than 3 stars (${refStars.length}). Cannot proceed with alignment.`);
-    // Return the reference image unstacked if it's the only one.
     if(imageEntries.length === 1) return refEntry.imageData!.data;
     throw new Error("Reference image has too few stars to align the stack.");
   }
