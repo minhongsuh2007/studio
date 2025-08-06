@@ -24,78 +24,7 @@ function toGrayscale(imageData: ImageData): Uint8Array {
   return gray;
 }
 
-// --- 2) Blob detection (for candidacy) + PSF fitting ---
-
-function fitGaussianPSF(patch: number[][], initialX: number, initialY: number): { x: number, y: number, brightness: number, fwhm: number } | null {
-    const size = patch.length;
-    if (size === 0) return null;
-    const halfSize = Math.floor(size / 2);
-
-    let A = [];
-    let b = [];
-
-    for (let r = 0; r < size; r++) {
-        for (let c = 0; c < size; c++) {
-            const x = c - halfSize;
-            const y = r - halfSize;
-            const z = patch[r][c];
-            if (z > 0) {
-                const log_z = Math.log(z);
-                A.push([x * x, y * y, x * y, x, y, 1]);
-                b.push(log_z);
-            }
-        }
-    }
-
-    if (A.length < 6) return null;
-
-    try {
-        const At = transpose(matrix(A));
-        const AtA = multiply(At, matrix(A));
-        const Atb = multiply(At, matrix(b));
-        
-        const identity = matrix(Array(AtA.size()[0]).fill(0).map((_, i) => Array(AtA.size()[1]).fill(0).map((_, j) => i === j ? 1e-6 : 0)));
-        const regularizedAtA = AtA.map((value, index, m) => value + identity.get(index));
-
-        const coeffs = lusolve(regularizedAtA, Atb).toArray().flat() as number[];
-
-        const [c_xx, c_yy, c_xy, c_x, c_y, c_0] = coeffs;
-        
-        const q_safe = (4 * c_xx * c_yy - c_xy * c_xy);
-        if (Math.abs(q_safe) < 1e-6) return null; 
-
-        const x_center = (c_xy * c_y - 2 * c_yy * c_x) / q_safe;
-        const y_center = (c_xy * c_x - 2 * c_xx * c_y) / q_safe;
-
-        const brightness = Math.exp(c_0 + (c_x * x_center + c_y * y_center) / 2);
-        
-        const fwhm_denom = (c_xx * c_yy - c_xy*c_xy/4);
-        if (Math.abs(fwhm_denom) < 1e-6) return null;
-        
-        const fwhm_term_sqrt_arg = Math.pow(c_xx - c_yy, 2) + c_xy*c_xy;
-        if (fwhm_term_sqrt_arg < 0) return null;
-        
-        const fwhm_term = (c_xx + c_yy + Math.sqrt(fwhm_term_sqrt_arg));
-
-        const fwhm_log_arg = -2 * Math.log(0.5) * fwhm_term / fwhm_denom;
-        if (fwhm_log_arg < 0) return null;
-
-        const fwhm = Math.sqrt(fwhm_log_arg) * 2;
-        
-        if (isNaN(fwhm) || !isFinite(fwhm) || fwhm <= 0) return null;
-        
-        return {
-            x: initialX + x_center,
-            y: initialY + y_center,
-            brightness,
-            fwhm,
-        };
-
-    } catch (error) {
-        return null;
-    }
-}
-
+// --- 2) Star Detection (Center of Mass) ---
 
 function detectStars(
   gray: Uint8Array,
@@ -103,22 +32,23 @@ function detectStars(
   height: number,
   threshold: number,
   minSize = 3,
-  maxSize = 100 
+  maxSize = 100
 ): Star[] {
   const visited = new Uint8Array(gray.length);
   const stars: Star[] = [];
-  const psfPatchSize = 7; 
-  const halfPsfPatchSize = Math.floor(psfPatchSize / 2);
 
-  function neighbors(pos: number): number[] {
+  function getNeighbors(pos: number): number[] {
     const neighbors = [];
     const x = pos % width;
     const y = Math.floor(pos / width);
     for (let dy = -1; dy <= 1; dy++) {
       for (let dx = -1; dx <= 1; dx++) {
         if (dx === 0 && dy === 0) continue;
-        const nx = x + dx, ny = y + dy;
-        if (nx >= 0 && nx < width && ny >= 0 && ny < height) neighbors.push(ny * width + nx);
+        const nx = x + dx;
+        const ny = y + dy;
+        if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+          neighbors.push(ny * width + nx);
+        }
       }
     }
     return neighbors;
@@ -126,8 +56,8 @@ function detectStars(
 
   function computeDescriptor(cx: number, cy: number): number[] {
     const patch: number[] = [];
-    for (let dy = -1; dy <= 1; dy++) {
-      for (let dx = -1; dx <= 1; dx++) {
+    for (let dy = -2; dy <= 2; dy++) {
+      for (let dx = -2; dx <= 2; dx++) {
         const x = Math.round(cx + dx);
         const y = Math.round(cy + dy);
         if (x >= 0 && x < width && y >= 0 && y < height) {
@@ -139,65 +69,60 @@ function detectStars(
     }
     return patch;
   }
-  
+
   for (let i = 0; i < gray.length; i++) {
     if (visited[i] || gray[i] < threshold) continue;
 
     const queue = [i];
     visited[i] = 1;
-    let blobPixels = [];
-    let sumX = 0, sumY = 0, count = 0;
+    const blobPixelsPos: number[] = [];
 
     while (queue.length > 0) {
       const p = queue.shift()!;
-      const x = p % width;
-      const y = Math.floor(p / width);
-      
-      blobPixels.push({x,y});
-      sumX += x;
-      sumY += y;
-      count++;
-      
-      for (const n of neighbors(p)) {
+      blobPixelsPos.push(p);
+
+      for (const n of getNeighbors(p)) {
         if (!visited[n] && gray[n] >= threshold) {
           visited[n] = 1;
           queue.push(n);
         }
       }
     }
-    
+
+    const count = blobPixelsPos.length;
     if (count >= minSize && count <= maxSize) {
-        const approxCx = sumX / count;
-        const approxCy = sumY / count;
+      let sumX = 0, sumY = 0, totalBrightness = 0;
 
-        if (approxCx > halfPsfPatchSize && approxCx < width - halfPsfPatchSize &&
-            approxCy > halfPsfPatchSize && approxCy < height - halfPsfPatchSize) {
-            
-            const patch: number[][] = Array(psfPatchSize).fill(0).map(() => Array(psfPatchSize).fill(0));
-            
-            for (let r = 0; r < psfPatchSize; r++) {
-                for (let c = 0; c < psfPatchSize; c++) {
-                    const sampleX = Math.round(approxCx) - halfPsfPatchSize + c;
-                    const sampleY = Math.round(approxCy) - halfPsfPatchSize + r;
-                    const val = gray[sampleY * width + sampleX];
-                    patch[r][c] = val;
-                }
-            }
+      for (const pos of blobPixelsPos) {
+        const brightness = gray[pos];
+        sumX += (pos % width) * brightness;
+        sumY += Math.floor(pos / width) * brightness;
+        totalBrightness += brightness;
+      }
+      
+      if (totalBrightness === 0) continue;
 
-            const fitResult = fitGaussianPSF(patch, approxCx, approxCy);
-
-            if (fitResult) {
-                const desc = computeDescriptor(fitResult.x, fitResult.y);
-                stars.push({
-                    x: fitResult.x,
-                    y: fitResult.y,
-                    brightness: fitResult.brightness,
-                    size: count,
-                    fwhm: fitResult.fwhm,
-                    descriptor: desc
-                });
-            }
-        }
+      const centerX = sumX / totalBrightness;
+      const centerY = sumY / totalBrightness;
+      
+      let fwhmRadiusSum = 0;
+      for (const pos of blobPixelsPos) {
+        const dx = (pos % width) - centerX;
+        const dy = Math.floor(pos / width) - centerY;
+        fwhmRadiusSum += Math.sqrt(dx * dx + dy * dy);
+      }
+      const fwhm = (fwhmRadiusSum / count) * 2.355;
+      
+      if (!isNaN(centerX) && !isNaN(centerY) && isFinite(centerX) && isFinite(centerY)) {
+        stars.push({
+          x: centerX,
+          y: centerY,
+          brightness: totalBrightness / count,
+          size: count,
+          fwhm: fwhm,
+          descriptor: computeDescriptor(centerX, centerY),
+        });
+      }
     }
   }
   return stars;
