@@ -1,3 +1,4 @@
+
 // --- Types ---
 import { matrix, inv, multiply, transpose, lusolve, median, mean, std } from 'mathjs';
 
@@ -25,93 +26,21 @@ function toGrayscale(imageData: ImageData): Uint8Array {
   return gray;
 }
 
-// --- 2) PSF Fitting ---
-function fitGaussianPSF(
-    patch: number[],
-    patchSize: number,
-    initialX: number,
-    initialY: number
-): { x: number; y: number; fwhm: number; peak: number } | null {
-    if (patch.length === 0) return null;
-    const patchDim = 2 * patchSize + 1;
-    const centerOffset = patchSize;
 
-    const coords: { x: number, y: number }[] = [];
-    const values: number[] = [];
-
-    let hasSignal = false;
-    for (let i = 0; i < patch.length; i++) {
-        if (patch[i] > 1) { 
-            hasSignal = true;
-            const x = (i % patchDim) - centerOffset;
-            const y = Math.floor(i / patchDim) - centerOffset;
-            coords.push({ x, y });
-            values.push(Math.log(patch[i]));
-        }
-    }
-
-    if (!hasSignal || coords.length < 6) return null;
-
-    const X_data = coords.map(c => [c.x * c.x, c.y * c.y, c.x * c.y, c.x, c.y, 1]);
-    try {
-        const X = matrix(X_data);
-        const y = matrix(values);
-
-        const Xt = transpose(X);
-        const XtX = multiply(Xt, X);
-        const XtY = multiply(Xt, y);
-
-        const regularizedXtX = lusolve(XtX, XtY);
-        const c = regularizedXtX.valueOf().flat() as number[];
-
-        const [c_xx, c_yy, c_xy, c_x, c_y, c_0] = c;
-
-        if (c_xx >= 0 || c_yy >= 0) return null;
-        
-        const det = 4 * c_xx * c_yy - c_xy * c_xy;
-        if (det === 0) return null;
-
-        const x_center = (c_xy * c_y - 2 * c_yy * c_x) / det;
-        const y_center = (c_xy * c_x - 2 * c_xx * c_y) / det;
-
-        const sigma_x_sq = -2 / det * c_yy;
-        const sigma_y_sq = -2 / det * c_xx;
-        
-        if (sigma_x_sq <= 0 || sigma_y_sq <= 0) return null;
-
-        const fwhm = 2.3548 * Math.sqrt((Math.sqrt(sigma_x_sq) + Math.sqrt(sigma_y_sq)) / 2);
-        const peak = Math.exp(c_0 + c_x*x_center + c_y*y_center + c_xx*x_center*x_center + c_yy*y_center*y_center + c_xy*x_center*y_center);
-        
-        if (isNaN(fwhm) || fwhm < 1 || fwhm > patchSize) {
-          return null;
-        }
-
-        return {
-            x: initialX + x_center,
-            y: initialY + y_center,
-            fwhm: fwhm,
-            peak: peak
-        };
-    } catch (error) {
-        return null; 
-    }
-}
-
-
-// --- 3) Star Detection (Blob + PSF) ---
+// --- 3) Star Detection (Blob + Center of Mass) ---
 function detectStars(
-  gray: Uint8Array,
+  imageData: ImageData,
   width: number,
   height: number,
   threshold: number,
   minSize = 3,
-  maxSize = 150
+  maxSize = 250
 ): Star[] {
+  const gray = toGrayscale(imageData);
   const visited = new Uint8Array(gray.length);
   const stars: Star[] = [];
-  const psfPatchSize = 5; 
 
-  function getNeighbors(pos: number): number[] {
+  const getNeighbors = (pos: number): number[] => {
     const neighbors = [];
     const x = pos % width;
     const y = Math.floor(pos / width);
@@ -126,25 +55,7 @@ function detectStars(
       }
     }
     return neighbors;
-  }
-
-  function computeDescriptor(cx: number, cy: number): number[] {
-    const patch: number[] = [];
-    const patchRadius = 2; 
-    for (let dy = -patchRadius; dy <= patchRadius; dy++) {
-      for (let dx = -patchRadius; dx <= patchRadius; dx++) {
-        const x = Math.round(cx + dx);
-        const y = Math.round(cy + dy);
-        if (x >= 0 && x < width && y >= 0 && y < height) {
-          patch.push(gray[y * width + x] / 255.0); 
-        } else {
-          patch.push(0);
-        }
-      }
-    }
-    return patch;
-  }
-
+  };
 
   for (let i = 0; i < gray.length; i++) {
     if (visited[i] || gray[i] < threshold) continue;
@@ -152,7 +63,7 @@ function detectStars(
     const queue = [i];
     visited[i] = 1;
     const blobPixelsPos: number[] = [];
-    let sumX = 0, sumY = 0, totalBrightness = 0;
+    let sumX = 0, sumY = 0, totalBrightness = 0, peakBrightness = 0;
 
     while (queue.length > 0) {
       const p = queue.shift()!;
@@ -161,9 +72,11 @@ function detectStars(
       const x = p % width;
       const y = Math.floor(p / width);
       const brightness = gray[p];
+
       sumX += x * brightness;
       sumY += y * brightness;
       totalBrightness += brightness;
+      if (brightness > peakBrightness) peakBrightness = brightness;
 
       for (const n of getNeighbors(p)) {
         if (!visited[n] && gray[n] >= threshold) {
@@ -174,76 +87,50 @@ function detectStars(
     }
 
     const count = blobPixelsPos.length;
-    if (count >= minSize && count <= maxSize) {
-        if (totalBrightness === 0) continue;
-        const initialX = sumX / totalBrightness;
-        const initialY = sumY / totalBrightness;
+    if (count >= minSize && count <= maxSize && totalBrightness > 0) {
+      const cx = sumX / totalBrightness;
+      const cy = sumY / totalBrightness;
 
-        const patch: number[] = [];
-        for (let y = -psfPatchSize; y <= psfPatchSize; y++) {
-            for (let x = -psfPatchSize; x <= psfPatchSize; x++) {
-                const sampleX = Math.round(initialX + x);
-                const sampleY = Math.round(initialY + y);
-                if (sampleX >= 0 && sampleX < width && sampleY >= 0 && sampleY < height) {
-                    patch.push(gray[sampleY * width + sampleX]);
-                } else {
-                    patch.push(0);
-                }
-            }
-        }
-        
-        const psfResult = fitGaussianPSF(patch, psfPatchSize, initialX, initialY);
-        
-        if (psfResult && psfResult.peak > threshold) {
-             stars.push({
-              x: psfResult.x,
-              y: psfResult.y,
-              brightness: psfResult.peak,
-              size: count,
-              fwhm: psfResult.fwhm,
-              descriptor: computeDescriptor(psfResult.x, psfResult.y),
-            });
-        }
+      let sumDistSq = 0;
+      for (const p of blobPixelsPos) {
+        const x = p % width;
+        const y = Math.floor(p / width);
+        sumDistSq += (x - cx) ** 2 + (y - cy) ** 2;
+      }
+      
+      const avgDist = Math.sqrt(sumDistSq / count);
+      const fwhm = 2.0 * avgDist; // Simplified FWHM estimation
+
+      if (fwhm > 0) {
+        stars.push({
+          x: cx,
+          y: cy,
+          brightness: peakBrightness,
+          size: count,
+          fwhm: fwhm,
+          descriptor: [] // Descriptor will be built later if needed
+        });
+      }
     }
   }
-  return stars;
+
+  // Return top 50 brightest stars, which are most likely to be reliable
+  return stars.sort((a, b) => b.brightness - a.brightness).slice(0, 50);
 }
 
 
-// --- 4) Multi-scale detection (simple 2x downscale) ---
+// --- 4) Multi-scale detection ---
 export function detectStarsMultiScale(
   imageData: ImageData,
   width: number,
   height: number,
   threshold: number
 ): Star[] {
-  const gray = toGrayscale(imageData);
-  const starsScale1 = detectStars(gray, width, height, threshold, 3);
-  
-  const width2 = Math.floor(width / 2);
-  const height2 = Math.floor(height / 2);
-  const gray2 = new Uint8Array(width2 * height2);
-  for (let y = 0; y < height2; y++) {
-    for (let x = 0; x < width2; x++) {
-      const sum =
-        gray[y * 2 * width + x * 2] +
-        gray[y * 2 * width + x * 2 + 1] +
-        gray[(y * 2 + 1) * width + x * 2] +
-        gray[(y * 2 + 1) * width + x * 2 + 1];
-      gray2[y * width2 + x] = Math.floor(sum / 4);
-    }
-  }
-  const starsScale2Raw = detectStars(gray2, width2, height2, threshold, 3);
-  const starsScale2 = starsScale2Raw.map(s => ({ ...s, x: s.x * 2, y: s.y * 2 }));
-  
-  const combined: Star[] = [...starsScale1];
-  for (const s2 of starsScale2) {
-    if (!combined.some(s1 => euclideanDist(s1, s2) < 5)) {
-      combined.push(s2);
-    }
-  }
-  return combined.sort((a, b) => b.brightness - a.brightness);
+  // For now, focusing on single-scale robustness.
+  // The multi-scale logic can sometimes introduce noise.
+  return detectStars(imageData, width, height, threshold, 3, 250);
 }
+
 
 // --- 5) Euclidean distance ---
 function euclideanDist(p1: Point, p2: Point): number {
@@ -252,45 +139,59 @@ function euclideanDist(p1: Point, p2: Point): number {
   return Math.sqrt(dx * dx + dy * dy);
 }
 
-// --- 6) Descriptor distance ---
-function descriptorDist(d1: number[], d2: number[]): number {
-  let sum = 0;
-  for (let i = 0; i < d1.length; i++) {
-    const diff = d1[i] - d2[i];
-    sum += diff * diff;
-  }
-  return Math.sqrt(sum);
+
+// --- 8) Triangle-based Feature Matching ---
+function getTriangleHash(p1: Star, p2: Star, p3: Star) {
+  const sides = [euclideanDist(p2, p3), euclideanDist(p1, p3), euclideanDist(p1, p2)].sort((a, b) => a - b);
+  if (sides[0] < 1e-6) return null;
+  return `${(sides[1] / sides[0]).toFixed(2)}:${(sides[2] / sides[0]).toFixed(2)}`;
 }
 
+function findTriangleMatches(stars1: Star[], stars2: Star[], addLog: (message: string) => void): [Star, Star][] {
+  if (stars1.length < 3 || stars2.length < 3) return [];
 
-// --- 8) Feature matching ---
-function matchFeatures(
-  stars1: Star[],
-  stars2: Star[],
-  maxDistance = 100, // Increased tolerance
-  descriptorThreshold = 0.8 // Increased tolerance
-): [Star, Star][] {
-    if (stars1.length === 0 || stars2.length === 0) return [];
-    
-    const matches: [Star, Star][] = [];
-
-    for (const s1 of stars1) {
-        let bestMatch: Star | null = null;
-        let bestDist = Infinity;
-
-        for (const s2 of stars2) {
-            const d = descriptorDist(s1.descriptor, s2.descriptor);
-            if (d < bestDist && d < descriptorThreshold && euclideanDist(s1, s2) < maxDistance) {
-                bestDist = d;
-                bestMatch = s2;
-            }
-        }
-        
-        if (bestMatch) {
-            matches.push([s1, bestMatch]);
-        }
+  const map1 = new Map<string, [Star, Star, Star]>();
+  for (let i = 0; i < stars1.length; i++) {
+    for (let j = i + 1; j < stars1.length; j++) {
+      for (let k = j + 1; k < stars1.length; k++) {
+        const hash = getTriangleHash(stars1[i], stars1[j], stars1[k]);
+        if (hash) map1.set(hash, [stars1[i], stars1[j], stars1[k]]);
+      }
     }
-    return matches;
+  }
+
+  if (map1.size === 0) {
+    addLog("Could not form any unique triangles from reference image.");
+    return [];
+  }
+  
+  const correspondences: [Star, Star][] = [];
+  const usedStars2 = new Set<Star>();
+
+  for (let i = 0; i < stars2.length; i++) {
+    for (let j = i + 1; j < stars2.length; j++) {
+      for (let k = j + 1; k < stars2.length; k++) {
+        const t2 = [stars2[i], stars2[j], stars2[k]];
+        const hash = getTriangleHash(t2[0], t2[1], t2[2]);
+        
+        if (hash && map1.has(hash)) {
+          const t1 = map1.get(hash)!;
+          
+          // Check if any of these stars have been used
+          if (t2.some(s => usedStars2.has(s))) continue;
+
+          // Add correspondences and mark stars as used
+          for(let m = 0; m < 3; m++) {
+            correspondences.push([t1[m], t2[m]]);
+            usedStars2.add(t2[m]);
+          }
+        }
+      }
+    }
+  }
+
+  addLog(`Found ${correspondences.length} corresponding points via triangle matching.`);
+  return correspondences;
 }
 
 
@@ -300,9 +201,10 @@ function estimateSimilarityTransform(
   points2: Point[]
 ): { scale: number; rotation: number; translation: Point } | null {
   if (points1.length < 2 || points2.length < 2) return null;
-  const n = Math.min(points1.length, points2.length);
-  const centroid1 = points1.reduce((acc, p) => ({ x: acc.x + p.x, y: acc.y + p.y }), { x: 0, y: 0 });
-  const centroid2 = points2.reduce((acc, p) => ({ x: acc.x + p.x, y: acc.y + p.y }), { x: 0, y: 0 });
+  const n = points1.length; // Use points1 length
+  let centroid1 = { x: 0, y: 0 }, centroid2 = { x: 0, y: 0 };
+  points1.forEach(p => { centroid1.x += p.x; centroid1.y += p.y; });
+  points2.forEach(p => { centroid2.x += p.x; centroid2.y += p.y; });
   centroid1.x /= n; centroid1.y /= n;
   centroid2.x /= n; centroid2.y /= n;
 
@@ -317,12 +219,15 @@ function estimateSimilarityTransform(
     cov_yx += centered2[i].y * centered1[i].x;
     cov_yy += centered2[i].y * centered1[i].y;
   }
-  if (var1 === 0) return null;
+  if (Math.abs(var1) < 1e-9) return null;
 
   const a = cov_xx + cov_yy;
   const b = cov_yx - cov_xy;
   const scale = Math.sqrt(a * a + b * b) / var1;
   const rotation = Math.atan2(b, a);
+
+  if (isNaN(scale) || isNaN(rotation)) return null;
+  
   const translation = {
     x: centroid2.x - scale * (Math.cos(rotation) * centroid1.x - Math.sin(rotation) * centroid1.y),
     y: centroid2.y - scale * (Math.sin(rotation) * centroid1.x + Math.cos(rotation) * centroid1.y),
@@ -334,20 +239,28 @@ function estimateSimilarityTransform(
 function estimateSimilarityTransformRANSAC(
   points1: Point[],
   points2: Point[],
-  iterations = 100,
-  threshold = 3
+  iterations = 200, // More iterations for robustness
+  threshold = 2.0   // Tighter threshold for accuracy
 ): { scale: number; rotation: number; translation: Point } | null {
-  if (points1.length < 3 || points2.length < 3) return null;
+  if (points1.length < 3) return null;
   let bestInliers: number[] = [];
   let bestTransform: ReturnType<typeof estimateSimilarityTransform> | null = null;
+
   for (let iter = 0; iter < iterations; iter++) {
-    const idx1 = Math.floor(Math.random() * points1.length);
-    let idx2 = Math.floor(Math.random() * points1.length);
-    while (idx2 === idx1) idx2 = Math.floor(Math.random() * points1.length);
-    const samplePoints1 = [points1[idx1], points1[idx2]];
-    const samplePoints2 = [points2[idx1], points2[idx2]];
+    // Select 3 random points for a more stable estimate
+    const indices: number[] = [];
+    while (indices.length < 3) {
+      const idx = Math.floor(Math.random() * points1.length);
+      if (!indices.includes(idx)) {
+        indices.push(idx);
+      }
+    }
+    const samplePoints1 = indices.map(i => points1[i]);
+    const samplePoints2 = indices.map(i => points2[i]);
+    
     const candidate = estimateSimilarityTransform(samplePoints1, samplePoints2);
     if (!candidate) continue;
+
     const inliers: number[] = [];
     for (let i = 0; i < points1.length; i++) {
       const warped = warpPoint(points1[i], candidate);
@@ -355,14 +268,18 @@ function estimateSimilarityTransformRANSAC(
         inliers.push(i);
       }
     }
+
     if (inliers.length > bestInliers.length) {
       bestInliers = inliers;
-      bestTransform = candidate;
     }
   }
-  if (bestInliers.length < 3 || !bestTransform) return null;
+
+  if (bestInliers.length < 3) return null;
+
   const inlierPoints1 = bestInliers.map(i => points1[i]);
   const inlierPoints2 = bestInliers.map(i => points2[i]);
+  
+  // Final transform based on the best set of inliers
   return estimateSimilarityTransform(inlierPoints1, inlierPoints2);
 }
 
@@ -385,19 +302,28 @@ function warpImage(
     transform: { scale: number; rotation: number; translation: Point }
 ): Uint8ClampedArray {
     const dstData = new Uint8ClampedArray(srcData.length);
+    if (Math.abs(transform.scale) < 1e-9) return dstData;
+
+    // Create inverse transform
     const cosR = Math.cos(-transform.rotation);
     const sinR = Math.sin(-transform.rotation);
-    if (transform.scale === 0) return dstData;
     const invScale = 1 / transform.scale;
+    const transX = -transform.translation.x;
+    const transY = -transform.translation.y;
 
     for (let y = 0; y < srcHeight; y++) {
         for (let x = 0; x < srcWidth; x++) {
             const dstIdx = (y * srcWidth + x) * 4;
 
-            const dx = x - transform.translation.x;
-            const dy = y - transform.translation.y;
-            const srcX = invScale * (cosR * dx - sinR * dy);
-            const srcY = invScale * (sinR * dx + cosR * dy);
+            // Apply inverse transform to find where destination pixel (x,y) comes from in the source
+            const srcX_untranslated = x + transX;
+            const srcY_untranslated = y + transY;
+
+            const srcX_rotated = srcX_untranslated * cosR - srcY_untranslated * sinR;
+            const srcY_rotated = srcX_untranslated * sinR + srcY_untranslated * cosR;
+
+            const srcX = srcX_rotated * invScale;
+            const srcY = srcY_rotated * invScale;
             
             const x0 = Math.floor(srcX);
             const y0 = Math.floor(srcY);
@@ -412,16 +338,8 @@ function warpImage(
             const x_frac = srcX - x0;
             const y_frac = srcY - y0;
             
-            const c00_idx = (y0 * srcWidth + x0) * 4;
-            const c00_alpha = srcData[c00_idx + 3];
-
-            if (c00_alpha === 0) { 
-                dstData[dstIdx + 3] = 0;
-                continue;
-            }
-
             for (let channel = 0; channel < 3; channel++) { 
-                const c00 = srcData[c00_idx + channel];
+                const c00 = srcData[(y0 * srcWidth + x0) * 4 + channel];
                 const c10 = srcData[(y0 * srcWidth + x1) * 4 + channel];
                 const c01 = srcData[(y1 * srcWidth + x0) * 4 + channel];
                 const c11 = srcData[(y1 * srcWidth + x1) * 4 + channel];
@@ -440,7 +358,6 @@ function warpImage(
 
 
 // --- 13) Stacking implementations ---
-
 function stackImagesAverage(images: (Uint8ClampedArray | null)[]): Uint8ClampedArray {
     const validImages = images.filter((img): img is Uint8ClampedArray => img !== null);
     if (validImages.length === 0) throw new Error("No valid images to stack");
@@ -545,39 +462,6 @@ function stackImagesSigmaClip(images: (Uint8ClampedArray | null)[], sigma = 2.0)
     return result;
 }
 
-// --- NEW --- Find stars that are shared across all images
-function findSharedStars(
-  allEntries: ImageQueueEntry[],
-  addLog: (message: string) => void
-): Star[] {
-  if (allEntries.length < 2) {
-    const stars = allEntries[0]?.detectedStars || [];
-    addLog(`Only one image, using its ${stars.length} detected stars.`);
-    return stars;
-  }
-
-  const refStars = allEntries[0].detectedStars;
-  const sharedStars: Star[] = [];
-
-  for (const refStar of refStars) {
-    let isShared = true;
-    for (let i = 1; i < allEntries.length; i++) {
-      const targetStars = allEntries[i].detectedStars;
-      const matches = matchFeatures([refStar], targetStars);
-      if (matches.length === 0) {
-        isShared = false;
-        break; // Stop checking other images for this refStar
-      }
-    }
-    if (isShared) {
-      sharedStars.push(refStar);
-    }
-  }
-
-  addLog(`Found a final set of ${sharedStars.length} stars common to all images.`);
-  return sharedStars;
-}
-
 
 // --- 14) Main alignment function ---
 export async function alignAndStack(
@@ -593,48 +477,54 @@ export async function alignAndStack(
 
   const refEntry = imageEntries[0];
   const { width, height } = refEntry.imageData;
-  let alignedImageDatas: (Uint8ClampedArray | null)[] = [refEntry.imageData.data];
+  const alignedImageDatas: (Uint8ClampedArray | null)[] = [refEntry.imageData.data];
   
-  // Use manually selected stars if present, otherwise find stars shared across all images.
-  const allRefStars = manualRefStars.length > 0 
+  const refStars = manualRefStars.length > 0 
     ? manualRefStars 
-    : findSharedStars(imageEntries, addLog);
+    : refEntry.detectedStars;
 
-  if (allRefStars.length < 3) {
-    addLog(`Warning: Fewer than 3 reference stars (${allRefStars.length}) found across all images. Alignment quality may be poor or fail.`);
+  if (refStars.length < 3) {
+      addLog(`Warning: Reference image has fewer than 3 stars (${refStars.length}). Alignment will likely fail.`);
   }
+
 
   for (let i = 1; i < imageEntries.length; i++) {
     const targetEntry = imageEntries[i];
     const progress = (i + 1) / imageEntries.length;
 
+    addLog(`--- Aligning Image ${i+1}/${imageEntries.length} ---`);
+
     if (!targetEntry.imageData) {
-      addLog(`Skipping image ${i} due to missing image data.`);
+      addLog(`Skipping image ${i}: missing image data.`);
+      alignedImageDatas.push(null);
+      setProgress(progress);
+      continue;
+    }
+    if (targetEntry.detectedStars.length < 3) {
+      addLog(`Skipping image ${i}: not enough stars detected (${targetEntry.detectedStars.length}).`);
       alignedImageDatas.push(null);
       setProgress(progress);
       continue;
     }
 
     // Match the shared reference stars to the current target image's stars
-    const matches = matchFeatures(allRefStars, targetEntry.detectedStars);
+    const matches = findTriangleMatches(refStars, targetEntry.detectedStars, addLog);
     
     if (matches.length < 3) {
-      addLog(`Skipping image ${i}: Could not find enough matches (${matches.length}) to the shared star pattern.`);
+      addLog(`Skipping image ${i}: Could not find enough triangle matches (${matches.length}).`);
       alignedImageDatas.push(null);
       setProgress(progress);
       continue;
     }
-
-    addLog(`Image ${i}: Found ${matches.length} matches to the shared star pattern.`);
     
     const ransacPoints1 = matches.map(m => m[0]);
     const ransacPoints2 = matches.map(m => m[1]);
     const transform = estimateSimilarityTransformRANSAC(ransacPoints1, ransacPoints2);
       
     if (transform) {
+      addLog(`Image ${i}: Found transform: S: ${transform.scale.toFixed(3)}, R: ${(transform.rotation * 180 / Math.PI).toFixed(3)}°, T:(${transform.translation.x.toFixed(2)}, ${transform.translation.y.toFixed(2)})`);
       const warpedData = warpImage(targetEntry.imageData.data, width, height, transform);
       alignedImageDatas.push(warpedData);
-      addLog(`Image ${i}: Aligned using RANSAC with shared stars.`);
     } else {
       addLog(`Skipping image ${i}: Could not determine transform with RANSAC.`);
       alignedImageDatas.push(null);
