@@ -479,9 +479,9 @@ function stackImagesAverage(images: (Uint8ClampedArray | null)[]): Uint8ClampedA
     for (let i = 0; i < length; i += 4) {
         const count = counts[i / 4];
         if (count > 0) {
-            result[i] = Math.min(255, accum[i] / count);
-            result[i + 1] = Math.min(255, accum[i + 1] / count);
-            result[i + 2] = Math.min(255, accum[i + 2] / count);
+            result[i] = accum[i] / count;
+            result[i + 1] = accum[i + 1] / count;
+            result[i + 2] = accum[i + 2] / count;
             result[i + 3] = 255; // Final image is opaque
         }
     }
@@ -503,8 +503,10 @@ function stackImagesMedian(images: (Uint8ClampedArray | null)[]): Uint8ClampedAr
                     pixelValues.push(img[i + channel]);
                 }
             }
-            if (pixelValues.length > 0) {
+            if (pixelValues.length > 2) {
                 result[i + channel] = median(pixelValues);
+            } else if (pixelValues.length > 0) {
+                 result[i + channel] = pixelValues.reduce((a, b) => a + b, 0) / pixelValues.length;
             }
         }
         // Set alpha based on how many images contributed
@@ -539,11 +541,18 @@ function stackImagesSigmaClip(images: (Uint8ClampedArray | null)[], sigma = 2.0)
             
             const mu = mean(pixelValues);
             const stdev = std(pixelValues);
+            if (stdev === 0) { // All values are the same
+                 result[i + channel] = mu;
+                 continue;
+            }
+
             const threshold = sigma * stdev;
             const filtered = pixelValues.filter(v => Math.abs(v - mu) < threshold);
             
             if (filtered.length > 0) {
                 result[i + channel] = filtered.reduce((a, b) => a + b, 0) / filtered.length;
+            } else { // All pixels were rejected, fallback to median
+                 result[i + channel] = median(pixelValues);
             }
         }
         const validCount = validImages.filter(img => img[i+3] > 128).length;
