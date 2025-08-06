@@ -289,55 +289,47 @@ function warpImage(
     const dstData = new Uint8ClampedArray(srcData.length);
     const cosR = Math.cos(-transform.rotation);
     const sinR = Math.sin(-transform.rotation);
-    if (transform.scale === 0) return dstData; 
+    if (transform.scale === 0) return dstData;
     const invScale = 1 / transform.scale;
 
     for (let y = 0; y < srcHeight; y++) {
         for (let x = 0; x < srcWidth; x++) {
             const dstIdx = (y * srcWidth + x) * 4;
 
-            // Calculate the source coordinates for the current destination pixel
             const dx = x - transform.translation.x;
             const dy = y - transform.translation.y;
             const srcX = invScale * (cosR * dx - sinR * dy);
             const srcY = invScale * (sinR * dx + cosR * dy);
+            
+            const x0 = Math.floor(srcX);
+            const y0 = Math.floor(srcY);
 
-            // Check if the source coordinates are within the bounds of the source image
-            if (srcX >= 0 && srcX < srcWidth - 1 && srcY >= 0 && srcY < srcHeight - 1) {
-                const x0 = Math.floor(srcX);
-                const y0 = Math.floor(srcY);
+            // Robust boundary check
+            if (x0 >= 0 && x0 < srcWidth - 1 && y0 >= 0 && y0 < srcHeight - 1) {
                 const x1 = x0 + 1;
                 const y1 = y0 + 1;
-
-                // Factional parts for interpolation
+                
                 const x_frac = srcX - x0;
                 const y_frac = srcY - y0;
 
                 for (let channel = 0; channel < 4; channel++) {
-                    const c00 = srcData[(y0 * srcWidth + x0) * 4 + channel]; // Top-left
-                    const c10 = srcData[(y0 * srcWidth + x1) * 4 + channel]; // Top-right
-                    const c01 = srcData[(y1 * srcWidth + x0) * 4 + channel]; // Bottom-left
-                    const c11 = srcData[(y1 * srcWidth + x1) * 4 + channel]; // Bottom-right
+                    const c00 = srcData[(y0 * srcWidth + x0) * 4 + channel];
+                    const c10 = srcData[(y0 * srcWidth + x1) * 4 + channel];
+                    const c01 = srcData[(y1 * srcWidth + x0) * 4 + channel];
+                    const c11 = srcData[(y1 * srcWidth + x1) * 4 + channel];
                     
-                    // Alpha channel (opacity) should be handled carefully.
-                    // For stacking, we typically want full opacity.
-                    // If it's the 4th channel (alpha), just copy it from the nearest pixel.
                     if (channel === 3) {
-                         dstData[dstIdx + 3] = c00;
+                         dstData[dstIdx + 3] = c00; // Use nearest for alpha
                          continue;
                     }
 
-                    // Interpolate top two pixels
                     const top = c00 * (1 - x_frac) + c10 * x_frac;
-                    // Interpolate bottom two pixels
                     const bottom = c01 * (1 - x_frac) + c11 * x_frac;
-                    // Interpolate vertically
                     const val = top * (1 - y_frac) + bottom * y_frac;
                     
                     dstData[dstIdx + channel] = val;
                 }
             } else {
-                 // If out of bounds, make the pixel transparent black
                  dstData[dstIdx] = 0;
                  dstData[dstIdx + 1] = 0;
                  dstData[dstIdx + 2] = 0;
@@ -389,8 +381,6 @@ export async function alignAndStack(
   }
   
   // --- 3-Point Pattern Propagation Logic ---
-  
-  // 1. Select up to 3 unique anchor stars from the reference set.
   const anchors_ref: Star[] = [];
   const tempRefStars = [...allRefStars];
   while (anchors_ref.length < 3 && tempRefStars.length > 0) {
@@ -403,7 +393,6 @@ export async function alignAndStack(
     addLog("Warning: Could not select at least 2 unique anchor stars for rotation calculation. Falling back to simple matching.");
   }
 
-  // 2. Create patterns relative to each anchor.
   const patterns_ref = anchors_ref.map(anchor => 
       allRefStars.filter(s => s !== anchor).map(s => ({ x: s.x - anchor.x, y: s.y - anchor.y }))
   );
@@ -435,7 +424,7 @@ export async function alignAndStack(
             const candidates = targetStars
                 .filter(s => euclideanDist(s, lastKnownPos) < SEARCH_RADIUS)
                 .sort((a,b) => euclideanDist(a, lastKnownPos) - euclideanDist(b, lastKnownPos))
-                .slice(0, 5); // Get 5 best candidates
+                .slice(0, 5);
 
             let bestMatch = { score: -1, star: null as Star | null };
 
@@ -466,7 +455,7 @@ export async function alignAndStack(
             }
         } else {
             addLog(`Image ${i}: Pattern propagation failed (found only ${found_anchors_target.length} anchors). Falling back to feature matching.`);
-            last_known_anchors = [...anchors_ref]; // Reset for next attempt
+            last_known_anchors = [...anchors_ref];
         }
     }
       
@@ -488,7 +477,7 @@ export async function alignAndStack(
       alignedImageDatas.push(warpedData);
     } else {
       addLog(`Image ${i}: Could not determine transform. Stacking unaligned.`);
-      alignedImageDatas.push(targetEntry.imageData.data); // Add unaligned
+      alignedImageDatas.push(targetEntry.imageData.data);
     }
     setProgress(i / imageEntries.length);
   }
