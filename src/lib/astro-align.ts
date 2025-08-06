@@ -69,11 +69,6 @@ function fitGaussianPSF(patch: number[][], initialX: number, initialY: number): 
         
         const fwhm = Math.sqrt(-2 * Math.log(0.5) * (c_xx + c_yy + Math.sqrt(Math.pow(c_xx - c_yy, 2) + c_xy*c_xy)) / (c_xx * c_yy - c_xy*c_xy/4)) * 2;
 
-
-        if (Math.abs(x_center) > halfSize || Math.abs(y_center) > halfSize) {
-          return null; // Center is outside the patch, likely a bad fit
-        }
-
         return {
             x: initialX + x_center,
             y: initialY + y_center,
@@ -165,19 +160,15 @@ function detectStars(
             approxCy > halfPsfPatchSize && approxCy < height - halfPsfPatchSize) {
             
             const patch: number[][] = Array(psfPatchSize).fill(0).map(() => Array(psfPatchSize).fill(0));
-            let patchMax = 0;
-
+            
             for (let r = 0; r < psfPatchSize; r++) {
                 for (let c = 0; c < psfPatchSize; c++) {
                     const sampleX = Math.round(approxCx) - halfPsfPatchSize + c;
                     const sampleY = Math.round(approxCy) - halfPsfPatchSize + r;
                     const val = gray[sampleY * width + sampleX];
                     patch[r][c] = val;
-                    if (val > patchMax) patchMax = val;
                 }
             }
-            
-            if (patchMax < threshold * 1.5) continue; // Skip if peak is not significantly above threshold
 
             const fitResult = fitGaussianPSF(patch, approxCx, approxCy);
 
@@ -442,7 +433,7 @@ function warpImage(
                     
                     dstData[dstIdx + channel] = val;
                 }
-                dstData[dstIdx + 3] = c00_alpha; // Use nearest-neighbor for alpha
+                dstData[dstIdx + 3] = 255;
             } else {
                  dstData[dstIdx] = 0;
                  dstData[dstIdx + 1] = 0;
@@ -640,7 +631,11 @@ export async function alignAndStack(
         }
     }
     
-    last_known_anchors = current_found_anchors;
+    if(p1.length >= 2) {
+        last_known_anchors = current_found_anchors;
+    } else {
+        last_known_anchors = [...anchors_ref];
+    }
     
     if (p1.length >= 2) { // Need at least 2 points for similarity transform
         transform = estimateSimilarityTransform(p1, p2);
