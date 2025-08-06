@@ -1,13 +1,15 @@
 // --- Types ---
+import { lusolve, multiply, transpose, inv, matrix, Matrix, eigs, abs } from 'mathjs';
+
 export type Point = { x: number; y: number };
-export type Star = Point & { brightness: number; size: number; descriptor: number[] };
+export type Star = Point & { brightness: number; size: number; fwhm: number, descriptor: number[] };
 export type ImageQueueEntry = {
   imageData: ImageData | null;
   detectedStars: Star[];
 };
 
 
-// --- 1) Grayscale conversion ---
+// --- 1) Grayscale conversion & Pre-processing ---
 function toGrayscale(imageData: ImageData): Uint8Array {
   const len = imageData.data.length / 4;
   const gray = new Uint8Array(len);
@@ -20,17 +22,83 @@ function toGrayscale(imageData: ImageData): Uint8Array {
   return gray;
 }
 
-// --- 2) Blob detection + star descriptor ---
+// --- 2) Blob detection (for candidacy) + PSF fitting ---
+
+function fitGaussianPSF(patch: number[][], initialX: number, initialY: number): { x: number, y: number, brightness: number, fwhm: number } | null {
+    const size = patch.length;
+    if (size === 0) return null;
+    const halfSize = Math.floor(size / 2);
+
+    let A = [];
+    let b = [];
+
+    for (let r = 0; r < size; r++) {
+        for (let c = 0; c < size; c++) {
+            const x = c - halfSize;
+            const y = r - halfSize;
+            const z = patch[r][c];
+            if (z > 0) { // Only fit points with signal
+                const log_z = Math.log(z);
+                A.push([x * x, y * y, x * y, x, y, 1]);
+                b.push(log_z);
+            }
+        }
+    }
+
+    if (A.length < 6) return null; // Not enough points to solve
+
+    try {
+        const At = transpose(matrix(A));
+        const AtA = multiply(At, matrix(A));
+        const Atb = multiply(At, matrix(b));
+        const coeffs = lusolve(AtA, Atb).toArray().flat() as number[];
+
+        const [c_xx, c_yy, c_xy, c_x, c_y, c_0] = coeffs;
+
+        if (c_xx >= 0 || c_yy >= 0) return null; // Not a peak
+
+        const q = 4 * c_xx * c_yy - c_xy * c_xy;
+        if (q <= 0) return null; // Not an ellipse
+
+        const x_center = (c_xy * c_y - 2 * c_yy * c_x) / q;
+        const y_center = (c_xy * c_x - 2 * c_xx * c_y) / q;
+
+        const brightness = Math.exp(c_0 + (c_x * x_center + c_y * y_center) / 2);
+        
+        const fwhm = Math.sqrt(-2 * Math.log(0.5) * (c_xx + c_yy + Math.sqrt(Math.pow(c_xx - c_yy, 2) + c_xy*c_xy)) / (c_xx * c_yy - c_xy*c_xy/4)) * 2;
+
+
+        if (Math.abs(x_center) > halfSize || Math.abs(y_center) > halfSize) {
+          return null; // Center is outside the patch, likely a bad fit
+        }
+
+        return {
+            x: initialX + x_center,
+            y: initialY + y_center,
+            brightness,
+            fwhm,
+        };
+
+    } catch (error) {
+        // console.error("Gaussian fit failed:", error);
+        return null;
+    }
+}
+
+
 function detectStars(
   gray: Uint8Array,
   width: number,
   height: number,
   threshold: number,
   minSize = 3,
-  maxSize = 50 // Add max size to filter out large non-star objects
+  maxSize = 100 
 ): Star[] {
   const visited = new Uint8Array(gray.length);
   const stars: Star[] = [];
+  const psfPatchSize = 7; // e.g., 7x7 patch
+  const halfPsfPatchSize = Math.floor(psfPatchSize / 2);
+
   function neighbors(pos: number): number[] {
     const neighbors = [];
     const x = pos % width;
@@ -44,12 +112,13 @@ function detectStars(
     }
     return neighbors;
   }
+
   function computeDescriptor(cx: number, cy: number): number[] {
     const patch: number[] = [];
     for (let dy = -1; dy <= 1; dy++) {
       for (let dx = -1; dx <= 1; dx++) {
-        const x = cx + dx;
-        const y = cy + dy;
+        const x = Math.round(cx + dx);
+        const y = Math.round(cy + dy);
         if (x >= 0 && x < width && y >= 0 && y < height) {
           patch.push(gray[y * width + x] / 255);
         } else {
@@ -59,27 +128,25 @@ function detectStars(
     }
     return patch;
   }
+  
   for (let i = 0; i < gray.length; i++) {
     if (visited[i] || gray[i] < threshold) continue;
+
     const queue = [i];
     visited[i] = 1;
-    let sumX = 0, sumY = 0, count = 0, brightnessSum = 0;
-    let minBlobX = width, maxBlobX = 0, minBlobY = height, maxBlobY = 0;
+    let blobPixels = [];
+    let sumX = 0, sumY = 0, count = 0;
 
     while (queue.length > 0) {
-      const p = queue.pop()!;
+      const p = queue.shift()!;
       const x = p % width;
       const y = Math.floor(p / width);
-
-      minBlobX = Math.min(minBlobX, x);
-      maxBlobX = Math.max(maxBlobX, x);
-      minBlobY = Math.min(minBlobY, y);
-      maxBlobY = Math.max(maxBlobY, y);
-
+      
+      blobPixels.push({x,y});
       sumX += x;
       sumY += y;
-      brightnessSum += gray[p];
       count++;
+      
       for (const n of neighbors(p)) {
         if (!visited[n] && gray[n] >= threshold) {
           visited[n] = 1;
@@ -88,20 +155,47 @@ function detectStars(
       }
     }
     
-    // Compactness Test: A simple test to filter out non-star-like blobs (e.g. from nebulae)
-    const boundingBoxArea = (maxBlobX - minBlobX + 1) * (maxBlobY - minBlobY + 1);
-    const compactness = count / boundingBoxArea;
+    if (count >= minSize && count <= maxSize) {
+        const approxCx = sumX / count;
+        const approxCy = sumY / count;
 
-    if (count >= minSize && count <= maxSize && compactness > 0.4) {
-      const cx = sumX / count;
-      const cy = sumY / count;
-      const brightness = brightnessSum / count;
-      const desc = computeDescriptor(Math.round(cx), Math.round(cy));
-      stars.push({ x: cx, y: cy, brightness, size: count, descriptor: desc });
+        if (approxCx > halfPsfPatchSize && approxCx < width - halfPsfPatchSize &&
+            approxCy > halfPsfPatchSize && approxCy < height - halfPsfPatchSize) {
+            
+            const patch: number[][] = Array(psfPatchSize).fill(0).map(() => Array(psfPatchSize).fill(0));
+            let patchMax = 0;
+
+            for (let r = 0; r < psfPatchSize; r++) {
+                for (let c = 0; c < psfPatchSize; c++) {
+                    const sampleX = Math.round(approxCx) - halfPsfPatchSize + c;
+                    const sampleY = Math.round(approxCy) - halfPsfPatchSize + r;
+                    const val = gray[sampleY * width + sampleX];
+                    patch[r][c] = val;
+                    if (val > patchMax) patchMax = val;
+                }
+            }
+            
+            if (patchMax < threshold * 1.5) continue; // Skip if peak is not significantly above threshold
+
+            const fitResult = fitGaussianPSF(patch, approxCx, approxCy);
+
+            if (fitResult && fitResult.fwhm > 0.5 && fitResult.fwhm < psfPatchSize) { // Sanity checks
+                const desc = computeDescriptor(fitResult.x, fitResult.y);
+                stars.push({
+                    x: fitResult.x,
+                    y: fitResult.y,
+                    brightness: fitResult.brightness,
+                    size: count, // Keep blob size for potential filtering
+                    fwhm: fitResult.fwhm,
+                    descriptor: desc
+                });
+            }
+        }
     }
   }
   return stars;
 }
+
 
 // --- 3) Multi-scale detection (simple 2x downscale) ---
 export function detectStarsMultiScale(
@@ -321,16 +415,16 @@ function warpImage(
             
             const x0 = Math.floor(srcX);
             const y0 = Math.floor(srcY);
-            const x1 = x0 + 1;
-            const y1 = y0 + 1;
-
-            if (x0 >= 0 && x1 < srcWidth && y0 >= 0 && y1 < srcHeight) {
+            
+            if (x0 >= 0 && x0 < srcWidth - 1 && y0 >= 0 && y0 < srcHeight - 1) {
+                const x1 = x0 + 1;
+                const y1 = y0 + 1;
                 const x_frac = srcX - x0;
                 const y_frac = srcY - y0;
                 const c00_idx = (y0 * srcWidth + x0) * 4;
                 const c00_alpha = srcData[c00_idx + 3];
 
-                if (c00_alpha === 0) { // If source is transparent, skip
+                if (c00_alpha === 0) { 
                     continue;
                 }
 
@@ -412,26 +506,21 @@ export async function alignAndStack(
     addLog("Warning: Fewer than 3 reference stars. Alignment quality may be poor.");
   }
   
-  const anchors_ref: Star[] = [];
-  const tempRefStars = [...allRefStars].sort((a,b) => b.brightness - a.brightness); // Prioritize brighter stars
+  const p1_refs: Point[] = [];
+  const tempRefStars = [...allRefStars].sort((a,b) => b.brightness - a.brightness); 
   
-  // Select up to 3 well-separated anchor stars
-  while (anchors_ref.length < 3 && tempRefStars.length > 0) {
+  while (p1_refs.length < 3 && tempRefStars.length > 0) {
     const candidate = tempRefStars.shift()!;
-    if (anchors_ref.every(anchor => euclideanDist(anchor, candidate) > 50)) {
-        anchors_ref.push(candidate);
+    if (p1_refs.every(anchor => euclideanDist(anchor, candidate) > 50)) {
+        p1_refs.push(candidate);
     }
   }
-  if (anchors_ref.length < 2) {
-    addLog("Warning: Could not select at least 2 unique anchor stars for rotation calculation. Alignment may fail.");
+
+  if (p1_refs.length < 2) {
+    addLog("Warning: Could not select at least 2 unique anchor stars. Alignment may fail.");
   }
 
-  const patterns_ref = anchors_ref.map(anchor => 
-      allRefStars.filter(s => s !== anchor).map(s => ({ x: s.x - anchor.x, y: s.y - anchor.y }))
-  );
-  addLog(`Created ${patterns_ref.length} star patterns for propagation from ${anchors_ref.length} anchors.`);
-  
-  let last_known_anchors: (Point | null)[] = [...anchors_ref];
+  let last_known_points: (Point | null)[] = [...p1_refs];
 
   for (let i = 1; i < imageEntries.length; i++) {
     const targetEntry = imageEntries[i];
@@ -452,51 +541,29 @@ export async function alignAndStack(
     let transform: { scale: number; rotation: number; translation: Point } | null = null;
     
     // --- Start: 3-point propagation logic ---
-    const p1: Point[] = []; // Points from original reference image
+    const p1: Point[] = []; // Points from original reference image that are found in target
     const p2: Point[] = []; // Corresponding points found in target image
     
-    const new_last_knowns = [...last_known_anchors];
+    const current_found_points: (Point | null)[] = [...last_known_points].map(() => null);
 
-    for (let j = 0; j < anchors_ref.length; j++) {
-        const lastKnownPos = last_known_anchors[j];
-        if (!lastKnownPos) {
-          new_last_knowns[j] = null; 
-          continue; 
-        }; 
-        const pattern = patterns_ref[j];
-        const targetStars = targetEntry.detectedStars;
+    for (let j = 0; j < p1_refs.length; j++) {
+        const lastKnownPos = last_known_points[j];
+        if (!lastKnownPos) continue;
         
         const SEARCH_RADIUS = 30;
-        const candidates = targetStars
+        const candidates = targetEntry.detectedStars
             .filter(s => euclideanDist(s, lastKnownPos) < SEARCH_RADIUS)
-            .sort((a,b) => euclideanDist(a, lastKnownPos) - euclideanDist(b, lastKnownPos))
-            .slice(0, 5);
+            .sort((a,b) => euclideanDist(a, lastKnownPos) - euclideanDist(b, lastKnownPos));
 
-        let bestMatch = { score: -1, star: null as Star | null };
-
-        for (const candidate of candidates) {
-            let score = 0;
-            for (const patternVector of pattern) {
-                const expectedPos = { x: candidate.x + patternVector.x, y: candidate.y + patternVector.y };
-                if (targetStars.some(s => euclideanDist(s, expectedPos) < 5)) {
-                    score++;
-                }
-            }
-            if (score > bestMatch.score) {
-                bestMatch = { score, star: candidate };
-            }
-        }
-
-        if (bestMatch.star) {
-            p1.push(anchors_ref[j]);
-            p2.push(bestMatch.star);
-            new_last_knowns[j] = bestMatch.star;
-        } else {
-            new_last_knowns[j] = null; // Mark as not found
+        if(candidates.length > 0){
+          const bestMatch = candidates[0]; // Simplest assumption: closest is best
+          p1.push(p1_refs[j]);
+          p2.push(bestMatch);
+          current_found_points[j] = bestMatch;
         }
     }
     
-    last_known_anchors = new_last_knowns;
+    last_known_points = current_found_points;
     
     if (p1.length >= 2) { // Need at least 2 points for similarity transform
         transform = estimateSimilarityTransform(p1, p2);
