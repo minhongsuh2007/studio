@@ -1,4 +1,3 @@
-
 // --- Types ---
 import { matrix, inv, multiply, transpose, lusolve, median, mean, std, eigs } from 'mathjs';
 
