@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
 import { fileToDataURL } from '@/lib/utils';
 import { useLanguage } from '@/contexts/LanguageContext';
-import { alignAndStack, detectStarsMultiScale, type Star, type StackingMode } from '@/lib/astro-align';
+import { alignAndStack, detectStars, type Star, type StackingMode } from '@/lib/astro-align';
 import { AppHeader } from '@/components/astrostacker/AppHeader';
 import { ImageUploadArea } from '@/components/astrostacker/ImageUploadArea';
 import { ImageQueueItem } from '@/components/astrostacker/ImageQueueItem';
@@ -223,7 +223,7 @@ export default function AstroStackerPage() {
       ctx.drawImage(imgEl, 0, 0, canvas.width, canvas.height);
       
       const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const detectedStars = detectStarsMultiScale(imageData, canvas.width, canvas.height, 60);
+      const detectedStars = detectStars(imageData, canvas.width, canvas.height, 60);
       
       finalUpdatedEntry = {
         ...finalUpdatedEntry,
