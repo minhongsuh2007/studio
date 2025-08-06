@@ -378,7 +378,6 @@ export async function alignAndStack(
     addLog("Warning: Fewer than 3 reference stars. Alignment quality may be poor. Falling back to simple feature matching.");
   }
   
-  // --- 3-Point Pattern Propagation Logic ---
   const anchors_ref: Star[] = [];
   const tempRefStars = [...allRefStars];
   while (anchors_ref.length < 3 && tempRefStars.length > 0) {
@@ -410,17 +409,18 @@ export async function alignAndStack(
     let transform: { scale: number; rotation: number; translation: Point } | null = null;
     let propagationSuccess = false;
     
-    // --- Pattern Propagation Logic ---
     if (anchors_ref.length >= 2) {
-        const found_anchors_target: Star[] = [];
-        
+        const p1: Point[] = [];
+        const p2: Point[] = [];
+        let new_last_knowns: Point[] = [];
+
         for (let j = 0; j < anchors_ref.length; j++) {
             const lastKnownPos = last_known_anchors[j];
             if (!lastKnownPos) continue; 
             const pattern = patterns_ref[j];
             const targetStars = targetEntry.detectedStars;
             
-            const SEARCH_RADIUS = 30; // pixels
+            const SEARCH_RADIUS = 30;
             const candidates = targetStars
                 .filter(s => euclideanDist(s, lastKnownPos) < SEARCH_RADIUS)
                 .sort((a,b) => euclideanDist(a, lastKnownPos) - euclideanDist(b, lastKnownPos))
@@ -442,16 +442,20 @@ export async function alignAndStack(
             }
 
             if (bestMatch.star) {
-                found_anchors_target.push(bestMatch.star);
+                p1.push(anchors_ref[j]);
+                p2.push(bestMatch.star);
+                new_last_knowns.push(bestMatch.star);
+            } else {
+                new_last_knowns.push(lastKnownPos); // Carry over the old position if not found
             }
         }
         
-        if (found_anchors_target.length >= 2) {
-            const p1 = anchors_ref.slice(0, found_anchors_target.length);
-            transform = estimateSimilarityTransform(p1, found_anchors_target);
+        last_known_anchors = new_last_knowns;
+        
+        if (p1.length >= 2) {
+            transform = estimateSimilarityTransform(p1, p2);
             if (transform) {
-                addLog(`Image ${i}: Aligned using ${found_anchors_target.length}-point propagated pattern.`);
-                last_known_anchors = found_anchors_target; 
+                addLog(`Image ${i}: Aligned using ${p1.length}-point propagated pattern.`);
                 propagationSuccess = true;
             }
         }
