@@ -29,10 +29,8 @@ export function ImageUploadArea({ onFilesAdded, isProcessing, multiple = true }:
       'image/png': ['.png'],
       'image/gif': ['.gif'],
       'image/webp': ['.webp'],
+      'image/tiff': ['.tif', '.tiff'],
       'image/x-adobe-dng': ['.dng'],
-      'image/x-raw': ['.dng'], // Some raw might be DNG
-      'application/fits': ['.fits', '.fit'], // For FITS files
-      'image/fits': ['.fits', '.fit'], // Common alternative MIME type for FITS
     },
     multiple: multiple, 
     disabled: isProcessing,
@@ -54,11 +52,11 @@ export function ImageUploadArea({ onFilesAdded, isProcessing, multiple = true }:
           {multiple ? "Drag & drop images here" : "Drag & drop a single image here"}
         </p>
         <p className="text-sm text-muted-foreground">
-          or click to select {multiple ? "files" : "a file"} (JPG, PNG, FITS, WEBP preferred).
+          or click to select {multiple ? "files" : "a file"} (JPG, PNG, TIFF, DNG supported).
         </p>
         {multiple && (
           <p className="text-xs text-muted-foreground mt-1">
-            DNG files may require manual pre-conversion. FITS files are processed using a built-in parser.
+            RAW files are converted to 8-bit PNGs for processing.
           </p>
         )}
         <Button
@@ -84,5 +82,3 @@ export function ImageUploadArea({ onFilesAdded, isProcessing, multiple = true }:
     </div>
   );
 }
-
-    
