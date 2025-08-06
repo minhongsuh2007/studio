@@ -160,7 +160,7 @@ export const translations: Translations = {
     tutorialStep5Content: "After stacking is complete, the final image will appear. Click 'Finalize & Download Image' to open the post-processing editor. Here, you can adjust Brightness, Exposure, and Saturation to enhance your image. When you are satisfied, click the 'Download Image' button to save the result to your computer."
   },
   ko: {
-    appTitle: '아스트로스태커',
+    appTitle: '별하늘',
     uploadAndConfigure: '이미지 업로드 및 설정',
     cardDescription: "PNG, JPG, GIF, 또는 WEBP 파일을 추가하세요. 별 패턴 전파 알고리즘을 사용하여 이미지를 정렬합니다. 최상의 결과를 위해 첫 번째 이미지에서 참조 별을 수동으로 선택하세요.",
     creditsLine1: '아스트로스태커 © {year}',
@@ -458,3 +458,5 @@ export const translations: Translations = {
 export const defaultLocale: Locale = 'en';
 
 export const getTranslations = (locale: Locale) => translations[locale] || translations[defaultLocale];
+
+    
