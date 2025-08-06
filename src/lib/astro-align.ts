@@ -331,125 +331,137 @@ function stackImages(images: (Uint8ClampedArray | null)[]): Uint8ClampedArray {
     return result;
 }
 
-
 // --- 13) Main alignment function ---
 export async function alignAndStack(
-    imageEntries: { imageData: ImageData | null, detectedStars: Star[] }[],
-    manualRefStars: Star[],
-    addLog: (message: string) => void,
-    setProgress: (progress: number) => void
-  ): Promise<Uint8ClampedArray> {
-    if (imageEntries.length === 0 || !imageEntries[0].imageData) throw new Error("No valid images provided.");
-  
-    const refEntry = imageEntries[0];
-    const { width, height } = refEntry.imageData;
-    let alignedImageDatas: (Uint8ClampedArray | null)[] = [refEntry.imageData.data];
-  
-    let currentRefStars = manualRefStars.length > 0 ? manualRefStars : refEntry.detectedStars;
-    if (currentRefStars.length < 3) {
-      addLog("Warning: Fewer than 3 reference stars. Alignment quality may be poor.");
-    }
-  
-    // --- New Pattern Propagation Logic ---
-    let anchorStar: Star | null = null;
-    let starPattern: Point[] = [];
-  
-    if (currentRefStars.length > 0) {
-      // Find a unique anchor star from the reference set
-      for (const star of currentRefStars) {
-        const MIN_DIST = 20; // pixels
-        const BRIGHT_TOLERANCE = 20; // brightness units
-        const isUnique = !currentRefStars.some(other => 
-          star !== other &&
-          euclideanDist(star, other) < MIN_DIST && 
-          Math.abs(star.brightness - other.brightness) < BRIGHT_TOLERANCE
-        );
-        if (isUnique) {
-          anchorStar = star;
-          break;
-        }
-      }
-      if (!anchorStar) anchorStar = currentRefStars[0]; // Fallback to first star
-  
-      // Create pattern relative to the anchor
-      starPattern = currentRefStars.map(s => ({ x: s.x - anchorStar!.x, y: s.y - anchorStar!.y }));
-      addLog(`Created star pattern with ${starPattern.length} stars, anchored on star at (${anchorStar.x.toFixed(1)}, ${anchorStar.y.toFixed(1)}).`);
-    }
-    // --- End New Logic ---
-  
-    let lastKnownAnchorPos: Point | null = anchorStar;
-  
-    for (let i = 1; i < imageEntries.length; i++) {
-      const targetEntry = imageEntries[i];
-      if (!targetEntry.imageData) {
-        addLog(`Skipping image ${i} due to missing image data.`);
-        alignedImageDatas.push(null);
-        setProgress(i / imageEntries.length);
-        continue;
-      }
-  
-      let transform: { scale: number; rotation: number; translation: Point } | null = null;
-      
-      // Try pattern propagation first
-      if (lastKnownAnchorPos && starPattern.length > 0) {
-        const SEARCH_RADIUS = 30; // pixels
-        const candidates = targetEntry.detectedStars.filter(s => 
-          euclideanDist(s, lastKnownAnchorPos!) < SEARCH_RADIUS
-        ).sort((a,b) => euclideanDist(a, lastKnownAnchorPos!) - euclideanDist(b, lastKnownAnchorPos!)).slice(0, 5);
-        
-        let bestCandidateMatch = { score: 0, star: null as Star | null, transform: null as any };
+  imageEntries: { imageData: ImageData | null; detectedStars: Star[] }[],
+  manualRefStars: Star[],
+  addLog: (message: string) => void,
+  setProgress: (progress: number) => void
+): Promise<Uint8ClampedArray> {
+  if (imageEntries.length === 0 || !imageEntries[0].imageData) {
+    throw new Error("No valid images provided.");
+  }
 
-        for(const candidate of candidates) {
-            let score = 0;
-            for(const patternVector of starPattern) {
-                const expectedPos = { x: candidate.x + patternVector.x, y: candidate.y + patternVector.y };
-                if (targetEntry.detectedStars.some(s => euclideanDist(s, expectedPos) < 5)) { // 5px tolerance
-                    score++;
+  const refEntry = imageEntries[0];
+  const { width, height } = refEntry.imageData;
+  let alignedImageDatas: (Uint8ClampedArray | null)[] = [refEntry.imageData.data];
+  
+  const allRefStars = manualRefStars.length > 0 ? manualRefStars : refEntry.detectedStars;
+  if (allRefStars.length < 3) {
+    addLog("Warning: Fewer than 3 reference stars. Alignment quality may be poor. Falling back to simple feature matching.");
+    // Fallback logic could be implemented here if desired, for now we proceed but quality may be low.
+  }
+  
+  // --- New 3-Point Pattern Propagation Logic ---
+  
+  // 1. Select up to 3 unique anchor stars from the reference set.
+  const anchors_ref: Star[] = [];
+  const tempRefStars = [...allRefStars];
+  while (anchors_ref.length < 3 && tempRefStars.length > 0) {
+    // A simple uniqueness heuristic: find a star that's not too close to already selected anchors.
+    const candidate = tempRefStars.shift()!;
+    if (anchors_ref.every(anchor => euclideanDist(anchor, candidate) > 50)) { // 50px separation
+        anchors_ref.push(candidate);
+    }
+  }
+  if (anchors_ref.length < 2) {
+    addLog("Warning: Could not select at least 2 unique anchor stars for rotation calculation. Falling back to simple matching.");
+  }
+
+  // 2. Create patterns relative to each anchor.
+  const patterns_ref = anchors_ref.map(anchor => 
+      allRefStars.filter(s => s !== anchor).map(s => ({ x: s.x - anchor.x, y: s.y - anchor.y }))
+  );
+  addLog(`Created ${patterns_ref.length} star patterns for propagation.`);
+  
+  // 3. Track these anchors frame-by-frame.
+  let last_known_anchors: Point[] = [...anchors_ref];
+
+  for (let i = 1; i < imageEntries.length; i++) {
+    const targetEntry = imageEntries[i];
+    if (!targetEntry.imageData) {
+      addLog(`Skipping image ${i} due to missing image data.`);
+      alignedImageDatas.push(null);
+      setProgress(i / imageEntries.length);
+      continue;
+    }
+    
+    let transform: { scale: number; rotation: number; translation: Point } | null = null;
+    
+    // --- Pattern Propagation Logic ---
+    if (anchors_ref.length >= 2) {
+        const found_anchors_target: Star[] = [];
+        
+        for (let j = 0; j < anchors_ref.length; j++) {
+            const lastKnownPos = last_known_anchors[j];
+            const pattern = patterns_ref[j];
+            const targetStars = targetEntry.detectedStars;
+            
+            const SEARCH_RADIUS = 30; // pixels
+            const candidates = targetStars
+                .filter(s => euclideanDist(s, lastKnownPos) < SEARCH_RADIUS)
+                .sort((a,b) => euclideanDist(a, lastKnownPos) - euclideanDist(b, lastKnownPos))
+                .slice(0, 5); // Get 5 best candidates
+
+            let bestMatch = { score: -1, star: null as Star | null };
+
+            for (const candidate of candidates) {
+                let score = 0;
+                for (const patternVector of pattern) {
+                    const expectedPos = { x: candidate.x + patternVector.x, y: candidate.y + patternVector.y };
+                    if (targetStars.some(s => euclideanDist(s, expectedPos) < 5)) { // 5px tolerance
+                        score++;
+                    }
+                }
+                if (score > bestMatch.score) {
+                    bestMatch = { score, star: candidate };
                 }
             }
-            const tempTransform = estimateSimilarityTransform([{x: anchorStar!.x, y: anchorStar!.y}, candidate], [lastKnownAnchorPos, candidate]);
 
-            if (score > bestCandidateMatch.score && tempTransform) {
-                bestCandidateMatch = { score, star: candidate, transform: tempTransform };
+            if (bestMatch.star) {
+                found_anchors_target.push(bestMatch.star);
             }
         }
-
-        if (bestCandidateMatch.score > Math.min(starPattern.length * 0.5, 2) && bestCandidateMatch.star) {
-            transform = bestCandidateMatch.transform;
-            lastKnownAnchorPos = bestCandidateMatch.star;
-            addLog(`Image ${i}: Aligned using propagated pattern. Match score: ${bestCandidateMatch.score}/${starPattern.length}.`);
+        
+        if (found_anchors_target.length >= 2) {
+             // Use the same original anchors for points1
+            const p1 = anchors_ref.slice(0, found_anchors_target.length);
+            transform = estimateSimilarityTransform(p1, found_anchors_target);
+            if (transform) {
+                addLog(`Image ${i}: Aligned using ${found_anchors_target.length}-point propagated pattern.`);
+                // Update last known positions for the next iteration
+                last_known_anchors = found_anchors_target; 
+            }
         } else {
-            addLog(`Image ${i}: Pattern propagation failed (best score: ${bestCandidateMatch.score}/${starPattern.length}). Falling back to feature matching.`);
-            lastKnownAnchorPos = null; // Reset anchor
+            addLog(`Image ${i}: Pattern propagation failed (found only ${found_anchors_target.length} anchors). Falling back to feature matching.`);
+            last_known_anchors = [...anchors_ref]; // Reset for next attempt
+        }
+    }
+      
+    // --- Fallback to general feature matching ---
+    if (!transform) {
+      const matches = matchFeatures(allRefStars, targetEntry.detectedStars);
+      if (matches.length >= 3) {
+        const points1 = matches.map(m => m[0]);
+        const points2 = matches.map(m => m[1]);
+        transform = estimateSimilarityTransformRANSAC(points1, points2);
+        if (transform) {
+          addLog(`Image ${i}: Aligned using RANSAC fallback (${matches.length} initial matches).`);
         }
       }
-
-      // Fallback to general feature matching if pattern fails
-      if (!transform) {
-          const matches = matchFeatures(currentRefStars, targetEntry.detectedStars);
-          if (matches.length >= 3) {
-              const points1 = matches.map(m => m[0]);
-              const points2 = matches.map(m => m[1]);
-              transform = estimateSimilarityTransformRANSAC(points1, points2);
-              if (transform) {
-                addLog(`Image ${i}: Aligned using RANSAC fallback (${matches.length} initial matches).`);
-              }
-          }
-      }
-  
-      if (transform) {
-        const warpedData = warpImage(targetEntry.imageData.data, width, height, transform);
-        alignedImageDatas.push(warpedData);
-      } else {
-        addLog(`Image ${i}: Could not determine transform. Stacking unaligned.`);
-        alignedImageDatas.push(targetEntry.imageData.data); // Add unaligned
-      }
-      setProgress(i / imageEntries.length);
     }
-    
-    setProgress(1);
-    addLog("All images aligned. Stacking...");
-    return stackImages(alignedImageDatas);
-}
 
-    
+    if (transform) {
+      const warpedData = warpImage(targetEntry.imageData.data, width, height, transform);
+      alignedImageDatas.push(warpedData);
+    } else {
+      addLog(`Image ${i}: Could not determine transform. Stacking unaligned.`);
+      alignedImageDatas.push(targetEntry.imageData.data); // Add unaligned
+    }
+    setProgress(i / imageEntries.length);
+  }
+
+  setProgress(1);
+  addLog("All images aligned. Stacking...");
+  return stackImages(alignedImageDatas);
+}
