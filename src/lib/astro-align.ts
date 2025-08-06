@@ -56,7 +56,6 @@ function fitGaussianPSF(patch: number[][], initialX: number, initialY: number): 
         const AtA = multiply(At, matrix(A));
         const Atb = multiply(At, matrix(b));
         
-        // Add a small identity matrix for regularization to prevent singular matrices
         const identity = matrix(Array(AtA.size()[0]).fill(0).map((_, i) => Array(AtA.size()[1]).fill(0).map((_, j) => i === j ? 1e-6 : 0)));
         const regularizedAtA = AtA.map((value, index, m) => value + identity.get(index));
 
@@ -64,13 +63,8 @@ function fitGaussianPSF(patch: number[][], initialX: number, initialY: number): 
 
         const [c_xx, c_yy, c_xy, c_x, c_y, c_0] = coeffs;
         
-        // These checks are too strict and are rejecting valid stars. Removing them.
-        // if (c_xx >= 0 || c_yy >= 0) return null; 
-        // const q = 4 * c_xx * c_yy - c_xy * c_xy;
-        // if (q <= 0) return null;
-
         const q_safe = (4 * c_xx * c_yy - c_xy * c_xy);
-        if (Math.abs(q_safe) < 1e-6) return null; // Avoid division by zero if it's still a degenerate case
+        if (Math.abs(q_safe) < 1e-6) return null; 
 
         const x_center = (c_xy * c_y - 2 * c_yy * c_x) / q_safe;
         const y_center = (c_xy * c_x - 2 * c_xx * c_y) / q_safe;
@@ -80,13 +74,18 @@ function fitGaussianPSF(patch: number[][], initialX: number, initialY: number): 
         const fwhm_denom = (c_xx * c_yy - c_xy*c_xy/4);
         if (Math.abs(fwhm_denom) < 1e-6) return null;
         
-        const fwhm_term = (c_xx + c_yy + Math.sqrt(Math.pow(c_xx - c_yy, 2) + c_xy*c_xy));
-        if (fwhm_term > 0) return null; // Argument of sqrt must be non-negative, and term inside log must be positive
+        const fwhm_term_sqrt_arg = Math.pow(c_xx - c_yy, 2) + c_xy*c_xy;
+        if (fwhm_term_sqrt_arg < 0) return null; // Should not happen with real numbers, but as a safe guard.
+        
+        const fwhm_term = (c_xx + c_yy + Math.sqrt(fwhm_term_sqrt_arg));
 
-        const fwhm = Math.sqrt(-2 * Math.log(0.5) * fwhm_term / fwhm_denom) * 2;
+        const fwhm_log_arg = -2 * Math.log(0.5) * fwhm_term / fwhm_denom;
+        if (fwhm_log_arg < 0) return null; // We can't take sqrt of a negative number.
 
-        if (isNaN(fwhm) || fwhm <= 0 || !isFinite(fwhm)) return null;
-
+        const fwhm = Math.sqrt(fwhm_log_arg) * 2;
+        
+        if (isNaN(fwhm) || !isFinite(fwhm) || fwhm <= 0) return null;
+        
         return {
             x: initialX + x_center,
             y: initialY + y_center,
@@ -189,7 +188,7 @@ function detectStars(
 
             const fitResult = fitGaussianPSF(patch, approxCx, approxCy);
 
-            if (fitResult && fitResult.fwhm > 0.5 && fitResult.fwhm < psfPatchSize) {
+            if (fitResult) { // Check only if a fit was returned, ignore FWHM check for now
                 const desc = computeDescriptor(fitResult.x, fitResult.y);
                 stars.push({
                     x: fitResult.x,
