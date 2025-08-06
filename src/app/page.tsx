@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
 import { fileToDataURL } from '@/lib/utils';
 import { useLanguage } from '@/contexts/LanguageContext';
-import { alignAndStack, detectStarsMultiScale, type Star } from '@/lib/astro-align';
+import { alignAndStack, detectStarsMultiScale, type Star, type StackingMode } from '@/lib/astro-align';
 import { AppHeader } from '@/components/astrostacker/AppHeader';
 import { ImageUploadArea } from '@/components/astrostacker/ImageUploadArea';
 import { ImageQueueItem } from '@/components/astrostacker/ImageQueueItem';
@@ -48,6 +48,7 @@ export default function AstroStackerPage() {
   const [allImageStarData, setAllImageStarData] = useState<ImageQueueEntry[]>([]);
   const [stackedImage, setStackedImage] = useState<string | null>(null);
   const [isProcessingStack, setIsProcessingStack] = useState(false);
+  const [stackingMode, setStackingMode] = useState<StackingMode>('average');
   const [previewFitMode, setPreviewFitMode] = useState<PreviewFitMode>('contain');
   const [outputFormat, setOutputFormat] = useState<OutputFormat>('png');
   const [jpegQuality, setJpegQuality] = useState<number>(92);
@@ -400,7 +401,7 @@ export default function AstroStackerPage() {
     setProgressPercent(0);
     setStackedImage(null);
     setShowPostProcessEditor(false);
-    addLog(`[STACK START] Stacking ${allImageStarData.length} images. Manual mode: ${isManualSelectMode && manualSelectedStars.length > 0}`);
+    addLog(`[STACK START] Stacking ${allImageStarData.length} images. Mode: ${stackingMode}. Manual stars: ${isManualSelectMode && manualSelectedStars.length > 0}`);
   
     try {
       const imageDatas = allImageStarData.map(entry => entry.imageData).filter((d): d is ImageData => d !== null);
@@ -413,6 +414,7 @@ export default function AstroStackerPage() {
       const stackedImageData = await alignAndStack(
         allImageStarData,
         manualSelectedStars,
+        stackingMode,
         (message: string) => addLog(`[ALIGN] ${message}`),
         (progress: number) => setProgressPercent(progress * 100)
       );
@@ -588,6 +590,14 @@ export default function AstroStackerPage() {
                 )}
                  <div className="space-y-4 pt-4">
                     <div className="space-y-2">
+                      <Label className="text-base font-semibold text-foreground">{t('stackingMode')}</Label>
+                      <RadioGroup value={stackingMode} onValueChange={(value: string) => setStackingMode(value as StackingMode)} className="flex space-x-2" disabled={isUiDisabled}>
+                        <div className="flex items-center space-x-1"><RadioGroupItem value="average" id="mode-average" /><Label htmlFor="mode-average">Average</Label></div>
+                        <div className="flex items-center space-x-1"><RadioGroupItem value="median" id="mode-median" /><Label htmlFor="mode-median">Median</Label></div>
+                        <div className="flex items-center space-x-1"><RadioGroupItem value="sigma" id="mode-sigma" /><Label htmlFor="mode-sigma">Sigma Clip</Label></div>
+                      </RadioGroup>
+                    </div>
+                    <div className="space-y-2">
                       <Label className="text-base font-semibold text-foreground">{t('previewFit')}</Label>
                       <RadioGroup value={previewFitMode} onValueChange={(value: string) => setPreviewFitMode(value as PreviewFitMode)} className="flex space-x-4" disabled={isUiDisabled}>
                         <div className="flex items-center space-x-2"><RadioGroupItem value="contain" id="fit-contain" /><Label htmlFor="fit-contain">Contain</Label></div>
@@ -665,6 +675,4 @@ export default function AstroStackerPage() {
     </div>
   );
 }
-    
-
     

@@ -1,8 +1,10 @@
+
 // --- Types ---
-import { lusolve, multiply, transpose, inv, matrix, Matrix, eigs, abs } from 'mathjs';
+import { lusolve, multiply, transpose, inv, matrix, Matrix, eigs, abs, mean, std, median } from 'mathjs';
 
 export type Point = { x: number; y: number };
 export type Star = Point & { brightness: number; size: number; fwhm: number, descriptor: number[] };
+export type StackingMode = 'average' | 'median' | 'sigma';
 export type ImageQueueEntry = {
   imageData: ImageData | null;
   detectedStars: Star[];
@@ -453,8 +455,9 @@ function warpImage(
 }
 
 
-// --- 12) Stack images by averaging ---
-function stackImages(images: (Uint8ClampedArray | null)[]): Uint8ClampedArray {
+// --- 12) Stacking implementations ---
+
+function stackImagesAverage(images: (Uint8ClampedArray | null)[]): Uint8ClampedArray {
     const validImages = images.filter((img): img is Uint8ClampedArray => img !== null);
     if (validImages.length === 0) throw new Error("No valid images to stack");
     const length = validImages[0].length;
@@ -485,10 +488,75 @@ function stackImages(images: (Uint8ClampedArray | null)[]): Uint8ClampedArray {
     return result;
 }
 
+function stackImagesMedian(images: (Uint8ClampedArray | null)[]): Uint8ClampedArray {
+    const validImages = images.filter((img): img is Uint8ClampedArray => img !== null);
+    if (validImages.length === 0) throw new Error("No valid images to stack");
+    const length = validImages[0].length;
+    const result = new Uint8ClampedArray(length);
+    const pixelValues: number[] = [];
+
+    for (let i = 0; i < length; i += 4) {
+        for (let channel = 0; channel < 3; channel++) {
+            pixelValues.length = 0;
+            for (const img of validImages) {
+                if (img[i + 3] > 128) {
+                    pixelValues.push(img[i + channel]);
+                }
+            }
+            if (pixelValues.length > 0) {
+                result[i + channel] = median(pixelValues);
+            }
+        }
+        // Set alpha based on how many images contributed
+        const validCount = validImages.filter(img => img[i+3] > 128).length;
+        result[i + 3] = validCount > 0 ? 255 : 0;
+    }
+    return result;
+}
+
+function stackImagesSigmaClip(images: (Uint8ClampedArray | null)[], sigma = 2.0): Uint8ClampedArray {
+    const validImages = images.filter((img): img is Uint8ClampedArray => img !== null);
+    if (validImages.length === 0) throw new Error("No valid images to stack");
+    const length = validImages[0].length;
+    const result = new Uint8ClampedArray(length);
+    const pixelValues: number[] = [];
+
+    for (let i = 0; i < length; i += 4) {
+        for (let channel = 0; channel < 3; channel++) {
+            pixelValues.length = 0;
+            for (const img of validImages) {
+                if (img[i + 3] > 128) {
+                    pixelValues.push(img[i + channel]);
+                }
+            }
+
+            if (pixelValues.length < 3) { // Not enough data to clip, just average
+                if (pixelValues.length > 0) {
+                    result[i + channel] = pixelValues.reduce((a, b) => a + b, 0) / pixelValues.length;
+                }
+                continue;
+            }
+            
+            const mu = mean(pixelValues);
+            const stdev = std(pixelValues);
+            const threshold = sigma * stdev;
+            const filtered = pixelValues.filter(v => Math.abs(v - mu) < threshold);
+            
+            if (filtered.length > 0) {
+                result[i + channel] = filtered.reduce((a, b) => a + b, 0) / filtered.length;
+            }
+        }
+        const validCount = validImages.filter(img => img[i+3] > 128).length;
+        result[i + 3] = validCount > 0 ? 255 : 0;
+    }
+    return result;
+}
+
 // --- 13) Main alignment function ---
 export async function alignAndStack(
   imageEntries: ImageQueueEntry[],
   manualRefStars: Star[],
+  mode: StackingMode,
   addLog: (message: string) => void,
   setProgress: (progress: number) => void
 ): Promise<Uint8ClampedArray> {
@@ -506,21 +574,21 @@ export async function alignAndStack(
     addLog("Warning: Fewer than 3 reference stars. Alignment quality may be poor.");
   }
   
-  const p1_refs: Point[] = [];
+  const anchors_ref: Point[] = [];
   const tempRefStars = [...allRefStars].sort((a,b) => b.brightness - a.brightness); 
   
-  while (p1_refs.length < 3 && tempRefStars.length > 0) {
+  while (anchors_ref.length < 3 && tempRefStars.length > 0) {
     const candidate = tempRefStars.shift()!;
-    if (p1_refs.every(anchor => euclideanDist(anchor, candidate) > 50)) {
-        p1_refs.push(candidate);
+    if (anchors_ref.every(anchor => euclideanDist(anchor, candidate) > 50)) {
+        anchors_ref.push(candidate);
     }
   }
 
-  if (p1_refs.length < 2) {
-    addLog("Warning: Could not select at least 2 unique anchor stars. Alignment may fail.");
+  if (anchors_ref.length < 2) {
+    addLog("Warning: Could not select at least 2 unique anchor stars for transform. Alignment may fail.");
   }
 
-  let last_known_points: (Point | null)[] = [...p1_refs];
+  let last_known_anchors: (Point | null)[] = [...anchors_ref];
 
   for (let i = 1; i < imageEntries.length; i++) {
     const targetEntry = imageEntries[i];
@@ -544,10 +612,10 @@ export async function alignAndStack(
     const p1: Point[] = []; // Points from original reference image that are found in target
     const p2: Point[] = []; // Corresponding points found in target image
     
-    const current_found_points: (Point | null)[] = [...last_known_points].map(() => null);
+    const current_found_anchors: (Point | null)[] = [...last_known_anchors].map(() => null);
 
-    for (let j = 0; j < p1_refs.length; j++) {
-        const lastKnownPos = last_known_points[j];
+    for (let j = 0; j < last_known_anchors.length; j++) {
+        const lastKnownPos = last_known_anchors[j];
         if (!lastKnownPos) continue;
         
         const SEARCH_RADIUS = 30;
@@ -557,13 +625,13 @@ export async function alignAndStack(
 
         if(candidates.length > 0){
           const bestMatch = candidates[0]; // Simplest assumption: closest is best
-          p1.push(p1_refs[j]);
+          p1.push(anchors_ref[j]);
           p2.push(bestMatch);
-          current_found_points[j] = bestMatch;
+          current_found_anchors[j] = bestMatch;
         }
     }
     
-    last_known_points = current_found_points;
+    last_known_anchors = current_found_anchors;
     
     if (p1.length >= 2) { // Need at least 2 points for similarity transform
         transform = estimateSimilarityTransform(p1, p2);
@@ -599,5 +667,17 @@ export async function alignAndStack(
 
   setProgress(1);
   addLog("All images aligned. Stacking...");
-  return stackImages(alignedImageDatas);
+
+  switch (mode) {
+    case 'median':
+        addLog("Using Median stacking mode.");
+        return stackImagesMedian(alignedImageDatas);
+    case 'sigma':
+        addLog("Using Sigma Clipping stacking mode.");
+        return stackImagesSigmaClip(alignedImageDatas);
+    case 'average':
+    default:
+        addLog("Using Average stacking mode.");
+        return stackImagesAverage(alignedImageDatas);
+  }
 }
