@@ -303,12 +303,10 @@ function warpImage(
             
             const x0 = Math.floor(srcX);
             const y0 = Math.floor(srcY);
+            const x1 = x0 + 1;
+            const y1 = y0 + 1;
 
-            // Robust boundary check
-            if (x0 >= 0 && x0 < srcWidth - 1 && y0 >= 0 && y0 < srcHeight - 1) {
-                const x1 = x0 + 1;
-                const y1 = y0 + 1;
-                
+            if (x0 >= 0 && x1 < srcWidth && y0 >= 0 && y1 < srcHeight) {
                 const x_frac = srcX - x0;
                 const y_frac = srcY - y0;
 
@@ -410,6 +408,7 @@ export async function alignAndStack(
     }
     
     let transform: { scale: number; rotation: number; translation: Point } | null = null;
+    let propagationSuccess = false;
     
     // --- Pattern Propagation Logic ---
     if (anchors_ref.length >= 2) {
@@ -417,6 +416,7 @@ export async function alignAndStack(
         
         for (let j = 0; j < anchors_ref.length; j++) {
             const lastKnownPos = last_known_anchors[j];
+            if (!lastKnownPos) continue; 
             const pattern = patterns_ref[j];
             const targetStars = targetEntry.detectedStars;
             
@@ -452,15 +452,14 @@ export async function alignAndStack(
             if (transform) {
                 addLog(`Image ${i}: Aligned using ${found_anchors_target.length}-point propagated pattern.`);
                 last_known_anchors = found_anchors_target; 
+                propagationSuccess = true;
             }
-        } else {
-            addLog(`Image ${i}: Pattern propagation failed (found only ${found_anchors_target.length} anchors). Falling back to feature matching.`);
-            last_known_anchors = [...anchors_ref];
         }
     }
-      
-    // --- Fallback to general feature matching ---
-    if (!transform) {
+
+    if (!propagationSuccess) {
+      addLog(`Image ${i}: Pattern propagation failed. Resetting anchors and falling back to feature matching.`);
+      last_known_anchors = [...anchors_ref]; // Reset for next image
       const matches = matchFeatures(allRefStars, targetEntry.detectedStars);
       if (matches.length >= 3) {
         const points1 = matches.map(m => m[0]);
@@ -471,7 +470,7 @@ export async function alignAndStack(
         }
       }
     }
-
+      
     if (transform) {
       const warpedData = warpImage(targetEntry.imageData.data, width, height, transform);
       alignedImageDatas.push(warpedData);
