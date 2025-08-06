@@ -1,6 +1,11 @@
 // --- Types ---
 export type Point = { x: number; y: number };
 export type Star = Point & { brightness: number; size: number; descriptor: number[] };
+export type ImageQueueEntry = {
+  imageData: ImageData | null;
+  detectedStars: Star[];
+};
+
 
 // --- 1) Grayscale conversion ---
 function toGrayscale(imageData: ImageData): Uint8Array {
@@ -388,7 +393,7 @@ function stackImages(images: (Uint8ClampedArray | null)[]): Uint8ClampedArray {
 
 // --- 13) Main alignment function ---
 export async function alignAndStack(
-  imageEntries: { imageData: ImageData | null; detectedStars: Star[] }[],
+  imageEntries: ImageQueueEntry[],
   manualRefStars: Star[],
   addLog: (message: string) => void,
   setProgress: (progress: number) => void
@@ -397,6 +402,7 @@ export async function alignAndStack(
     throw new Error("No valid images provided.");
   }
 
+  const MIN_STARS_FOR_ALIGNMENT = 10;
   const refEntry = imageEntries[0];
   const { width, height } = refEntry.imageData;
   let alignedImageDatas: (Uint8ClampedArray | null)[] = [refEntry.imageData.data];
@@ -435,18 +441,26 @@ export async function alignAndStack(
       setProgress(i / imageEntries.length);
       continue;
     }
+
+    if (targetEntry.detectedStars.length < MIN_STARS_FOR_ALIGNMENT) {
+      addLog(`Skipping image ${i}: Found only ${targetEntry.detectedStars.length} stars (min ${MIN_STARS_FOR_ALIGNMENT} required).`);
+      alignedImageDatas.push(null);
+      setProgress(i / imageEntries.length);
+      continue;
+    }
     
     let transform: { scale: number; rotation: number; translation: Point } | null = null;
     
     // --- Start: 3-point propagation logic ---
     const p1: Point[] = []; // Points from original reference image
     const p2: Point[] = []; // Corresponding points found in target image
-    const new_last_knowns: (Point | null)[] = [];
+    
+    const new_last_knowns = [...last_known_anchors];
 
     for (let j = 0; j < anchors_ref.length; j++) {
         const lastKnownPos = last_known_anchors[j];
         if (!lastKnownPos) {
-          new_last_knowns.push(null); 
+          new_last_knowns[j] = null; 
           continue; 
         }; 
         const pattern = patterns_ref[j];
@@ -476,9 +490,9 @@ export async function alignAndStack(
         if (bestMatch.star) {
             p1.push(anchors_ref[j]);
             p2.push(bestMatch.star);
-            new_last_knowns.push(bestMatch.star);
+            new_last_knowns[j] = bestMatch.star;
         } else {
-            new_last_knowns.push(null); // Mark as not found
+            new_last_knowns[j] = null; // Mark as not found
         }
     }
     
@@ -510,8 +524,8 @@ export async function alignAndStack(
       const warpedData = warpImage(targetEntry.imageData.data, width, height, transform);
       alignedImageDatas.push(warpedData);
     } else {
-      addLog(`Image ${i}: Could not determine transform. Stacking unaligned.`);
-      alignedImageDatas.push(targetEntry.imageData.data); // Add unaligned if transform fails
+      addLog(`Skipping image ${i}: Could not determine transform.`);
+      alignedImageDatas.push(null); // Add null if transform fails
     }
     setProgress(i / imageEntries.length);
   }
