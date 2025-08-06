@@ -1,3 +1,4 @@
+
 // --- Types ---
 export type Point = { x: number; y: number };
 export type Star = Point & { brightness: number; size: number };
@@ -130,7 +131,7 @@ function getTransformFromTwoStars(refStars: Star[], targetStars: Star[]): Transf
     // Angle of each vector
     const refAngle = Math.atan2(refVec.y, refVec.x);
     const targetAngle = Math.atan2(targetVec.y, targetVec.x);
-    const angle = targetAngle - refAngle;
+    let angle = targetAngle - refAngle;
 
     // Scale from the lengths of the vectors
     const refDist = Math.sqrt(refVec.x * refVec.x + refVec.y * refVec.y);
@@ -138,17 +139,47 @@ function getTransformFromTwoStars(refStars: Star[], targetStars: Star[]): Transf
 
     // Avoid division by zero
     if (refDist < 1e-6) return null;
-    const scale = targetDist / refDist;
+    let scale = targetDist / refDist;
+    if (scale === 0) return null; // Avoid zero scale
+
+    // Now, consider that the second brightest star might be a different one.
+    // Let's test the swapped case.
+    const targetVecSwapped = { x: target1.x - target2.x, y: target1.y - target2.y };
+    const targetAngleSwapped = Math.atan2(targetVecSwapped.y, targetVecSwapped.x);
+    let angleSwapped = targetAngleSwapped - refAngle;
+    const targetDistSwapped = Math.sqrt(targetVecSwapped.x*targetVecSwapped.x + targetVecSwapped.y*targetVecSwapped.y);
+    let scaleSwapped = targetDistSwapped / refDist;
+
+    // To decide which is better, we can't do much without a third star.
+    // However, a simple check could be to see which scale is closer to 1.
+    if (Math.abs(scaleSwapped - 1) < Math.abs(scale - 1)) {
+        scale = scaleSwapped;
+        angle = angleSwapped;
+        // The transformation logic needs to handle this swap, aligning target2 to ref1
+        const cosAngle = Math.cos(-angle);
+        const sinAngle = Math.sin(-angle);
+        const rotatedTargetX = target2.x * cosAngle - target2.y * sinAngle;
+        const rotatedTargetY = target2.x * sinAngle + target2.y * cosAngle;
+        const dx = ref1.x - rotatedTargetX * scale;
+        const dy = ref1.y - rotatedTargetY * scale;
+        return { dx, dy, angle: -angle, scale };
+
+    }
 
     // Calculate translation (dx, dy)
     // The translation needs to align target1 to ref1 after rotation and scaling.
-    const cosAngle = Math.cos(angle);
-    const sinAngle = Math.sin(angle);
+    const cosAngle = Math.cos(-angle);
+    const sinAngle = Math.sin(-angle);
+    
+    // Rotate and scale target1's coordinates
+    const rotatedTargetX = target1.x * cosAngle - target1.y * sinAngle;
+    const rotatedTargetY = target1.x * sinAngle + target1.y * cosAngle;
 
-    const dx = ref1.x - (target1.x * scale * cosAngle - target1.y * scale * sinAngle);
-    const dy = ref1.y - (target1.x * scale * sinAngle + target1.y * scale * cosAngle);
+    // Now calculate the translation needed to move the transformed target1 to ref1
+    const dx = ref1.x - rotatedTargetX * scale;
+    const dy = ref1.y - rotatedTargetY * scale;
 
-    return { dx, dy, angle, scale };
+    return { dx, dy, angle: -angle, scale };
 }
 
 /**
@@ -164,55 +195,63 @@ function warpImage(
     const dstData = new Uint8ClampedArray(srcData.length);
     const { dx, dy, angle, scale } = transform;
 
-    const cosAngle = Math.cos(-angle);
-    const sinAngle = Math.sin(-angle);
+    if (scale === 0) return dstData; // Prevent division by zero if scale is invalid
+
+    const cosAngle = Math.cos(angle);
+    const sinAngle = Math.sin(angle);
     
     const invScale = 1 / scale;
 
-    const centerX = srcWidth / 2;
-    const centerY = srcHeight / 2;
+    // The center of rotation and scaling should be the reference point, not the canvas center
+    // For simplicity with this transform, we'll work with the coordinates directly.
 
     for (let y = 0; y < srcHeight; y++) {
         for (let x = 0; x < srcWidth; x++) {
-            // Apply inverse transform from destination (x,y) to find source (srcX, srcY)
             
-            // 1. Inverse translate to origin
-            const x1 = x - dx - centerX;
-            const y1 = y - dy - centerY;
+            // Inverse transform: from destination (x,y) to source (srcX, srcY)
+            // 1. Inverse translate
+            const x1 = x - dx;
+            const y1 = y - dy;
 
-            // 2. Inverse rotate
-            const x2 = x1 * cosAngle - y1 * sinAngle;
-            const y2 = x1 * sinAngle + y1 * cosAngle;
+            // 2. Inverse scale
+            const x2 = x1 * invScale;
+            const y2 = y1 * invScale;
 
-            // 3. Inverse scale
-            const srcX = x2 * invScale + centerX;
-            const srcY = y2 * invScale + centerY;
+            // 3. Inverse rotate
+            const srcX = x2 * cosAngle + y2 * sinAngle;
+            const srcY = -x2 * sinAngle + y2 * cosAngle;
 
             // Bilinear interpolation
-            const x0 = Math.floor(srcX);
-            const y0 = Math.floor(srcY);
-            const x1_ = Math.ceil(srcX);
-            const y1_ = Math.ceil(srcY);
-
-            if (x0 < 0 || x1_ >= srcWidth || y0 < 0 || y1_ >= srcHeight) {
+            const x_floor = Math.floor(srcX);
+            const y_floor = Math.floor(srcY);
+            const x_ceil = x_floor + 1;
+            const y_ceil = y_floor + 1;
+            
+            if (x_floor < 0 || x_ceil >= srcWidth || y_floor < 0 || y_ceil >= srcHeight) {
                 continue; // Out of bounds
             }
             
-            const x_ratio = srcX - x0;
-            const y_ratio = srcY - y0;
+            const x_ratio = srcX - x_floor;
+            const y_ratio = srcY - y_floor;
 
             const dstIdx = (y * srcWidth + x) * 4;
 
             for (let channel = 0; channel < 4; channel++) {
-                 const c00 = srcData[(y0 * srcWidth + x0) * 4 + channel];
-                 const c10 = srcData[(y0 * srcWidth + x1_) * 4 + channel];
-                 const c01 = srcData[(y1_ * srcWidth + x0) * 4 + channel];
-                 const c11 = srcData[(y1_ * srcWidth + x1_) * 4 + channel];
+                 const c00 = srcData[(y_floor * srcWidth + x_floor) * 4 + channel];
+                 const c10 = srcData[(y_floor * srcWidth + x_ceil) * 4 + channel];
+                 const c01 = srcData[(y_ceil * srcWidth + x_floor) * 4 + channel];
+                 const c11 = srcData[(y_ceil * srcWidth + x_ceil) * 4 + channel];
+
+                 if (c00 === undefined || c10 === undefined || c01 === undefined || c11 === undefined) continue;
 
                  const c_x0 = c00 * (1 - x_ratio) + c10 * x_ratio;
                  const c_x1 = c01 * (1 - x_ratio) + c11 * x_ratio;
 
-                 dstData[dstIdx + channel] = c_x0 * (1-y_ratio) + c_x1 * y_ratio;
+                 dstData[dstIdx + channel] = c_x0 * (1 - y_ratio) + c_x1 * y_ratio;
+            }
+            // Set alpha to full for pixels that get data
+            if (dstData[dstIdx+3] === 0 && (dstData[dstIdx] > 0 || dstData[dstIdx+1] > 0 || dstData[dstIdx+2] > 0)) {
+              dstData[dstIdx+3] = 255;
             }
         }
     }
@@ -347,11 +386,13 @@ export async function alignAndStack(
   const { width, height } = refEntry.analysisDimensions;
   const alignedImageDatas: (Uint8ClampedArray | null)[] = [refEntry.imageData!.data];
   
-  const refStars = (manualRefStars.length > 1 ? manualRefStars : refEntry.detectedStars);
+  const refStars = (manualRefStars.length > 1 ? manualRefStars : refEntry.detectedStars)
+      .sort((a, b) => b.brightness - a.brightness)
+      .slice(0, 50);
 
   if (refStars.length < 2) {
-    addLog(`Error: Reference image has fewer than 2 stars. Cannot align.`);
-    throw new Error("Reference image has fewer than 2 stars. Cannot align.");
+    addLog(`Error: Reference image has fewer than 2 detected stars. Cannot align.`);
+    throw new Error("Reference image has fewer than 2 detected stars. Cannot align.");
   }
   addLog(`Using ${refStars.length} stars from reference image.`);
 
@@ -367,7 +408,10 @@ export async function alignAndStack(
       continue;
     }
 
-    const targetStars = targetEntry.detectedStars;
+    const targetStars = targetEntry.detectedStars
+        .sort((a, b) => b.brightness - a.brightness)
+        .slice(0, 50);
+
     if (targetStars.length < 2) {
         addLog(`Skipping image ${i+1}: fewer than 2 stars detected.`);
         alignedImageDatas.push(null);
@@ -378,7 +422,7 @@ export async function alignAndStack(
     const transform = getTransformFromTwoStars(refStars, targetStars);
 
     if (!transform) {
-        addLog(`Skipping image ${i+1}: could not determine robust transform.`);
+        addLog(`Could not determine robust transform for ${targetEntry.id}. Skipping.`);
         alignedImageDatas.push(null);
         setProgress(progress);
         continue;
@@ -408,3 +452,5 @@ export async function alignAndStack(
         return stackImagesAverage(alignedImageDatas);
   }
 }
+
+    
