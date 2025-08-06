@@ -395,23 +395,25 @@ function warpImage(
         for (let x = 0; x < srcWidth; x++) {
             const dstIdx = (y * srcWidth + x) * 4;
 
-            const srcX = invScale * (cosR * (x - tX) - sinR * (y - tY));
-            const srcY = invScale * (sinR * (x - tX) + cosR * (y - tY));
+            // Apply inverse transformation to find corresponding source pixel
+            const srcX_unscaled = (x - tX) * cosR - (y - tY) * sinR;
+            const srcY_unscaled = (x - tX) * sinR + (y - tY) * cosR;
+            const srcX = srcX_unscaled * invScale;
+            const srcY = srcY_unscaled * invScale;
 
+            if (srcX < 0 || srcX >= srcWidth - 1 || srcY < 0 || srcY >= srcHeight - 1) {
+                continue; // Pixel is outside the source image bounds
+            }
+            
+            // Bilinear interpolation
             const x0 = Math.floor(srcX);
             const y0 = Math.floor(srcY);
-            
-            if (x0 < 0 || x0 >= srcWidth - 1 || y0 < 0 || y0 >= srcHeight - 1) {
-                dstData[dstIdx + 3] = 0;
-                continue;
-            }
-
             const x1 = x0 + 1;
             const y1 = y0 + 1;
             const x_frac = srcX - x0;
             const y_frac = srcY - y0;
-            
-            for (let channel = 0; channel < 3; channel++) { 
+
+            for (let channel = 0; channel < 3; channel++) {
                 const c00 = srcData[(y0 * srcWidth + x0) * 4 + channel];
                 const c10 = srcData[(y0 * srcWidth + x1) * 4 + channel];
                 const c01 = srcData[(y1 * srcWidth + x0) * 4 + channel];
@@ -423,7 +425,7 @@ function warpImage(
                 
                 dstData[dstIdx + channel] = val;
             }
-            dstData[dstIdx + 3] = 255;
+            dstData[dstIdx + 3] = 255; // Set alpha to fully opaque
         }
     }
     return dstData;
