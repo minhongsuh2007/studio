@@ -267,8 +267,8 @@ function descriptorDist(d1: number[], d2: number[]): number {
 function matchFeatures(
   stars1: Star[],
   stars2: Star[],
-  maxDistance = 50, // Increased tolerance
-  descriptorThreshold = 0.6 // Increased tolerance
+  maxDistance = 100, // Increased tolerance
+  descriptorThreshold = 0.8 // Increased tolerance
 ): [Star, Star][] {
     if (stars1.length === 0 || stars2.length === 0) return [];
     
@@ -591,7 +591,6 @@ export async function alignAndStack(
     throw new Error("No valid images provided.");
   }
 
-  const MIN_STARS_FOR_ALIGNMENT = 10;
   const refEntry = imageEntries[0];
   const { width, height } = refEntry.imageData;
   let alignedImageDatas: (Uint8ClampedArray | null)[] = [refEntry.imageData.data];
@@ -616,13 +615,6 @@ export async function alignAndStack(
       continue;
     }
 
-    if (targetEntry.detectedStars.length < MIN_STARS_FOR_ALIGNMENT) {
-      addLog(`Skipping image ${i}: Found only ${targetEntry.detectedStars.length} stars (min ${MIN_STARS_FOR_ALIGNMENT} required).`);
-      alignedImageDatas.push(null);
-      setProgress(progress);
-      continue;
-    }
-    
     // Match the shared reference stars to the current target image's stars
     const matches = matchFeatures(allRefStars, targetEntry.detectedStars);
     
