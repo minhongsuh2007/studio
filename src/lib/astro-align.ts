@@ -309,24 +309,26 @@ function warpImage(
             if (x0 >= 0 && x1 < srcWidth && y0 >= 0 && y1 < srcHeight) {
                 const x_frac = srcX - x0;
                 const y_frac = srcY - y0;
+                const c00_idx = (y0 * srcWidth + x0) * 4;
+                const c00_alpha = srcData[c00_idx + 3];
 
-                for (let channel = 0; channel < 4; channel++) {
-                    const c00 = srcData[(y0 * srcWidth + x0) * 4 + channel];
+                if (c00_alpha === 0) { // If source is transparent, skip
+                    continue;
+                }
+
+                for (let channel = 0; channel < 3; channel++) { // Only R, G, B
+                    const c00 = srcData[c00_idx + channel];
                     const c10 = srcData[(y0 * srcWidth + x1) * 4 + channel];
                     const c01 = srcData[(y1 * srcWidth + x0) * 4 + channel];
                     const c11 = srcData[(y1 * srcWidth + x1) * 4 + channel];
                     
-                    if (channel === 3) {
-                         dstData[dstIdx + 3] = c00; // Use nearest for alpha
-                         continue;
-                    }
-
                     const top = c00 * (1 - x_frac) + c10 * x_frac;
                     const bottom = c01 * (1 - x_frac) + c11 * x_frac;
                     const val = top * (1 - y_frac) + bottom * y_frac;
                     
                     dstData[dstIdx + channel] = val;
                 }
+                dstData[dstIdx + 3] = c00_alpha; // Use nearest-neighbor for alpha
             } else {
                  dstData[dstIdx] = 0;
                  dstData[dstIdx + 1] = 0;
@@ -345,15 +347,28 @@ function stackImages(images: (Uint8ClampedArray | null)[]): Uint8ClampedArray {
     if (validImages.length === 0) throw new Error("No valid images to stack");
     const length = validImages[0].length;
     const accum = new Float32Array(length);
+    const counts = new Uint8Array(length / 4); // Count per pixel
+
     for (const img of validImages) {
-        for (let i = 0; i < length; i++) {
-        accum[i] += img[i];
+        for (let i = 0; i < length; i += 4) {
+            if (img[i + 3] > 128) { // Consider pixel valid if alpha is > 50%
+                accum[i] += img[i];
+                accum[i + 1] += img[i + 1];
+                accum[i + 2] += img[i + 2];
+                counts[i / 4]++;
+            }
         }
     }
-    const count = validImages.length;
+
     const result = new Uint8ClampedArray(length);
-    for (let i = 0; i < length; i++) {
-        result[i] = Math.min(255, accum[i] / count);
+    for (let i = 0; i < length; i += 4) {
+        const count = counts[i / 4];
+        if (count > 0) {
+            result[i] = Math.min(255, accum[i] / count);
+            result[i + 1] = Math.min(255, accum[i + 1] / count);
+            result[i + 2] = Math.min(255, accum[i + 2] / count);
+            result[i + 3] = 255; // Final image is opaque
+        }
     }
     return result;
 }
@@ -395,7 +410,7 @@ export async function alignAndStack(
   );
   addLog(`Created ${patterns_ref.length} star patterns for propagation.`);
   
-  let last_known_anchors: Point[] = [...anchors_ref];
+  let last_known_anchors: (Point | null)[] = [...anchors_ref];
 
   for (let i = 1; i < imageEntries.length; i++) {
     const targetEntry = imageEntries[i];
@@ -407,16 +422,18 @@ export async function alignAndStack(
     }
     
     let transform: { scale: number; rotation: number; translation: Point } | null = null;
-    let propagationSuccess = false;
     
     if (anchors_ref.length >= 2) {
         const p1: Point[] = [];
         const p2: Point[] = [];
-        let new_last_knowns: Point[] = [];
+        const new_last_knowns: (Point | null)[] = [];
 
         for (let j = 0; j < anchors_ref.length; j++) {
             const lastKnownPos = last_known_anchors[j];
-            if (!lastKnownPos) continue; 
+            if (!lastKnownPos) {
+              new_last_knowns.push(null);
+              continue; 
+            }; 
             const pattern = patterns_ref[j];
             const targetStars = targetEntry.detectedStars;
             
@@ -446,7 +463,7 @@ export async function alignAndStack(
                 p2.push(bestMatch.star);
                 new_last_knowns.push(bestMatch.star);
             } else {
-                new_last_knowns.push(lastKnownPos); // Carry over the old position if not found
+                new_last_knowns.push(null); // Mark as not found
             }
         }
         
@@ -456,13 +473,12 @@ export async function alignAndStack(
             transform = estimateSimilarityTransform(p1, p2);
             if (transform) {
                 addLog(`Image ${i}: Aligned using ${p1.length}-point propagated pattern.`);
-                propagationSuccess = true;
             }
         }
     }
 
-    if (!propagationSuccess) {
-      addLog(`Image ${i}: Pattern propagation failed. Resetting anchors and falling back to feature matching.`);
+    if (!transform) {
+      addLog(`Image ${i}: Pattern propagation failed or had too few points. Resetting anchors and falling back to feature matching.`);
       last_known_anchors = [...anchors_ref]; // Reset for next image
       const matches = matchFeatures(allRefStars, targetEntry.detectedStars);
       if (matches.length >= 3) {
