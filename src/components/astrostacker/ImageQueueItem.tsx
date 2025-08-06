@@ -1,45 +1,39 @@
 
 "use client";
 
-import type React from 'react'; // Ensure React is imported if JSX is used
+import type React from 'react';
 import Image from 'next/image';
-import { X, Edit3, Loader2, CheckCircle, Orbit, Settings2, AlertTriangle } from 'lucide-react';
+import { X, Edit3, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardFooter } from '@/components/ui/card';
-import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
-import type { StarSelectionMode } from '@/app/page'; 
 
 interface ImageQueueItemProps {
   id: string;
+  index: number;
   file: File;
   previewUrl: string;
-  isAnalyzing: boolean; // This will now directly reflect the entry's isAnalyzing state
-  isReviewed: boolean; 
-  starSelectionMode: StarSelectionMode;
+  isAnalyzing: boolean;
   onRemove: () => void;
-  onEditStars: () => void;
-  onToggleStarSelectionMode: () => void;
-  isProcessing: boolean; // Overall app processing state (e.g., stacking)
+  onManualSelectToggle: () => void;
+  isProcessing: boolean;
   isAnalyzed: boolean;
-  analysisDimensions: { width: number; height: number };
+  isManualSelectMode: boolean;
 }
 
 export function ImageQueueItem({
   id,
+  index,
   file,
   previewUrl,
-  isAnalyzing, // Simplified: directly use the isAnalyzing prop from the parent
-  isReviewed,
-  starSelectionMode,
+  isAnalyzing,
   onRemove,
-  onEditStars,
-  onToggleStarSelectionMode,
-  isProcessing, // General processing lock
+  onManualSelectToggle,
+  isProcessing,
   isAnalyzed,
-  analysisDimensions
+  isManualSelectMode,
 }: ImageQueueItemProps) {
-  const isManualMode = starSelectionMode === 'manual';
+  
+  const isReferenceImage = index === 0;
 
   return (
     <Card className="relative group overflow-hidden shadow-md hover:shadow-lg transition-shadow flex flex-col">
@@ -64,58 +58,42 @@ export function ImageQueueItem({
             <X className="h-4 w-4" />
           </Button>
         </div>
-        {isManualMode && isReviewed && (
-            <div className="absolute top-1 left-1 bg-green-500/80 text-white p-1 rounded-full flex items-center justify-center h-5 w-5" title="Manual stars confirmed/applied">
-                <CheckCircle className="h-3 w-3" />
-            </div>
-        )}
-         {isAnalyzing && ( // Directly use the isAnalyzing prop
+         {isAnalyzing && (
              <div className="absolute bottom-1 left-1 bg-background/80 text-foreground p-1 rounded-sm text-xs flex items-center">
                 <Loader2 className="mr-1 h-3 w-3 animate-spin" /> Analyzing...
              </div>
          )}
          {!isAnalyzed && !isAnalyzing && (
             <div className="absolute bottom-1 right-1 bg-yellow-500/80 text-background p-1 rounded-sm text-xs flex items-center" title="Needs Analysis">
-                <AlertTriangle className="mr-1 h-3 w-3" /> Needs Analysis
+                 Needs Analysis
              </div>
+         )}
+         {isReferenceImage && (
+            <div className="absolute top-1 left-1 bg-accent/90 text-accent-foreground px-2 py-0.5 rounded-full text-xs font-bold">
+                REF
+            </div>
          )}
       </CardContent>
       <div className="p-2 text-xs text-muted-foreground truncate bg-card-foreground/5 flex-grow">
-        {file.name} ({analysisDimensions.width}x{analysisDimensions.height})
+        {file.name}
       </div>
-      <CardFooter className="p-2 border-t flex flex-col space-y-2">
-        <div className="flex items-center justify-between w-full">
-          <div className="flex items-center space-x-2">
-            <Switch
-              id={`star-mode-switch-${id}`}
-              checked={isManualMode}
-              onCheckedChange={onToggleStarSelectionMode}
-              disabled={isProcessing || isAnalyzing}
-              aria-label={isManualMode ? "Switch to Automatic Star Detection" : "Switch to Manual Star Editing"}
-            />
-            <Label htmlFor={`star-mode-switch-${id}`} className="text-xs cursor-pointer flex items-center">
-              {isManualMode ? <Settings2 className="mr-1 h-3 w-3" /> : <Orbit className="mr-1 h-3 w-3" />}
-              {isManualMode ? 'Manual Stars' : 'Auto Stars'}
-            </Label>
-          </div>
-         
-        </div>
-         <Button
-            variant="outline"
+      <CardFooter className="p-2 border-t">
+        {isReferenceImage && (
+           <Button
+            variant={isManualSelectMode ? "secondary" : "outline"}
             size="sm"
-            onClick={onEditStars}
-            disabled={isProcessing || isAnalyzing || (!isAnalyzed && !isAnalyzing) } // Only disable if truly not analyzed OR currently analyzing.
+            onClick={onManualSelectToggle}
+            disabled={isProcessing || isAnalyzing || !isAnalyzed}
             className="w-full"
-            title={isAnalyzing ? "Analyzing..." : (isManualMode ? (isReviewed ? "Re-edit Manual Stars" : "Edit Manual Stars") : "Review/Edit (Switches to Manual)")}
+            title={!isAnalyzed ? "Waiting for analysis to complete..." : "Select stars manually on this reference image"}
           >
-            {isAnalyzing ? ( 
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-                <Edit3 className="mr-2 h-4 w-4" />
-            )}
-            {isAnalyzing ? "Analyzing..." : (isManualMode ? (isReviewed ? "Re-Edit" : "Edit Stars") : "Review/Edit")}
+            <Edit3 className="mr-2 h-4 w-4" />
+            {isManualSelectMode ? "Exit Selection Mode" : "Select Stars"}
           </Button>
+        )}
       </CardFooter>
     </Card>
   );
 }
+
+    
