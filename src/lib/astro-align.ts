@@ -33,7 +33,6 @@ function fitGaussianPSF(patch: number[][], initialX: number, initialY: number): 
 
     let A = [];
     let b = [];
-    let hasSignal = false;
 
     for (let r = 0; r < size; r++) {
         for (let c = 0; c < size; c++) {
@@ -41,7 +40,6 @@ function fitGaussianPSF(patch: number[][], initialX: number, initialY: number): 
             const y = r - halfSize;
             const z = patch[r][c];
             if (z > 0) {
-                hasSignal = true;
                 const log_z = Math.log(z);
                 A.push([x * x, y * y, x * y, x, y, 1]);
                 b.push(log_z);
@@ -49,7 +47,7 @@ function fitGaussianPSF(patch: number[][], initialX: number, initialY: number): 
         }
     }
 
-    if (!hasSignal || A.length < 6) return null;
+    if (A.length < 6) return null;
 
     try {
         const At = transpose(matrix(A));
@@ -75,12 +73,12 @@ function fitGaussianPSF(patch: number[][], initialX: number, initialY: number): 
         if (Math.abs(fwhm_denom) < 1e-6) return null;
         
         const fwhm_term_sqrt_arg = Math.pow(c_xx - c_yy, 2) + c_xy*c_xy;
-        if (fwhm_term_sqrt_arg < 0) return null; // Should not happen with real numbers, but as a safe guard.
+        if (fwhm_term_sqrt_arg < 0) return null;
         
         const fwhm_term = (c_xx + c_yy + Math.sqrt(fwhm_term_sqrt_arg));
 
         const fwhm_log_arg = -2 * Math.log(0.5) * fwhm_term / fwhm_denom;
-        if (fwhm_log_arg < 0) return null; // We can't take sqrt of a negative number.
+        if (fwhm_log_arg < 0) return null;
 
         const fwhm = Math.sqrt(fwhm_log_arg) * 2;
         
@@ -188,7 +186,7 @@ function detectStars(
 
             const fitResult = fitGaussianPSF(patch, approxCx, approxCy);
 
-            if (fitResult) { // Check only if a fit was returned, ignore FWHM check for now
+            if (fitResult) {
                 const desc = computeDescriptor(fitResult.x, fitResult.y);
                 stars.push({
                     x: fitResult.x,
@@ -650,12 +648,11 @@ export async function alignAndStack(
             addLog(`Image ${i}: Aligned using ${p1.length}-point propagated pattern.`);
             last_known_anchors = current_found_anchors;
         }
-    } else {
-        last_known_anchors = [...anchors_ref]; 
     }
 
     if (!transform) {
       addLog(`Image ${i}: Pattern propagation failed. Falling back to feature matching.`);
+      last_known_anchors = [...anchors_ref]; 
       const matches = matchFeatures(allRefStars, targetEntry.detectedStars);
       if (matches.length >= 3) {
         const ransacPoints1 = matches.map(m => m[0]);
