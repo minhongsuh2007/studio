@@ -1,13 +1,14 @@
-
 // --- Types ---
 import { matrix, inv, multiply, transpose, lusolve, median, mean, std } from 'mathjs';
 
 export type Point = { x: number; y: number };
 export type Star = Point & { brightness: number; size: number; fwhm: number, descriptor: number[] };
 export type StackingMode = 'average' | 'median' | 'sigma';
-export type ImageQueueEntry = {
+export interface ImageQueueEntry {
+  id: string;
   imageData: ImageData | null;
   detectedStars: Star[];
+  analysisDimensions: { width: number; height: number; };
 };
 
 
@@ -58,27 +59,30 @@ function fitGaussianPSF(
 
         const Xt = transpose(X);
         const XtX = multiply(Xt, X);
-        const XtX_inv = inv(XtX);
         const XtY = multiply(Xt, y);
-        const c = multiply(XtX_inv, XtY).valueOf().flat() as number[];
+
+        const regularizedXtX = lusolve(XtX, XtY);
+        const c = regularizedXtX.valueOf().flat() as number[];
 
         const [c_xx, c_yy, c_xy, c_x, c_y, c_0] = c;
 
+        if (c_xx >= 0 || c_yy >= 0) return null;
+        
         const det = 4 * c_xx * c_yy - c_xy * c_xy;
         if (det === 0) return null;
 
         const x_center = (c_xy * c_y - 2 * c_yy * c_x) / det;
         const y_center = (c_xy * c_x - 2 * c_xx * c_y) / det;
 
-        const sigma_x_sq = -2 / (4 * c_xx + (c_xy * c_xy) / c_yy - c_xy * c_xy / c_yy);
-        const sigma_y_sq = -2 / (4 * c_yy + (c_xy * c_xy) / c_xx - c_xy * c_xy / c_xx);
+        const sigma_x_sq = -2 / det * c_yy;
+        const sigma_y_sq = -2 / det * c_xx;
         
         if (sigma_x_sq <= 0 || sigma_y_sq <= 0) return null;
 
         const fwhm = 2.3548 * Math.sqrt((Math.sqrt(sigma_x_sq) + Math.sqrt(sigma_y_sq)) / 2);
         const peak = Math.exp(c_0 + c_x*x_center + c_y*y_center + c_xx*x_center*x_center + c_yy*y_center*y_center + c_xy*x_center*y_center);
         
-        if (isNaN(fwhm) || fwhm < 1 || fwhm > patchSize || Math.abs(x_center) > patchSize || Math.abs(y_center) > patchSize) {
+        if (isNaN(fwhm) || fwhm < 1 || fwhm > patchSize) {
           return null;
         }
 
@@ -126,12 +130,13 @@ function detectStars(
 
   function computeDescriptor(cx: number, cy: number): number[] {
     const patch: number[] = [];
-    for (let dy = -2; dy <= 2; dy++) {
-      for (let dx = -2; dx <= 2; dx++) {
+    const patchRadius = 2; 
+    for (let dy = -patchRadius; dy <= patchRadius; dy++) {
+      for (let dx = -patchRadius; dx <= patchRadius; dx++) {
         const x = Math.round(cx + dx);
         const y = Math.round(cy + dy);
         if (x >= 0 && x < width && y >= 0 && y < height) {
-          patch.push(gray[y * width + x] / 255);
+          patch.push(gray[y * width + x] / 255.0); 
         } else {
           patch.push(0);
         }
@@ -175,7 +180,6 @@ function detectStars(
         const initialY = sumY / totalBrightness;
 
         const patch: number[] = [];
-        const patchDim = 2 * psfPatchSize + 1;
         for (let y = -psfPatchSize; y <= psfPatchSize; y++) {
             for (let x = -psfPatchSize; x <= psfPatchSize; x++) {
                 const sampleX = Math.round(initialX + x);
@@ -190,7 +194,7 @@ function detectStars(
         
         const psfResult = fitGaussianPSF(patch, psfPatchSize, initialX, initialY);
         
-        if (psfResult && psfResult.peak > threshold * 1.1) {
+        if (psfResult && psfResult.peak > threshold) {
              stars.push({
               x: psfResult.x,
               y: psfResult.y,
@@ -238,12 +242,13 @@ export function detectStarsMultiScale(
       combined.push(s2);
     }
   }
-  return combined;
+  return combined.sort((a, b) => b.brightness - a.brightness);
 }
 
 // --- 5) Euclidean distance ---
 function euclideanDist(p1: Point, p2: Point): number {
-  const dx = p1.x - p2.x, dy = p1.y - p2.y;
+  const dx = p1.x - p2.x;
+  const dy = p1.y - p2.y;
   return Math.sqrt(dx * dx + dy * dy);
 }
 
@@ -257,65 +262,37 @@ function descriptorDist(d1: number[], d2: number[]): number {
   return Math.sqrt(sum);
 }
 
-// --- 7) KD-tree for stars ---
-class KDNode {
-    point: Star;
-    left: KDNode | null = null;
-    right: KDNode | null = null;
-    axis: 0 | 1;
-    constructor(points: Star[], depth = 0) {
-      this.axis = (depth % 2) as 0 | 1;
-      points.sort((a, b) => (this.axis === 0 ? a.x - b.x : a.y - b.y));
-      const median = Math.floor(points.length / 2);
-      this.point = points[median];
-      if (median > 0) this.left = points.slice(0, median).length > 0 ? new KDNode(points.slice(0, median), depth + 1) : null;
-      if (median + 1 < points.length) this.right = points.slice(median + 1).length > 0 ? new KDNode(points.slice(median + 1), depth + 1) : null;
-    }
-    nearest(point: Point, best: { star: Star | null; dist: number }, maxDist: number): { star: Star | null; dist: number } {
-      if (!this.point) return best;
-      const d = euclideanDist(this.point, point);
-      if (d < best.dist && d < maxDist) {
-        best.star = this.point;
-        best.dist = d;
-      }
-      const diff = this.axis === 0 ? point.x - this.point.x : point.y - this.point.y;
-      const first = diff < 0 ? this.left : this.right;
-      const second = diff < 0 ? this.right : this.left;
-      if (first) best = first.nearest(point, best, maxDist);
-      if (second && Math.abs(diff) < best.dist) best = second.nearest(point, best, maxDist);
-      return best;
-    }
-  }
 
-// --- 8) Feature matching with kd-tree + ratio test ---
+// --- 8) Feature matching ---
 function matchFeatures(
   stars1: Star[],
   stars2: Star[],
-  maxDistance = 15,
-  descriptorThreshold = 0.4
+  maxDistance = 25,
+  descriptorThreshold = 0.5
 ): [Star, Star][] {
-  if (stars2.length === 0) return [];
-  const tree = new KDNode(stars2);
-  const matches: [Star, Star][] = [];
-  for (const s1 of stars1) {
-    const bestNeighbor = tree.nearest(s1, { star: null, dist: maxDistance }, maxDistance);
-    if (!bestNeighbor.star) continue;
-    const dDist = descriptorDist(s1.descriptor, bestNeighbor.star.descriptor);
-    if (dDist > descriptorThreshold) continue;
+    if (stars1.length === 0 || stars2.length === 0) return [];
     
-    let secondDist = Infinity;
-    for (const s2 of stars2) {
-      if (s2 === bestNeighbor.star) continue;
-      if (euclideanDist(s1, s2) > maxDistance) continue;
-      const descD = descriptorDist(s1.descriptor, s2.descriptor);
-      if (descD < secondDist) secondDist = descD;
+    const matches: [Star, Star][] = [];
+
+    for (const s1 of stars1) {
+        let bestMatch: Star | null = null;
+        let bestDist = Infinity;
+
+        for (const s2 of stars2) {
+            const d = descriptorDist(s1.descriptor, s2.descriptor);
+            if (d < bestDist && d < descriptorThreshold && euclideanDist(s1, s2) < maxDistance) {
+                bestDist = d;
+                bestMatch = s2;
+            }
+        }
+        
+        if (bestMatch) {
+            matches.push([s1, bestMatch]);
+        }
     }
-    if (secondDist > 0 && dDist / secondDist < 0.75) {
-      matches.push([s1, bestNeighbor.star]);
-    }
-  }
-  return matches;
+    return matches;
 }
+
 
 // --- 9) Estimate similarity transform ---
 function estimateSimilarityTransform(
@@ -425,35 +402,37 @@ function warpImage(
             const x0 = Math.floor(srcX);
             const y0 = Math.floor(srcY);
             
-            if (x0 >= 0 && x0 < srcWidth - 1 && y0 >= 0 && y0 < srcHeight - 1) {
-                const x1 = x0 + 1;
-                const y1 = y0 + 1;
-                const x_frac = srcX - x0;
-                const y_frac = srcY - y0;
-                
-                const c00_idx = (y0 * srcWidth + x0) * 4;
-                const c00_alpha = srcData[c00_idx + 3];
-
-                if (c00_alpha === 0) { 
-                    continue;
-                }
-
-                for (let channel = 0; channel < 3; channel++) { 
-                    const c00 = srcData[c00_idx + channel];
-                    const c10 = srcData[(y0 * srcWidth + x1) * 4 + channel];
-                    const c01 = srcData[(y1 * srcWidth + x0) * 4 + channel];
-                    const c11 = srcData[(y1 * srcWidth + x1) * 4 + channel];
-                    
-                    const top = c00 * (1 - x_frac) + c10 * x_frac;
-                    const bottom = c01 * (1 - x_frac) + c11 * x_frac;
-                    const val = top * (1 - y_frac) + bottom * y_frac;
-                    
-                    dstData[dstIdx + channel] = val;
-                }
-                dstData[dstIdx + 3] = c00_alpha; 
-            } else {
-                 dstData[dstIdx + 3] = 0;
+            if (x0 < 0 || x0 >= srcWidth - 1 || y0 < 0 || y0 >= srcHeight - 1) {
+                dstData[dstIdx + 3] = 0; // Mark as transparent if outside bounds
+                continue;
             }
+
+            const x1 = x0 + 1;
+            const y1 = y0 + 1;
+            const x_frac = srcX - x0;
+            const y_frac = srcY - y0;
+            
+            const c00_idx = (y0 * srcWidth + x0) * 4;
+            const c00_alpha = srcData[c00_idx + 3];
+
+            if (c00_alpha === 0) { 
+                dstData[dstIdx + 3] = 0;
+                continue;
+            }
+
+            for (let channel = 0; channel < 3; channel++) { 
+                const c00 = srcData[c00_idx + channel];
+                const c10 = srcData[(y0 * srcWidth + x1) * 4 + channel];
+                const c01 = srcData[(y1 * srcWidth + x0) * 4 + channel];
+                const c11 = srcData[(y1 * srcWidth + x1) * 4 + channel];
+                
+                const top = c00 * (1 - x_frac) + c10 * x_frac;
+                const bottom = c01 * (1 - x_frac) + c11 * x_frac;
+                const val = top * (1 - y_frac) + bottom * y_frac;
+                
+                dstData[dstIdx + channel] = val;
+            }
+            dstData[dstIdx + 3] = 255;
         }
     }
     return dstData;
@@ -566,6 +545,31 @@ function stackImagesSigmaClip(images: (Uint8ClampedArray | null)[], sigma = 2.0)
     return result;
 }
 
+// --- NEW --- Find stars that are shared across all images
+function findSharedStars(
+  allEntries: ImageQueueEntry[],
+  addLog: (message: string) => void
+): Star[] {
+  if (allEntries.length < 2) return allEntries[0]?.detectedStars || [];
+  
+  const refStars = allEntries[0].detectedStars;
+  let sharedStars = refStars;
+
+  for (let i = 1; i < allEntries.length; i++) {
+    const targetStars = allEntries[i].detectedStars;
+    const matches = matchFeatures(sharedStars, targetStars);
+    
+    // The new set of shared stars are the ones from the *original* reference list
+    // that had a match in this target image.
+    sharedStars = matches.map(([refStar, _]) => refStar);
+    addLog(`Found ${sharedStars.length} shared stars between reference and image ${i}`);
+  }
+  
+  addLog(`Found a final set of ${sharedStars.length} stars common to all images.`);
+  return sharedStars;
+}
+
+
 // --- 14) Main alignment function ---
 export async function alignAndStack(
   imageEntries: ImageQueueEntry[],
@@ -583,101 +587,61 @@ export async function alignAndStack(
   const { width, height } = refEntry.imageData;
   let alignedImageDatas: (Uint8ClampedArray | null)[] = [refEntry.imageData.data];
   
-  const allRefStars = manualRefStars.length > 0 ? manualRefStars : refEntry.detectedStars;
+  // Use manually selected stars if present, otherwise find stars shared across all images.
+  const allRefStars = manualRefStars.length > 0 
+    ? manualRefStars 
+    : findSharedStars(imageEntries, addLog);
+
   if (allRefStars.length < 3) {
-    addLog("Warning: Fewer than 3 reference stars. Alignment quality may be poor.");
+    addLog(`Warning: Fewer than 3 reference stars (${allRefStars.length}) found across all images. Alignment quality may be poor or fail.`);
   }
-  
-  const anchors_ref: Point[] = [];
-  const tempRefStars = [...allRefStars].sort((a,b) => b.brightness - a.brightness); 
-  
-  while (anchors_ref.length < 3 && tempRefStars.length > 0) {
-    const candidate = tempRefStars.shift()!;
-    if (anchors_ref.every(anchor => euclideanDist(anchor, candidate) > 50)) {
-        anchors_ref.push(candidate);
-    }
-  }
-
-  if (anchors_ref.length < 2) {
-    addLog("Warning: Could not select at least 2 unique anchor stars for transform. Alignment may fail.");
-  }
-
-  let last_known_anchors: (Point | null)[] = [...anchors_ref];
 
   for (let i = 1; i < imageEntries.length; i++) {
     const targetEntry = imageEntries[i];
+    const progress = (i + 1) / imageEntries.length;
+
     if (!targetEntry.imageData) {
       addLog(`Skipping image ${i} due to missing image data.`);
       alignedImageDatas.push(null);
-      setProgress(i / imageEntries.length);
+      setProgress(progress);
       continue;
     }
 
     if (targetEntry.detectedStars.length < MIN_STARS_FOR_ALIGNMENT) {
       addLog(`Skipping image ${i}: Found only ${targetEntry.detectedStars.length} stars (min ${MIN_STARS_FOR_ALIGNMENT} required).`);
       alignedImageDatas.push(null);
-      setProgress(i / imageEntries.length);
+      setProgress(progress);
       continue;
     }
     
-    let transform: { scale: number; rotation: number; translation: Point } | null = null;
+    // Match the shared reference stars to the current target image's stars
+    const matches = matchFeatures(allRefStars, targetEntry.detectedStars);
     
-    const p1: Point[] = [];
-    const p2: Point[] = []; 
-    
-    const current_found_anchors: (Point | null)[] = last_known_anchors.map(() => null);
-
-    for (let j = 0; j < anchors_ref.length; j++) {
-        const lastKnownPos = last_known_anchors[j];
-        if (!lastKnownPos) continue;
-        
-        const SEARCH_RADIUS = 30;
-        const candidates = targetEntry.detectedStars
-            .filter(s => euclideanDist(s, lastKnownPos) < SEARCH_RADIUS)
-            .sort((a,b) => euclideanDist(a, lastKnownPos) - euclideanDist(b, lastKnownPos));
-
-        if(candidates.length > 0){
-          const bestMatch = candidates[0];
-          p1.push(anchors_ref[j]);
-          p2.push(bestMatch);
-          current_found_anchors[j] = bestMatch;
-        }
-    }
-    
-    if (p1.length >= 2) {
-        transform = estimateSimilarityTransform(p1, p2);
-        if (transform) {
-            addLog(`Image ${i}: Aligned using ${p1.length}-point propagated pattern.`);
-            last_known_anchors = current_found_anchors;
-        }
+    if (matches.length < 3) {
+      addLog(`Skipping image ${i}: Could not find enough matches (${matches.length}) to the shared star pattern.`);
+      alignedImageDatas.push(null);
+      setProgress(progress);
+      continue;
     }
 
-    if (!transform) {
-      addLog(`Image ${i}: Pattern propagation failed. Falling back to feature matching.`);
-      last_known_anchors = [...anchors_ref]; 
-      const matches = matchFeatures(allRefStars, targetEntry.detectedStars);
-      if (matches.length >= 3) {
-        const ransacPoints1 = matches.map(m => m[0]);
-        const ransacPoints2 = matches.map(m => m[1]);
-        transform = estimateSimilarityTransformRANSAC(ransacPoints1, ransacPoints2);
-        if (transform) {
-          addLog(`Image ${i}: Aligned using RANSAC fallback (${matches.length} initial matches).`);
-        }
-      }
-    }
+    addLog(`Image ${i}: Found ${matches.length} matches to the shared star pattern.`);
+    
+    const ransacPoints1 = matches.map(m => m[0]);
+    const ransacPoints2 = matches.map(m => m[1]);
+    const transform = estimateSimilarityTransformRANSAC(ransacPoints1, ransacPoints2);
       
     if (transform) {
       const warpedData = warpImage(targetEntry.imageData.data, width, height, transform);
       alignedImageDatas.push(warpedData);
+      addLog(`Image ${i}: Aligned using RANSAC with shared stars.`);
     } else {
-      addLog(`Skipping image ${i}: Could not determine transform.`);
+      addLog(`Skipping image ${i}: Could not determine transform with RANSAC.`);
       alignedImageDatas.push(null);
     }
-    setProgress(i / imageEntries.length);
+    setProgress(progress);
   }
 
-  setProgress(1);
-  addLog("All images aligned. Stacking...");
+  addLog("All images processed. Stacking...");
 
   switch (mode) {
     case 'median':
