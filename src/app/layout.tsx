@@ -1,7 +1,6 @@
 
 import type {Metadata} from 'next';
 import './globals.css';
-import { Toaster } from "@/components/ui/toaster";
 import { LanguageProvider } from '@/contexts/LanguageContext'; // Added import
 
 export const metadata: Metadata = {
@@ -28,7 +27,6 @@ export default function RootLayout({
       <body className="font-body antialiased">
         <LanguageProvider> {/* Added LanguageProvider */}
           {children}
-          <Toaster />
         </LanguageProvider>
       </body>
     </html>

@@ -4,7 +4,6 @@
 import type React from 'react';
 import { useState, useEffect, useRef, useCallback }from 'react';
 import { Button } from '@/components/ui/button';
-import { useToast } from '@/hooks/use-toast';
 import { fileToDataURL } from '@/lib/utils';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { alignAndStack, detectStars, type Star, type StackingMode } from '@/lib/astro-align';
@@ -59,7 +58,6 @@ export default function AstroStackerPage() {
   const [outputFormat, setOutputFormat] = useState<OutputFormat>('png');
   const [jpegQuality, setJpegQuality] = useState<number>(92);
   const [progressPercent, setProgressPercent] = useState(0);
-  const { toast } = useToast();
   const [logs, setLogs] = useState<{ id: number; timestamp: string; message: string; }[]>([]);
   const logContainerRef = useRef<HTMLDivElement>(null);
   const logIdCounter = useRef(0);
@@ -184,7 +182,7 @@ export default function AstroStackerPage() {
         );
         setEditedPreviewUrl(adjustedUrl);
       } catch (error) {
-        toast({ title: "Adjustment Error", description: "Could not apply image adjustments.", variant: "destructive" });
+        console.error("Adjustment Error", "Could not apply image adjustments.");
         setEditedPreviewUrl(imageForPostProcessing);
       } finally {
         setIsApplyingAdjustments(false);
@@ -192,7 +190,7 @@ export default function AstroStackerPage() {
     };
     const debounceTimeout = setTimeout(applyAdjustments, 300);
     return () => clearTimeout(debounceTimeout);
-  }, [imageForPostProcessing, brightness, exposure, saturation, showPostProcessEditor, outputFormat, jpegQuality, toast]);
+  }, [imageForPostProcessing, brightness, exposure, saturation, showPostProcessEditor, outputFormat, jpegQuality]);
 
   const analyzeImageForStars = async (entryToAnalyze: ImageQueueEntry): Promise<ImageQueueEntry> => {
     setAllImageStarData(prevData =>
@@ -227,7 +225,7 @@ export default function AstroStackerPage() {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       addLog(`[ANALYSIS ERROR] For ${entryToAnalyze.file.name}: ${errorMessage}`);
-      toast({ title: `Analysis Failed for ${entryToAnalyze.file.name}`, description: errorMessage, variant: "destructive" });
+      window.alert(`Analysis Failed for ${entryToAnalyze.file.name}: ${errorMessage}`);
       finalUpdatedEntry.isAnalyzed = false;
     } finally {
       finalUpdatedEntry.isAnalyzing = false;
@@ -311,7 +309,7 @@ export default function AstroStackerPage() {
     if (!imageToSelect) return;
 
     if (!imageToSelect.isAnalyzed) {
-        toast({ title: "Not Ready", description: "Image has not been analyzed yet. Please wait.", variant: "default" });
+        window.alert("Image has not been analyzed yet. Please wait.");
         return;
     }
 
@@ -408,7 +406,7 @@ export default function AstroStackerPage() {
   const handleWipeAllStars = () => {
     setManualSelectedStars([]);
     setCanvasStars([]); // Also clear the faint yellow stars from the canvas
-    toast({ title: "All Stars Cleared", description: "You can now start selecting stars on a clean slate."});
+    addLog("All stars cleared from manual selection.");
   };
 
   const handleConfirmManualSelection = async () => {
@@ -417,7 +415,7 @@ export default function AstroStackerPage() {
     if (!imageToLearnFrom || !imageToLearnFrom.imageData) return;
 
     if (manualSelectedStars.length < 2) {
-      toast({ title: "Not Enough Stars", description: "Please select at least 2 stars to define a pattern.", variant: "destructive" });
+      window.alert("Please select at least 2 stars to define a pattern.");
       return;
     }
     
@@ -447,7 +445,7 @@ export default function AstroStackerPage() {
         };
         updatedPatterns = [...prev];
         updatedPatterns[existingPatternIndex] = newPattern;
-        toast({ title: "Star Pattern Updated", description: `${newCharacteristics.length} new star characteristics from ${imageToLearnFrom.file.name} added to your aggregated pattern.`});
+        addLog(`Star Pattern Updated: ${newCharacteristics.length} new star characteristics from ${imageToLearnFrom.file.name} added to your aggregated pattern.`);
 
       } else {
         // Create new aggregated pattern
@@ -458,7 +456,7 @@ export default function AstroStackerPage() {
           characteristics: newCharacteristics,
         };
         updatedPatterns = [...prev, newPattern];
-        toast({ title: "Star Pattern Learned!", description: `A new aggregated pattern has been created with ${newCharacteristics.length} stars from ${imageToLearnFrom.file.name}.` });
+        addLog(`Star Pattern Learned: A new aggregated pattern has been created with ${newCharacteristics.length} stars from ${imageToLearnFrom.file.name}.`);
       }
 
       saveLearnedPatterns(updatedPatterns);
@@ -480,20 +478,15 @@ export default function AstroStackerPage() {
 
   const handleStackAllImages = async () => {
     if (allImageStarData.length < 2) {
-      toast({ title: "Not Enough Images", description: "Please upload at least two images." });
+      window.alert("Please upload at least two images.");
       return;
     }
     if (allImageStarData.some(img => img.isAnalyzing)) {
-      toast({ title: "Analysis in Progress", description: "Please wait for all images to be analyzed before stacking." });
+      window.alert("Please wait for all images to be analyzed before stacking.");
       return;
     }
     if (alignmentMethod === 'ai' && selectedPatternIDs.size === 0) {
-        toast({
-          title: "No AI Pattern Selected",
-          description: "AI Alignment method is selected, but no learned patterns are checked for use. Please select patterns from the Learning Mode section, or switch to Standard alignment.",
-          variant: "destructive",
-          duration: 10000,
-        });
+        window.alert("AI Alignment method is selected, but no learned patterns are checked for use. Please select patterns from the Learning Mode section, or switch to Standard alignment.");
         return;
     }
   
@@ -544,12 +537,12 @@ export default function AstroStackerPage() {
       setEditedPreviewUrl(resultDataUrl);
       setBrightness(100); setExposure(0); setSaturation(100);
       setShowPostProcessEditor(true);
-      toast({ title: "Stacking Complete", description: `Successfully stacked ${allImageStarData.length} images.`, duration: 8000 });
+      addLog(`Stacking Complete: Successfully stacked ${allImageStarData.length} images.`);
   
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       addLog(`[STACK FATAL ERROR] ${errorMessage}`);
-      toast({ title: "Stacking Failed", description: errorMessage, variant: "destructive" });
+      window.alert(`Stacking Failed: ${errorMessage}`);
     } finally {
       setIsProcessingStack(false);
       setProgressPercent(0);
@@ -603,12 +596,12 @@ export default function AstroStackerPage() {
 
   const runPatternTest = async () => {
     if (!testImage || !testImage.imageData) {
-        toast({title: t('noTestImageToastTitle'), description: t('noTestImageToastDesc'), variant: 'destructive'});
+        window.alert(t('noTestImageToastTitle'));
         return;
     }
     const activePatterns = learnedPatterns.filter(p => selectedPatternIDs.has(p.id));
     if (activePatterns.length !== 1) {
-        toast({title: t('noActivePatternForTestToastTitle'), description: t('noActivePatternForTestToastDesc'), variant: 'destructive'});
+        window.alert(t('noActivePatternForTestToastTitle'));
         return;
     }
     setIsAnalyzingTestImage(true);
@@ -625,7 +618,7 @@ export default function AstroStackerPage() {
         setTestImageMatchedStars(matched);
         setIsAnalyzingTestImage(false);
         addLog(`Test complete. Found ${matched.length} matching stars.`);
-        toast({title: t('testAnalysisCompleteToastTitle'), description: t('testAnalysisCompleteToastDesc', {count: matched.length, fileName: testImage.file.name})});
+        window.alert(t('testAnalysisCompleteToastDesc', {count: matched.length, fileName: testImage.file.name}));
     }, 100);
   };
   
@@ -650,7 +643,7 @@ export default function AstroStackerPage() {
         newSet.delete(patternId);
         return newSet;
       });
-      toast({title: t('patternDeletedToastTitle'), description: t('patternDeletedToastDesc', {fileName: patternId})});
+      addLog(`Pattern ${patternId} deleted.`);
     }
   };
 
@@ -821,5 +814,3 @@ export default function AstroStackerPage() {
     </div>
   );
 }
-
-    
