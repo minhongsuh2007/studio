@@ -3,7 +3,20 @@
 
 import type { StackingMode, Transform } from '@/lib/astro-align';
 import { findMatchingStars, type LearnedPattern } from '@/lib/ai-star-matcher';
-import type { Star, ImageQueueEntry } from '@/lib/astro-align';
+import type { Star } from '@/lib/astro-align';
+
+// This type definition is duplicated from page.tsx to avoid circular dependencies.
+interface ImageQueueEntry {
+  id: string;
+  file: File;
+  previewUrl: string;
+  isAnalyzing: boolean;
+  isAnalyzed: boolean;
+  analysisDimensions: { width: number; height: number };
+  imageData: ImageData | null;
+  detectedStars: Star[];
+}
+
 
 /**
  * Calculates the transformation required to align two point sets.
@@ -248,7 +261,7 @@ export async function aiClientAlignAndStack(
   addLog(`[AI-CLIENT] Finding reference stars in ${refEntry.file.name} using AI patterns.`);
   const { matchedStars: refStars, logs: refLogs } = await findMatchingStars({
       allDetectedStars: refEntry.detectedStars,
-      imageData: refEntry.imageData,
+      imageData: { data: Array.from(refEntry.imageData.data), width, height },
       learnedPatterns
   });
   refLogs.forEach(log => addLog(`[AI-REF] ${log}`));
@@ -276,7 +289,7 @@ export async function aiClientAlignAndStack(
     addLog(`[AI-CLIENT] Finding target stars in ${targetEntry.file.name}`);
     const { matchedStars: targetStars, logs: targetLogs } = await findMatchingStars({
         allDetectedStars: targetEntry.detectedStars,
-        imageData: targetEntry.imageData,
+        imageData: { data: Array.from(targetEntry.imageData.data), width, height },
         learnedPatterns
     });
     targetLogs.forEach(log => addLog(`[AI-TGT] ${log}`));
