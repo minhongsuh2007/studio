@@ -1,9 +1,11 @@
 
 'use server';
 
-import type { ImageQueueEntry, Star, StackingMode, Transform } from '@/lib/astro-align';
+import type { StackingMode, Transform, ImageQueueEntry } from '@/lib/astro-align';
 import { findMatchingStars } from '@/lib/ai-star-matcher';
 import type { LearnedPattern } from '@/lib/ai-star-matcher';
+import type { Star } from '@/lib/astro-align';
+
 
 /**
  * Calculates the transformation required to align two points sets based on their two brightest stars.
@@ -303,3 +305,5 @@ export async function aiAlignAndStack(
         return stackImagesAverage(alignedImageDatas);
   }
 }
+
+    

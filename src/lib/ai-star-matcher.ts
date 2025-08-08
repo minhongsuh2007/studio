@@ -161,3 +161,5 @@ function compareCharacteristics(
   }
   return bestScore;
 }
+
+    
