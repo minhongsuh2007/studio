@@ -2,7 +2,7 @@
 'use server';
 
 import type { ImageQueueEntry, Star, StackingMode, Transform } from '@/lib/astro-align';
-import { findMatchingStars, type SimpleImageData } from '@/lib/ai-star-matcher';
+import { findMatchingStars } from '@/lib/ai-star-matcher';
 import type { LearnedPattern } from '@/lib/ai-star-matcher';
 
 /**
@@ -238,7 +238,7 @@ export async function aiAlignAndStack(
   const { width, height } = refEntry.analysisDimensions;
   const alignedImageDatas: (Uint8ClampedArray | null)[] = [refEntry.imageData!.data];
   
-  const refStars = (await findMatchingStars(refEntry.detectedStars, {data: refEntry.imageData.data, width, height}, learnedPatterns))
+  const refStars = (await findMatchingStars({ allDetectedStars: refEntry.detectedStars, imageData: { data: refEntry.imageData.data, width, height }, learnedPatterns }))
     .sort((a, b) => b.brightness - a.brightness);
 
   if (refStars.length < 2) {
@@ -260,7 +260,7 @@ export async function aiAlignAndStack(
     }
 
     const { data: targetData, width: targetWidth, height: targetHeight } = targetEntry.imageData;
-    const targetStars = (await findMatchingStars(targetEntry.detectedStars, {data: targetData, width: targetWidth, height: targetHeight }, learnedPatterns))
+    const targetStars = (await findMatchingStars({ allDetectedStars: targetEntry.detectedStars, imageData: {data: targetData, width: targetWidth, height: targetHeight }, learnedPatterns }))
         .sort((a, b) => b.brightness - a.brightness);
 
     if (targetStars.length < 2) {

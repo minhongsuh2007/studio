@@ -420,7 +420,10 @@ export default function AstroStackerPage() {
     const patternId = 'aggregated-user-pattern';
     
     const { data, width, height } = imageToLearnFrom.imageData;
-    const newCharacteristics = await extractCharacteristicsFromImage(manualSelectedStars, {data, width, height});
+    const newCharacteristics = await extractCharacteristicsFromImage({
+      stars: manualSelectedStars,
+      imageData: { data, width, height }
+    });
     
     setLearnedPatterns(prev => {
       const existingPatternIndex = prev.findIndex(p => p.id === patternId);
@@ -602,7 +605,11 @@ export default function AstroStackerPage() {
     
     setTimeout(async () => {
         const {data, width, height} = testImage.imageData!;
-        const matched = await findMatchingStars(testImage.detectedStars, {data, width, height}, activePatterns);
+        const matched = await findMatchingStars({
+          allDetectedStars: testImage.detectedStars, 
+          imageData: {data, width, height}, 
+          learnedPatterns: activePatterns
+        });
         setTestImageMatchedStars(matched);
         setIsAnalyzingTestImage(false);
         addLog(`Test complete. Found ${matched.length} matching stars.`);

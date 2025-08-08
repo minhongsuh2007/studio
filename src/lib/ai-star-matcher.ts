@@ -87,11 +87,14 @@ function getStarCharacteristics(star: Star, imageData: SimpleImageData): StarCha
 /**
  * Analyzes manually selected stars from a single image and returns their characteristics.
  */
-export async function extractCharacteristicsFromImage(
-  manualStars: Star[],
+export async function extractCharacteristicsFromImage({
+  stars,
+  imageData
+}: {
+  stars: Star[],
   imageData: SimpleImageData
-): Promise<StarCharacteristics[]> {
-  const characteristics = manualStars
+}): Promise<StarCharacteristics[]> {
+  const characteristics = stars
     .map(star => getStarCharacteristics(star, imageData))
     .filter((c): c is StarCharacteristics => c !== null);
 
@@ -102,12 +105,17 @@ export async function extractCharacteristicsFromImage(
 /**
  * Finds all stars in an image that match the learned patterns.
  */
-export async function findMatchingStars(
+export async function findMatchingStars({
+  allDetectedStars,
+  imageData,
+  learnedPatterns,
+  matchThreshold = 0.75 // How similar a star needs to be to be considered a match
+}: {
   allDetectedStars: Star[],
   imageData: SimpleImageData,
   learnedPatterns: LearnedPattern[],
-  matchThreshold = 0.75 // How similar a star needs to be to be considered a match
-): Promise<Star[]> {
+  matchThreshold?: number
+}): Promise<Star[]> {
   if (learnedPatterns.length === 0) return [];
   
   const matchedStars: Star[] = [];
