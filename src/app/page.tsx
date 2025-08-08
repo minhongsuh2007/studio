@@ -26,7 +26,7 @@ import { Slider } from "@/components/ui/slider";
 import { StarAnnotationCanvas } from '@/components/astrostacker/StarAnnotationCanvas';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Switch } from '@/components/ui/switch';
-import { Checkbox } from '@/components/ui/checkbox';
+import { Checkbox } from "@/components/ui/checkbox";
 import NextImage from 'next/image';
 
 interface ImageQueueEntry {
@@ -325,21 +325,81 @@ export default function AstroStackerPage() {
     setManualSelectedStars(imageToSelect.detectedStars);
     setCanvasStars(imageToSelect.detectedStars);
   };
+
+    const findNearbyStarCenter = (
+        imageData: ImageData,
+        clickX: number,
+        clickY: number,
+        searchRadius: number = 15
+    ): Star | null => {
+        const { data, width, height } = imageData;
+        const startX = Math.max(0, Math.round(clickX - searchRadius));
+        const endX = Math.min(width, Math.round(clickX + searchRadius));
+        const startY = Math.max(0, Math.round(clickY - searchRadius));
+        const endY = Math.min(height, Math.round(clickY + searchRadius));
+
+        let maxBrightness = 0;
+        for (let y = startY; y < endY; y++) {
+            for (let x = startX; x < endX; x++) {
+                const idx = (y * width + x) * 4;
+                const brightness = 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
+                if (brightness > maxBrightness) {
+                    maxBrightness = brightness;
+                }
+            }
+        }
+
+        const threshold = maxBrightness * 0.7; // Threshold for pixels belonging to the star
+        let weightedX = 0;
+        let weightedY = 0;
+        let totalBrightness = 0;
+        let pixelCount = 0;
+
+        for (let y = startY; y < endY; y++) {
+            for (let x = startX; x < endX; x++) {
+                const idx = (y * width + x) * 4;
+                const brightness = 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
+                if (brightness >= threshold) {
+                    weightedX += x * brightness;
+                    weightedY += y * brightness;
+                    totalBrightness += brightness;
+                    pixelCount++;
+                }
+            }
+        }
+
+        if (totalBrightness > 0) {
+            return {
+                x: weightedX / totalBrightness,
+                y: weightedY / totalBrightness,
+                brightness: totalBrightness,
+                size: pixelCount,
+            };
+        }
+        return null;
+    };
   
   const handleStarAnnotationClick = (x: number, y: number) => {
     if (!manualSelectImageId) return;
     const manualSelectRadius = 15;
-  
+    
+    const imageEntry = allImageStarData.find(img => img.id === manualSelectImageId);
+    if (!imageEntry || !imageEntry.imageData) return;
+
     // Check if clicking on an existing star to remove it
     const existingStarIndex = manualSelectedStars.findIndex(star => Math.sqrt(Math.pow(star.x - x, 2) + Math.pow(star.y - y, 2)) < manualSelectRadius);
   
     if (existingStarIndex !== -1) {
-      // If clicked on an existing star, remove it
       setManualSelectedStars(prev => prev.filter((_, index) => index !== existingStarIndex));
     } else {
-      // If clicked on a new spot, add a new star
-      // We don't have brightness/size data, but that's okay for the AI learner, it will calculate it
-      setManualSelectedStars(prev => [...prev, { x, y, brightness: 0, size: 0 }]);
+      // Find the precise center of the clicked star
+      const centeredStar = findNearbyStarCenter(imageEntry.imageData, x, y);
+      if (centeredStar) {
+        setManualSelectedStars(prev => [...prev, centeredStar]);
+      } else {
+        // Fallback to adding at the exact click position if no bright spot is found
+        setManualSelectedStars(prev => [...prev, { x, y, brightness: 0, size: 0 }]);
+      }
     }
   };
 
@@ -740,5 +800,3 @@ export default function AstroStackerPage() {
     </div>
   );
 }
-
-    
