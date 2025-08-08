@@ -405,8 +405,7 @@ export default function AstroStackerPage() {
 
   const handleWipeAllStars = () => {
     setManualSelectedStars([]);
-    setCanvasStars([]); // Also clear the faint yellow stars from the canvas
-    addLog("All stars cleared from manual selection.");
+    addLog("All manual star selections have been cleared.");
   };
 
   const handleConfirmManualSelection = async () => {
@@ -634,7 +633,8 @@ export default function AstroStackerPage() {
         const matched = await findMatchingStars({
           allDetectedStars: testImage.detectedStars, 
           imageData: {data: Array.from(data), width, height},
-          learnedPatterns: activePatterns
+          learnedPatterns: activePatterns,
+          addLog: (m) => addLog(`[AI TEST] ${m}`)
         });
         setTestImageMatchedStars(matched);
         setIsAnalyzingTestImage(false);
