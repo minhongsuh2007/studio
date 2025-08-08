@@ -483,6 +483,15 @@ export default function AstroStackerPage() {
       toast({ title: "Analysis in Progress", description: "Please wait for all images to be analyzed before stacking." });
       return;
     }
+    if (alignmentMethod === 'ai' && selectedPatternIDs.size === 0) {
+        toast({
+          title: "No AI Pattern Selected",
+          description: "AI Alignment method is selected, but no learned patterns are checked for use. Please select patterns from the Learning Mode section, or switch to Standard alignment.",
+          variant: "destructive",
+          duration: 10000,
+        });
+        return;
+    }
   
     setIsProcessingStack(true);
     setProgressPercent(0);
@@ -500,9 +509,7 @@ export default function AstroStackerPage() {
 
       if (alignmentMethod === 'ai') {
         const activePatterns = learnedPatterns.filter(p => selectedPatternIDs.has(p.id));
-        if (activePatterns.length === 0) {
-          throw new Error("AI Alignment method selected, but no learned patterns are checked for use. Please select patterns from the Learning Mode section.");
-        }
+        
         addLog(`Using ${activePatterns.length} learned patterns for AI alignment.`);
         stackedImageData = await aiAlignAndStack(allImageStarData, activePatterns, stackingMode, (m) => addLog(`[AI ALIGN] ${m}`), (p) => setProgressPercent(p * 100));
       } else {
@@ -810,3 +817,5 @@ export default function AstroStackerPage() {
     </div>
   );
 }
+
+    
