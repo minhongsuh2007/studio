@@ -507,7 +507,18 @@ export default function AstroStackerPage() {
         const activePatterns = learnedPatterns.filter(p => selectedPatternIDs.has(p.id));
         
         addLog(`Using ${activePatterns.length} learned patterns for AI alignment.`);
-        stackedImageData = await aiAlignAndStack(allImageStarData, activePatterns, stackingMode, (m) => addLog(`[AI ALIGN] ${m}`), (p) => setProgressPercent(p * 100));
+
+        // Correctly serialize image data for the server action
+        const serializableImageEntries = allImageStarData.map(entry => ({
+            ...entry,
+            imageData: entry.imageData ? {
+                data: Array.from(entry.imageData.data),
+                width: entry.imageData.width,
+                height: entry.imageData.height
+            } : null
+        }));
+
+        stackedImageData = await aiAlignAndStack(serializableImageEntries, activePatterns, stackingMode, (m) => addLog(`[AI ALIGN] ${m}`), (p) => setProgressPercent(p * 100));
       } else {
         // Standard Alignment
         const refImageForStandard = allImageStarData[0];
@@ -526,7 +537,7 @@ export default function AstroStackerPage() {
       canvas.height = height;
       const ctx = canvas.getContext('2d');
       if (!ctx) throw new Error("Could not create canvas context to display result.");
-      ctx.putImageData(new ImageData(stackedImageData, width, height), 0, 0);
+      ctx.putImageData(new ImageData(new Uint8ClampedArray(stackedImageData), width, height), 0, 0);
   
       const resultDataUrl = canvas.toDataURL(outputFormat === 'jpeg' ? 'image/jpeg' : 'image/png', jpegQuality / 100);
       if (!resultDataUrl || resultDataUrl.length < MIN_VALID_DATA_URL_LENGTH) throw new Error("Failed to generate a valid preview URL for the stacked image.");
@@ -632,15 +643,19 @@ export default function AstroStackerPage() {
 
   const deletePattern = (patternId: string) => {
     if (window.confirm(`Are you sure you want to delete the pattern "${patternId}"? This cannot be undone.`)) {
-      const newPatterns = learnedPatterns.filter(p => p.id !== patternId);
-      const newSelectedIDs = new Set(selectedPatternIDs);
-      newSelectedIDs.delete(patternId);
-
-      setLearnedPatterns(newPatterns);
-      setSelectedPatternIDs(newSelectedIDs);
-      saveLearnedPatterns(newPatterns);
-
-      // If the aggregated user pattern is deleted, clear the current manual selections
+      setLearnedPatterns(prevPatterns => {
+        const newPatterns = prevPatterns.filter(p => p.id !== patternId);
+        saveLearnedPatterns(newPatterns);
+        return newPatterns;
+      });
+  
+      setSelectedPatternIDs(prevSelected => {
+        const newSelectedIDs = new Set(prevSelected);
+        newSelectedIDs.delete(patternId);
+        return newSelectedIDs;
+      });
+  
+      // If the aggregated user pattern is deleted, also clear the current manual selections
       if (patternId === 'aggregated-user-pattern') {
         setManualSelectedStars([]);
         setCanvasStars([]);

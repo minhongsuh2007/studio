@@ -1,10 +1,18 @@
 
 'use server';
 
-import type { StackingMode, Transform, ImageQueueEntry } from '@/lib/astro-align';
+import type { StackingMode, Transform } from '@/lib/astro-align';
 import { findMatchingStars } from '@/lib/ai-star-matcher';
-import type { LearnedPattern } from '@/lib/ai-star-matcher';
+import type { LearnedPattern, SimpleImageData } from '@/lib/ai-star-matcher';
 import type { Star } from '@/lib/astro-align';
+
+// Redefine a serializable version of ImageQueueEntry for server-side use.
+export interface SerializableImageQueueEntry {
+  id: string;
+  imageData: SimpleImageData | null;
+  detectedStars: Star[];
+  analysisDimensions: { width: number; height: number; };
+};
 
 
 /**
@@ -226,7 +234,7 @@ function stackImagesSigmaClip(images: (Uint8ClampedArray | null)[], sigma = 2.0)
 
 // --- MAIN AI ALIGNMENT & STACKING FUNCTION ---
 export async function aiAlignAndStack(
-  imageEntries: ImageQueueEntry[],
+  imageEntries: SerializableImageQueueEntry[],
   learnedPatterns: LearnedPattern[],
   mode: StackingMode,
   addLog: (message: string) => void,
@@ -238,9 +246,12 @@ export async function aiAlignAndStack(
 
   const refEntry = imageEntries[0];
   const { width, height } = refEntry.analysisDimensions;
-  const alignedImageDatas: (Uint8ClampedArray | null)[] = [refEntry.imageData!.data];
   
-  const refStars = (await findMatchingStars({ allDetectedStars: refEntry.detectedStars, imageData: { data: new Uint8ClampedArray(refEntry.imageData.data.buffer), width, height }, learnedPatterns }))
+  if (!refEntry.imageData) throw new Error("Reference image has no data.");
+
+  const alignedImageDatas: (Uint8ClampedArray | null)[] = [new Uint8ClampedArray(refEntry.imageData.data)];
+  
+  const refStars = (await findMatchingStars({ allDetectedStars: refEntry.detectedStars, imageData: refEntry.imageData, learnedPatterns }))
     .sort((a, b) => b.brightness - a.brightness);
 
   if (refStars.length < 2) {
@@ -262,7 +273,7 @@ export async function aiAlignAndStack(
     }
 
     const { data: targetData, width: targetWidth, height: targetHeight } = targetEntry.imageData;
-    const targetStars = (await findMatchingStars({ allDetectedStars: targetEntry.detectedStars, imageData: {data: new Uint8ClampedArray(targetData.buffer), width: targetWidth, height: targetHeight }, learnedPatterns }))
+    const targetStars = (await findMatchingStars({ allDetectedStars: targetEntry.detectedStars, imageData: {data: targetData, width: targetWidth, height: targetHeight }, learnedPatterns }))
         .sort((a, b) => b.brightness - a.brightness);
 
     if (targetStars.length < 2) {
@@ -283,7 +294,7 @@ export async function aiAlignAndStack(
     
     addLog(`Image ${i+1}: Applying AI transform (dx: ${transform.dx.toFixed(2)}, dy: ${transform.dy.toFixed(2)}, angle: ${(transform.angle * 180 / Math.PI).toFixed(3)}°, scale: ${transform.scale.toFixed(3)})`);
 
-    const warpedData = warpImage(targetEntry.imageData.data, width, height, transform);
+    const warpedData = warpImage(new Uint8ClampedArray(targetEntry.imageData.data), width, height, transform);
     alignedImageDatas.push(warpedData);
     
     setProgress(progress);
@@ -305,5 +316,3 @@ export async function aiAlignAndStack(
         return stackImagesAverage(alignedImageDatas);
   }
 }
-
-    
