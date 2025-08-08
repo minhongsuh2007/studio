@@ -603,6 +603,7 @@ export default function AstroStackerPage() {
     setIsAnalyzingTestImage(true);
     addLog(`Running pattern test on ${testImage.file.name} with pattern: ${activePatterns[0].id}`);
     
+    // This timeout is just to allow the UI to update to the "loading" state before a potentially long-running operation.
     setTimeout(async () => {
         const {data, width, height} = testImage.imageData!;
         const matched = await findMatchingStars({
