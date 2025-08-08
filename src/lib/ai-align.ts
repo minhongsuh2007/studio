@@ -277,8 +277,10 @@ export async function aiAlignAndStack(
     const alignedImageDatas: (Uint8ClampedArray | null)[] = [refImageData];
     
     logs.push(`[aiAlignAndStack] Finding matching stars for reference image: ${refEntry.fileName}`);
-    const refStars = (await findMatchingStars({ allDetectedStars: refEntry.detectedStars, imageData: refEntry.imageData, learnedPatterns, addLog: (m:string) => logs.push(m) }))
-      .sort((a, b) => b.brightness - a.brightness);
+    const { matchedStars: refStars, logs: findRefLogs } = await findMatchingStars({ allDetectedStars: refEntry.detectedStars, imageData: refEntry.imageData, learnedPatterns });
+    findRefLogs.forEach(log => logs.push(log));
+
+    refStars.sort((a, b) => b.brightness - a.brightness);
 
     if (refStars.length < 2) {
       logs.push(`[aiAlignAndStack] Error: AI Pattern matching found ${refStars.length} stars in reference image. Cannot align.`);
@@ -299,8 +301,10 @@ export async function aiAlignAndStack(
       const targetClampedData = new Uint8ClampedArray(targetEntry.imageData.data);
       
       logs.push(`[aiAlignAndStack] Finding matching stars for target image: ${targetEntry.fileName}`);
-      const targetStars = (await findMatchingStars({ allDetectedStars: targetEntry.detectedStars, imageData: targetEntry.imageData, learnedPatterns, addLog: (m:string) => logs.push(m) }))
-          .sort((a, b) => b.brightness - a.brightness);
+      const { matchedStars: targetStars, logs: findTargetLogs } = await findMatchingStars({ allDetectedStars: targetEntry.detectedStars, imageData: targetEntry.imageData, learnedPatterns });
+      findTargetLogs.forEach(log => logs.push(log));
+      
+      targetStars.sort((a, b) => b.brightness - a.brightness);
 
       if (targetStars.length < 2) {
           logs.push(`Skipping image ${targetEntry.fileName}: AI pattern matching found only ${targetStars.length} stars.`);

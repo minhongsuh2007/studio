@@ -630,16 +630,18 @@ export default function AstroStackerPage() {
     // This timeout is just to allow the UI to update to the "loading" state before a potentially long-running operation.
     setTimeout(async () => {
         const {data, width, height} = testImage.imageData!;
-        const matched = await findMatchingStars({
+        const { matchedStars, logs } = await findMatchingStars({
           allDetectedStars: testImage.detectedStars, 
           imageData: {data: Array.from(data), width, height},
-          learnedPatterns: activePatterns,
-          addLog: (m) => addLog(`[AI TEST] ${m}`)
+          learnedPatterns: activePatterns
         });
-        setTestImageMatchedStars(matched);
+        
+        logs.forEach(logMsg => addLog(`[AI TEST] ${logMsg}`));
+        
+        setTestImageMatchedStars(matchedStars);
         setIsAnalyzingTestImage(false);
-        addLog(`Test complete. Found ${matched.length} matching stars.`);
-        window.alert(t('testAnalysisCompleteToastDesc', {count: matched.length, fileName: testImage.file.name}));
+        addLog(`Test complete. Found ${matchedStars.length} matching stars.`);
+        window.alert(t('testAnalysisCompleteToastDesc', {count: matchedStars.length, fileName: testImage.file.name}));
     }, 100);
   };
   
