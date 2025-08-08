@@ -336,7 +336,7 @@ export default function AstroStackerPage() {
         const startX = Math.max(0, Math.round(clickX - searchRadius));
         const endX = Math.min(width, Math.round(clickX + searchRadius));
         const startY = Math.max(0, Math.round(clickY - searchRadius));
-        const endY = Math.min(height, Math.round(clickY + searchRadius));
+        const endY = Math.min(height, Math.round(clickY + endY));
 
         let maxBrightness = 0;
         for (let y = startY; y < endY; y++) {
@@ -633,21 +633,26 @@ export default function AstroStackerPage() {
 
   const deletePattern = (patternId: string) => {
     if (window.confirm(`Are you sure you want to delete the pattern "${patternId}"? This cannot be undone.`)) {
-        const newPatterns = learnedPatterns.filter(p => p.id !== patternId);
-        const newSelectedIDs = new Set(selectedPatternIDs);
-        newSelectedIDs.delete(patternId);
-
-        setLearnedPatterns(newPatterns);
-        setSelectedPatternIDs(newSelectedIDs);
+      setLearnedPatterns(prevPatterns => {
+        const newPatterns = prevPatterns.filter(p => p.id !== patternId);
         saveLearnedPatterns(newPatterns);
+        return newPatterns;
+      });
 
-        if (patternId === 'aggregated-user-pattern') {
-            setManualSelectedStars([]);
-            setCanvasStars([]);
-        }
-        addLog(`Pattern ${patternId} deleted.`);
+      setSelectedPatternIDs(prevSelected => {
+        const newSelectedIDs = new Set(prevSelected);
+        newSelectedIDs.delete(patternId);
+        return newSelectedIDs;
+      });
+
+      if (patternId === 'aggregated-user-pattern') {
+        setManualSelectedStars([]);
+        setCanvasStars([]);
+      }
+      addLog(`Pattern ${patternId} deleted.`);
     }
   };
+
 
   const imageForAnnotation = allImageStarData.find(img => img.id === manualSelectImageId);
   const canStartStacking = allImageStarData.length >= 2 && allImageStarData.every(img => img.isAnalyzed);
