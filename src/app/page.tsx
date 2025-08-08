@@ -307,16 +307,18 @@ export default function AstroStackerPage() {
   };
   
   const handleManualSelectToggle = (imageId: string) => {
+    const imageToSelect = allImageStarData.find(img => img.id === imageId);
+    if (!imageToSelect) return;
+
+    if (!imageToSelect.isAnalyzed) {
+        toast({ title: "Not Ready", description: "Image has not been analyzed yet. Please wait.", variant: "default" });
+        return;
+    }
+
     if (manualSelectImageId === imageId) {
       setManualSelectImageId(null);
       setManualSelectedStars([]);
       setCanvasStars([]);
-      return;
-    }
-  
-    const imageToSelect = allImageStarData.find(img => img.id === imageId);
-    if (!imageToSelect || !imageToSelect.isAnalyzed) {
-      toast({ title: "Not Ready", description: "Image has not been analyzed yet. Please wait.", variant: "default" });
       return;
     }
     
@@ -817,5 +819,3 @@ export default function AstroStackerPage() {
     </div>
   );
 }
-
-    
