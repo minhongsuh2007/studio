@@ -410,14 +410,13 @@ export default function AstroStackerPage() {
   };
 
   const handleConfirmManualSelection = async () => {
-    const imageToLearnFrom = allImageStarData.find(img => img.id === manualSelectImageId);
-    
-    if (!imageToLearnFrom || !imageToLearnFrom.imageData) return;
-
     if (manualSelectedStars.length < 2) {
       window.alert("Please select at least 2 stars to define a pattern.");
       return;
     }
+
+    const imageToLearnFrom = allImageStarData.find(img => img.id === manualSelectImageId);
+    if (!imageToLearnFrom || !imageToLearnFrom.imageData) return;
     
     const patternId = 'aggregated-user-pattern';
     
@@ -635,20 +634,22 @@ export default function AstroStackerPage() {
     if (window.confirm(`Are you sure you want to delete the pattern "${patternId}"? This cannot be undone.`)) {
       setLearnedPatterns(prevPatterns => {
         const newPatterns = prevPatterns.filter(p => p.id !== patternId);
-        saveLearnedPatterns(newPatterns);
+        saveLearnedPatterns(newPatterns); // Persist the change
         return newPatterns;
       });
-
+  
       setSelectedPatternIDs(prevSelected => {
         const newSelectedIDs = new Set(prevSelected);
         newSelectedIDs.delete(patternId);
         return newSelectedIDs;
       });
-
+  
+      // If the aggregated user pattern is deleted, clear the current manual selections
       if (patternId === 'aggregated-user-pattern') {
         setManualSelectedStars([]);
         setCanvasStars([]);
       }
+      
       addLog(`Pattern ${patternId} deleted.`);
     }
   };
@@ -784,7 +785,7 @@ export default function AstroStackerPage() {
                                             <p className="text-xs text-muted-foreground"> {p.sourceImageIds.length} source images. Learned on {new Date(p.timestamp).toLocaleDateString()}</p>
                                         </div>
                                     </div>
-                                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => deletePattern(p.id)}><Trash2 className="h-4 w-4 text-destructive"/></Button>
+                                    <Button variant="ghost" size="icon" className="h-7 w-7 z-10" onClick={() => deletePattern(p.id)}><Trash2 className="h-4 w-4 text-destructive"/></Button>
                                 </div>
                             ))}
                         </ScrollArea>
@@ -821,3 +822,5 @@ export default function AstroStackerPage() {
     </div>
   );
 }
+
+    
