@@ -375,7 +375,6 @@ export async function alignAndStack(
   imageEntries: ImageQueueEntry[],
   manualRefStars: Star[],
   mode: StackingMode,
-  addLog: (message: string) => void,
   setProgress: (progress: number) => void
 ): Promise<Uint8ClampedArray> {
   if (imageEntries.length === 0 || !imageEntries[0].imageData) {
@@ -391,18 +390,14 @@ export async function alignAndStack(
       .slice(0, 50);
 
   if (refStars.length < 2) {
-    addLog(`Error: Reference image has fewer than 2 detected stars. Cannot align.`);
     throw new Error("Reference image has fewer than 2 detected stars. Cannot align.");
   }
-  addLog(`Using ${refStars.length} stars from reference image.`);
 
   for (let i = 1; i < imageEntries.length; i++) {
     const targetEntry = imageEntries[i];
     const progress = (i + 1) / imageEntries.length;
-    addLog(`--- Aligning Image ${i+1}/${imageEntries.length} ---`);
 
     if (!targetEntry.imageData) {
-      addLog(`Skipping image ${i+1}: missing image data.`);
       alignedImageDatas.push(null);
       setProgress(progress);
       continue;
@@ -413,7 +408,6 @@ export async function alignAndStack(
         .slice(0, 50);
 
     if (targetStars.length < 2) {
-        addLog(`Skipping image ${i+1}: fewer than 2 stars detected.`);
         alignedImageDatas.push(null);
         setProgress(progress);
         continue;
@@ -422,37 +416,26 @@ export async function alignAndStack(
     const transform = getTransformFromTwoStars(refStars, targetStars);
 
     if (!transform) {
-        addLog(`Could not determine robust transform for ${targetEntry.id}. Skipping.`);
         alignedImageDatas.push(null);
         setProgress(progress);
         continue;
     }
     
-    addLog(`Image ${i+1}: Applying transform (dx: ${transform.dx.toFixed(2)}, dy: ${transform.dy.toFixed(2)}, angle: ${(transform.angle * 180 / Math.PI).toFixed(3)}°, scale: ${transform.scale.toFixed(3)})`);
-
     const warpedData = warpImage(targetEntry.imageData.data, width, height, transform);
     alignedImageDatas.push(warpedData);
     
     setProgress(progress);
   }
 
-  addLog("All images processed. Stacking...");
   setProgress(1);
 
   switch (mode) {
     case 'median':
-        addLog("Using Median stacking mode.");
         return stackImagesMedian(alignedImageDatas);
     case 'sigma':
-        addLog("Using Sigma Clipping stacking mode.");
         return stackImagesSigmaClip(alignedImageDatas);
     case 'average':
     default:
-        addLog("Using Average stacking mode.");
         return stackImagesAverage(alignedImageDatas);
   }
 }
-
-    
-
-    

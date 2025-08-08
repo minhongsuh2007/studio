@@ -271,14 +271,13 @@ export async function aiAlignAndStack(
     }
 
     const refEntry = imageEntries[0];
-    const { width, height } = refEntry.analysisDimensions;
     
     const refImageData = new Uint8ClampedArray(refEntry.imageData.data);
     const alignedImageDatas: (Uint8ClampedArray | null)[] = [refImageData];
     
     logs.push(`[aiAlignAndStack] Finding matching stars for reference image: ${refEntry.fileName}`);
     const { matchedStars: refStars, logs: findRefLogs } = await findMatchingStars({ allDetectedStars: refEntry.detectedStars, imageData: refEntry.imageData, learnedPatterns });
-    findRefLogs.forEach(log => logs.push(log));
+    findRefLogs.forEach(log => logs.push(`[REF] ${log}`));
 
     refStars.sort((a, b) => b.brightness - a.brightness);
 
@@ -302,7 +301,7 @@ export async function aiAlignAndStack(
       
       logs.push(`[aiAlignAndStack] Finding matching stars for target image: ${targetEntry.fileName}`);
       const { matchedStars: targetStars, logs: findTargetLogs } = await findMatchingStars({ allDetectedStars: targetEntry.detectedStars, imageData: targetEntry.imageData, learnedPatterns });
-      findTargetLogs.forEach(log => logs.push(log));
+      findTargetLogs.forEach(log => logs.push(`[TGT] ${log}`));
       
       targetStars.sort((a, b) => b.brightness - a.brightness);
 
@@ -322,7 +321,7 @@ export async function aiAlignAndStack(
       }
       
       logs.push(`Warping image ${targetEntry.fileName}...`);
-      const warpedData = warpImage(targetClampedData, width, height, transform, logs);
+      const warpedData = warpImage(targetClampedData, targetEntry.analysisDimensions.width, targetEntry.analysisDimensions.height, transform, logs);
       alignedImageDatas.push(warpedData);
     }
 

@@ -326,58 +326,58 @@ export default function AstroStackerPage() {
     setCanvasStars(imageToSelect.detectedStars);
   };
 
-    const findNearbyStarCenter = (
-        imageData: ImageData,
-        clickX: number,
-        clickY: number,
-        searchRadius: number = 15
-    ): Star | null => {
-        const { data, width, height } = imageData;
-        const startX = Math.max(0, Math.round(clickX - searchRadius));
-        const endX = Math.min(width, Math.round(clickX + searchRadius));
-        const startY = Math.max(0, Math.round(clickY - searchRadius));
-        const endY = Math.min(height, Math.round(clickY + endY));
+  const findNearbyStarCenter = (
+      imageData: ImageData,
+      clickX: number,
+      clickY: number,
+      searchRadius: number = 15
+  ): Star | null => {
+      const { data, width, height } = imageData;
+      const startX = Math.max(0, Math.round(clickX - searchRadius));
+      const endX = Math.min(width, Math.round(clickX + searchRadius));
+      const startY = Math.max(0, Math.round(clickY - searchRadius));
+      const endY = Math.min(height, Math.round(clickY + searchRadius));
 
-        let maxBrightness = 0;
-        for (let y = startY; y < endY; y++) {
-            for (let x = startX; x < endX; x++) {
-                const idx = (y * width + x) * 4;
-                const brightness = 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
-                if (brightness > maxBrightness) {
-                    maxBrightness = brightness;
-                }
-            }
-        }
+      let maxBrightness = 0;
+      for (let y = startY; y < endY; y++) {
+          for (let x = startX; x < endX; x++) {
+              const idx = (y * width + x) * 4;
+              const brightness = 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
+              if (brightness > maxBrightness) {
+                  maxBrightness = brightness;
+              }
+          }
+      }
 
-        const threshold = maxBrightness * 0.7; // Threshold for pixels belonging to the star
-        let weightedX = 0;
-        let weightedY = 0;
-        let totalBrightness = 0;
-        let pixelCount = 0;
+      const threshold = maxBrightness * 0.7; // Threshold for pixels belonging to the star
+      let weightedX = 0;
+      let weightedY = 0;
+      let totalBrightness = 0;
+      let pixelCount = 0;
 
-        for (let y = startY; y < endY; y++) {
-            for (let x = startX; x < endX; x++) {
-                const idx = (y * width + x) * 4;
-                const brightness = 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
-                if (brightness >= threshold) {
-                    weightedX += x * brightness;
-                    weightedY += y * brightness;
-                    totalBrightness += brightness;
-                    pixelCount++;
-                }
-            }
-        }
+      for (let y = startY; y < endY; y++) {
+          for (let x = startX; x < endX; x++) {
+              const idx = (y * width + x) * 4;
+              const brightness = 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
+              if (brightness >= threshold) {
+                  weightedX += x * brightness;
+                  weightedY += y * brightness;
+                  totalBrightness += brightness;
+                  pixelCount++;
+              }
+          }
+      }
 
-        if (totalBrightness > 0) {
-            return {
-                x: weightedX / totalBrightness,
-                y: weightedY / totalBrightness,
-                brightness: totalBrightness,
-                size: pixelCount,
-            };
-        }
-        return null;
-    };
+      if (totalBrightness > 0) {
+          return {
+              x: weightedX / totalBrightness,
+              y: weightedY / totalBrightness,
+              brightness: totalBrightness,
+              size: pixelCount,
+          };
+      }
+      return null;
+  };
   
   const handleStarAnnotationClick = (x: number, y: number) => {
     if (!manualSelectImageId) return;
@@ -404,8 +404,12 @@ export default function AstroStackerPage() {
   };
 
   const handleWipeAllStars = () => {
-    setManualSelectedStars([]);
-    addLog("All manual star selections have been cleared.");
+    const imageToUpdate = allImageStarData.find(img => img.id === manualSelectImageId);
+    if (imageToUpdate) {
+        setManualSelectedStars([]); // Clear only manual selections
+        setCanvasStars(imageToUpdate.detectedStars); // Keep the auto-detected stars for visual reference
+        addLog("Manual star selections for this image have been cleared.");
+    }
   };
 
   const handleConfirmManualSelection = async () => {
@@ -495,13 +499,6 @@ export default function AstroStackerPage() {
     addLog(`[STACK START] Method: ${alignmentMethod}. Stacking ${allImageStarData.length} images. Mode: ${stackingMode}.`);
   
     try {
-      const imageDatas = allImageStarData.map(entry => entry.imageData).filter((d): d is ImageData => d !== null);
-      if (imageDatas.length !== allImageStarData.length) throw new Error("Some images have not been analyzed or loaded correctly.");
-      
-      const { width, height } = allImageStarData[0].analysisDimensions;
-      
-      let stackedImageData;
-
       if (alignmentMethod === 'ai') {
         const activePatterns = learnedPatterns.filter(p => selectedPatternIDs.has(p.id));
         addLog(`Using ${activePatterns.length} learned patterns for AI alignment.`);
@@ -526,9 +523,25 @@ export default function AstroStackerPage() {
         if (!result.stackedImageData) {
             throw new Error("AI alignment and stacking process did not return an image.");
         }
-        stackedImageData = new Uint8ClampedArray(result.stackedImageData);
+        const { width, height } = allImageStarData[0].analysisDimensions;
+        const stackedImageData = new Uint8ClampedArray(result.stackedImageData);
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) throw new Error("Could not create canvas context to display result.");
+        ctx.putImageData(new ImageData(stackedImageData, width, height), 0, 0);
+    
+        const resultDataUrl = canvas.toDataURL(outputFormat === 'jpeg' ? 'image/jpeg' : 'image/png', jpegQuality / 100);
+        if (!resultDataUrl || resultDataUrl.length < MIN_VALID_DATA_URL_LENGTH) throw new Error("Failed to generate a valid preview URL for the stacked image.");
+    
+        setStackedImage(resultDataUrl);
+        setImageForPostProcessing(resultDataUrl);
+        setEditedPreviewUrl(resultDataUrl);
 
       } else {
+        const imageDatas = allImageStarData.map(entry => entry.imageData).filter((d): d is ImageData => d !== null);
+        if (imageDatas.length !== allImageStarData.length) throw new Error("Some images have not been analyzed or loaded correctly.");
         // Standard Alignment
         const refImageForStandard = allImageStarData[0];
         const refStarsForStandard = (manualSelectImageId === refImageForStandard.id && manualSelectedStars.length > 1) 
@@ -538,22 +551,23 @@ export default function AstroStackerPage() {
         if (refStarsForStandard.length < 2) {
           throw new Error("Standard alignment requires at least 2 stars in the reference image. Please use Manual Select or ensure auto-detection finds stars.");
         }
-        stackedImageData = await alignAndStack(allImageStarData, refStarsForStandard, stackingMode, (m) => addLog(`[ALIGN] ${m}`), (p) => setProgressPercent(p * 100));
+        const stackedImageData = await alignAndStack(allImageStarData, refStarsForStandard, stackingMode, (p) => setProgressPercent(p * 100));
+        const { width, height } = allImageStarData[0].analysisDimensions;
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) throw new Error("Could not create canvas context to display result.");
+        ctx.putImageData(new ImageData(stackedImageData, width, height), 0, 0);
+    
+        const resultDataUrl = canvas.toDataURL(outputFormat === 'jpeg' ? 'image/jpeg' : 'image/png', jpegQuality / 100);
+        if (!resultDataUrl || resultDataUrl.length < MIN_VALID_DATA_URL_LENGTH) throw new Error("Failed to generate a valid preview URL for the stacked image.");
+    
+        setStackedImage(resultDataUrl);
+        setImageForPostProcessing(resultDataUrl);
+        setEditedPreviewUrl(resultDataUrl);
       }
   
-      const canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) throw new Error("Could not create canvas context to display result.");
-      ctx.putImageData(new ImageData(stackedImageData, width, height), 0, 0);
-  
-      const resultDataUrl = canvas.toDataURL(outputFormat === 'jpeg' ? 'image/jpeg' : 'image/png', jpegQuality / 100);
-      if (!resultDataUrl || resultDataUrl.length < MIN_VALID_DATA_URL_LENGTH) throw new Error("Failed to generate a valid preview URL for the stacked image.");
-  
-      setStackedImage(resultDataUrl);
-      setImageForPostProcessing(resultDataUrl);
-      setEditedPreviewUrl(resultDataUrl);
       setBrightness(100); setExposure(0); setSaturation(100);
       setShowPostProcessEditor(true);
       addLog(`Stacking Complete: Successfully stacked ${allImageStarData.length} images.`);
@@ -726,7 +740,7 @@ export default function AstroStackerPage() {
                     </CardHeader>
                     <CardFooter className="p-3 flex flex-col gap-2">
                        <Button onClick={handleWipeAllStars} className="w-full" variant="destructive" size="sm"><Eraser className="mr-2 h-4 w-4" />Wipe All Stars</Button>
-                      <Button onClick={handleConfirmManualSelection} className="w-full" variant="secondary"><CheckCircle className="mr-2 h-4 w-4" />Confirm & Learn Pattern</Button>
+                      <Button onClick={handleConfirmManualSelection} className="w-full" variant="secondary"><CheckCircle className="mr-2 h-4 w-4" />Confirm &amp; Learn Pattern</Button>
                       <Button onClick={() => {setManualSelectImageId(null); setManualSelectedStars([]); setCanvasStars([]);}} className="w-full"><X className="mr-2 h-4 w-4" />Cancel</Button>
                     </CardFooter>
                   </Card>
@@ -785,7 +799,7 @@ export default function AstroStackerPage() {
               {imageForAnnotation ? (
                   <StarAnnotationCanvas imageUrl={imageForAnnotation.previewUrl} allStars={canvasStars} manualStars={manualSelectedStars} onCanvasClick={handleStarAnnotationClick} analysisWidth={imageForAnnotation.analysisDimensions.width} analysisHeight={imageForAnnotation.analysisDimensions.height} />
               ) : testImage ? (
-                  <StarAnnotationCanvas imageUrl={testImage.previewUrl} allStars={testImage.detectedStars} manualStars={testImageMatchedStars} onCanvasClick={()=>{}} analysisWidth={testImage.analysisDimensions.width} analysisHeight={testImage.analysisDimensions.height} />
+                  <StarAnnotationCanvas imageUrl={testImage.previewUrl} allStars={testImage.detectedStars} manualStars={testImageMatchedStars} onCanvasClick={() => {}} analysisWidth={testImage.analysisDimensions.width} analysisHeight={testImage.analysisDimensions.height} />
               ) : (
                   <ImagePreview imageUrl={showPostProcessEditor ? editedPreviewUrl : stackedImage} fitMode={previewFitMode} />
               )}
