@@ -19,13 +19,21 @@ export interface LearnedPattern {
   characteristics: StarCharacteristics[];
 }
 
+// A simplified representation of ImageData suitable for server-side processing
+export interface SimpleImageData {
+    data: Uint8ClampedArray;
+    width: number;
+    height: number;
+}
+
+
 const PATCH_SIZE = 7; // 7x7 pixel patch around the star center
 const PATCH_RADIUS = Math.floor(PATCH_SIZE / 2);
 
 /**
  * Extracts a pixel patch and calculates characteristics for a given star.
  */
-function getStarCharacteristics(star: Star, imageData: ImageData): StarCharacteristics | null {
+function getStarCharacteristics(star: Star, imageData: SimpleImageData): StarCharacteristics | null {
   const { width, height, data } = imageData;
   const { x, y } = star;
   
@@ -81,7 +89,7 @@ function getStarCharacteristics(star: Star, imageData: ImageData): StarCharacter
  */
 export async function extractCharacteristicsFromImage(
   manualStars: Star[],
-  imageData: ImageData
+  imageData: SimpleImageData
 ): Promise<StarCharacteristics[]> {
   const characteristics = manualStars
     .map(star => getStarCharacteristics(star, imageData))
@@ -96,7 +104,7 @@ export async function extractCharacteristicsFromImage(
  */
 export async function findMatchingStars(
   allDetectedStars: Star[],
-  imageData: ImageData,
+  imageData: SimpleImageData,
   learnedPatterns: LearnedPattern[],
   matchThreshold = 0.75 // How similar a star needs to be to be considered a match
 ): Promise<Star[]> {
