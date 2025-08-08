@@ -42,11 +42,13 @@ function getTransformFromTwoStars(refStars: Star[], targetStars: Star[], addLog:
         return null;
     }
 
-    const scale = Math.sqrt(p_dist_sq / (q2_minus_q1.x**2 + q2_minus_q1.y**2));
-    if (isNaN(scale) || !isFinite(scale)) {
-        addLog(`[getTransform] Error: Calculated scale is NaN or infinite. Target stars might be at the same position.`);
+    const q_dist_sq = q2_minus_q1.x**2 + q2_minus_q1.y**2;
+    if (q_dist_sq === 0) {
+        addLog(`[getTransform] Error: Target stars are at the same position.`);
         return null;
     }
+
+    const scale = Math.sqrt(p_dist_sq / q_dist_sq);
 
     const angle = Math.atan2(p2_minus_p1.y, p2_minus_p1.x) - Math.atan2(q2_minus_q1.y, q2_minus_q1.x);
     const cosAngle = Math.cos(angle);
