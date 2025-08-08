@@ -81,8 +81,8 @@ function warpImage(
     // We need the INVERSE transform to go from destination pixel to source pixel
     // p_src = (1/s) * R' * (p_dst - t)
     const invScale = 1 / scale;
-    const cosAngleInv = Math.cos(-angle); // cos(-a) = cos(a)
-    const sinAngleInv = Math.sin(-angle); // sin(-a) = -sin(a)
+    const cosAngleInv = Math.cos(-angle);
+    const sinAngleInv = Math.sin(-angle);
 
     for (let y_dst = 0; y_dst < srcHeight; y_dst++) {
         for (let x_dst = 0; x_dst < srcWidth; x_dst++) {
@@ -91,13 +91,9 @@ function warpImage(
             const x_translated = x_dst - dx;
             const y_translated = y_dst - dy;
 
-            // Apply inverse rotation
-            const x_rotated = x_translated * cosAngleInv - y_translated * sinAngleInv;
-            const y_rotated = x_translated * sinAngleInv + y_translated * cosAngleInv;
-            
-            // Apply inverse scaling
-            const x_src = x_rotated * invScale;
-            const y_src = y_rotated * invScale;
+            // Apply inverse rotation and scaling
+            const x_src = invScale * (x_translated * cosAngleInv - y_translated * sinAngleInv);
+            const y_src = invScale * (x_translated * sinAngleInv + y_translated * cosAngleInv);
             
             // Bilinear interpolation
             const x_floor = Math.floor(x_src);
@@ -114,7 +110,7 @@ function warpImage(
 
             const dstIdx = (y_dst * srcWidth + x_dst) * 4;
 
-            for (let channel = 0; channel < 4; channel++) {
+            for (let channel = 0; channel < 3; channel++) { // Only process R, G, B
                  const c00 = srcData[(y_floor * srcWidth + x_floor) * 4 + channel];
                  const c10 = srcData[(y_floor * srcWidth + x_ceil) * 4 + channel];
                  const c01 = srcData[(y_ceil * srcWidth + x_floor) * 4 + channel];
@@ -125,7 +121,7 @@ function warpImage(
 
                  dstData[dstIdx + channel] = c_x0 * (1 - y_ratio) + c_x1 * y_ratio;
             }
-            // Ensure alpha is set for pixels with color data
+            // If any color data was written, set alpha to 255 to mark it as valid.
             if (dstData[dstIdx] > 0 || dstData[dstIdx+1] > 0 || dstData[dstIdx+2] > 0) {
               dstData[dstIdx+3] = 255;
             }
@@ -178,16 +174,18 @@ function stackImagesMedian(images: (Uint8ClampedArray | null)[]): Uint8ClampedAr
         const pixelValuesR: number[] = [];
         const pixelValuesG: number[] = [];
         const pixelValuesB: number[] = [];
+        let validPixelCount = 0;
 
         for (const img of validImages) {
             if (img[i + 3] > 128) { // Consider only valid pixels
                 pixelValuesR.push(img[i]);
                 pixelValuesG.push(img[i + 1]);
                 pixelValuesB.push(img[i + 2]);
+                validPixelCount++;
             }
         }
         
-        if (pixelValuesR.length > 0) {
+        if (validPixelCount > 0) {
             pixelValuesR.sort((a, b) => a - b);
             pixelValuesG.sort((a, b) => a - b);
             pixelValuesB.sort((a, b) => a - b);
