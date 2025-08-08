@@ -507,11 +507,10 @@ export default function AstroStackerPage() {
         const activePatterns = learnedPatterns.filter(p => selectedPatternIDs.has(p.id));
         addLog(`Using ${activePatterns.length} learned patterns for AI alignment.`);
 
-        // Correctly serialize image data for the server action
         const serializableImageEntries = allImageStarData.map(entry => ({
             ...entry,
             imageData: entry.imageData ? {
-                data: Array.from(entry.imageData.data), // Serialize Uint8ClampedArray
+                data: Array.from(entry.imageData.data),
                 width: entry.imageData.width,
                 height: entry.imageData.height
             } : null
@@ -549,6 +548,7 @@ export default function AstroStackerPage() {
       addLog(`Stacking Complete: Successfully stacked ${allImageStarData.length} images.`);
   
     } catch (error) {
+      console.error("Stacking error details:", error);
       const errorMessage = error instanceof Error ? error.message : String(error);
       addLog(`[STACK FATAL ERROR] ${errorMessage}`);
       window.alert(`Stacking Failed: ${errorMessage}`);
@@ -642,19 +642,23 @@ export default function AstroStackerPage() {
 
   const deletePattern = (patternId: string) => {
     if (window.confirm(`Are you sure you want to delete the pattern "${patternId}"? This cannot be undone.`)) {
-        const newPatterns = learnedPatterns.filter(p => p.id !== patternId);
-        const newSelectedIDs = new Set(selectedPatternIDs);
-        newSelectedIDs.delete(patternId);
-
-        setLearnedPatterns(newPatterns);
-        setSelectedPatternIDs(newSelectedIDs);
-        saveLearnedPatterns(newPatterns);
-        
-        if (patternId === 'aggregated-user-pattern') {
-            setManualSelectedStars([]);
-            setCanvasStars([]);
-        }
-        addLog(`Pattern ${patternId} deleted.`);
+        setLearnedPatterns(prevPatterns => {
+            const newPatterns = prevPatterns.filter(p => p.id !== patternId);
+            saveLearnedPatterns(newPatterns);
+            
+            setSelectedPatternIDs(prevSelected => {
+                const newSelectedIDs = new Set(prevSelected);
+                newSelectedIDs.delete(patternId);
+                return newSelectedIDs;
+            });
+            
+            if (patternId === 'aggregated-user-pattern') {
+                setManualSelectedStars([]);
+                setCanvasStars([]);
+            }
+            addLog(`Pattern ${patternId} deleted.`);
+            return newPatterns;
+        });
     }
   };
 

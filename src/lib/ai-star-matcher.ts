@@ -30,73 +30,82 @@ export interface SimpleImageData {
 const PATCH_SIZE = 7; // 7x7 pixel patch around the star center
 const PATCH_RADIUS = Math.floor(PATCH_SIZE / 2);
 
-function toGrayscale(imageData: SimpleImageData): Uint8Array {
-  const len = imageData.data.length / 4;
-  const gray = new Uint8Array(len);
-  for (let i = 0; i < len; i++) {
-    const r = imageData.data[i * 4];
-    const g = imageData.data[i * 4 + 1];
-    const b = imageData.data[i * 4 + 2];
-    gray[i] = (0.299 * r + 0.587 * g + 0.114 * b);
+function toGrayscale(imageData: SimpleImageData, addLog?: (m: string) => void): Uint8Array {
+  try {
+    const len = imageData.data.length / 4;
+    const gray = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+      const r = imageData.data[i * 4];
+      const g = imageData.data[i * 4 + 1];
+      const b = imageData.data[i * 4 + 2];
+      gray[i] = (0.299 * r + 0.587 * g + 0.114 * b);
+    }
+    addLog?.("[toGrayscale] Grayscale conversion successful.");
+    return gray;
+  } catch(e) {
+    addLog?.(`[toGrayscale] CRASH! ${e instanceof Error ? e.message : String(e)}`);
+    throw e;
   }
-  return gray;
 }
 
 
 /**
  * Extracts a pixel patch and calculates characteristics for a given star.
- * This version operates on grayscale data to prevent server crashes.
  */
-function getStarCharacteristics(star: Star, imageData: SimpleImageData, grayData: Uint8Array): StarCharacteristics | null {
-  const { width } = imageData;
-  const { x, y } = star;
-  
-  const startX = Math.round(x) - PATCH_RADIUS;
-  const startY = Math.round(y) - PATCH_RADIUS;
+function getStarCharacteristics(star: Star, imageData: SimpleImageData, grayData: Uint8Array, addLog?: (m: string) => void): StarCharacteristics | null {
+  try {
+    const { width } = imageData;
+    const { x, y } = star;
+    
+    const startX = Math.round(x) - PATCH_RADIUS;
+    const startY = Math.round(y) - PATCH_RADIUS;
 
-  const pixels: number[] = [];
-  let sumBrightness = 0;
-  let peakBrightness = 0;
+    const pixels: number[] = [];
+    let sumBrightness = 0;
+    let peakBrightness = 0;
 
-  for (let j = 0; j < PATCH_SIZE; j++) {
-    for (let i = 0; i < PATCH_SIZE; i++) {
-      const px = startX + i;
-      const py = startY + j;
+    for (let j = 0; j < PATCH_SIZE; j++) {
+      for (let i = 0; i < PATCH_SIZE; i++) {
+        const px = startX + i;
+        const py = startY + j;
 
-      if (px >= 0 && px < imageData.width && py >= 0 && py < imageData.height) {
-        const idx = py * width + px;
-        const brightness = grayData[idx];
-        if (brightness !== undefined) {
-          pixels.push(brightness);
-          sumBrightness += brightness;
-          if (brightness > peakBrightness) {
-            peakBrightness = brightness;
+        if (px >= 0 && px < imageData.width && py >= 0 && py < imageData.height) {
+          const idx = py * width + px;
+          const brightness = grayData[idx];
+          if (brightness !== undefined) {
+            pixels.push(brightness);
+            sumBrightness += brightness;
+            if (brightness > peakBrightness) {
+              peakBrightness = brightness;
+            }
           }
         }
       }
     }
+
+    if (pixels.length === 0) return null;
+
+    const avgBrightness = sumBrightness / pixels.length;
+    if (avgBrightness === 0) return null;
+    
+    const sumSqDiff = pixels.reduce((sum, p) => sum + (p - avgBrightness) ** 2, 0);
+    const stdDev = Math.sqrt(sumSqDiff / pixels.length);
+    const avgContrast = stdDev / (avgBrightness + 1e-6); // Added epsilon for safety
+
+    const halfMax = peakBrightness / 2;
+    const brightPixels = pixels.filter(p => p > halfMax);
+    const fwhm = brightPixels.length > 0 ? Math.sqrt(brightPixels.length / Math.PI) * 2 : 0;
+
+    return {
+      avgBrightness,
+      avgContrast,
+      fwhm,
+      pixelCount: star.size > 0 ? star.size : brightPixels.length,
+    };
+  } catch (e) {
+    addLog?.(`[getStarCharacteristics] CRASH! For star at (${star.x.toFixed(1)}, ${star.y.toFixed(1)}). Error: ${e instanceof Error ? e.message : String(e)}`);
+    return null;
   }
-
-  if (pixels.length === 0) return null;
-
-  const avgBrightness = sumBrightness / pixels.length;
-  if (avgBrightness === 0) return null;
-  
-  const sumSqDiff = pixels.reduce((sum, p) => sum + (p - avgBrightness) ** 2, 0);
-  const stdDev = Math.sqrt(sumSqDiff / pixels.length);
-  const avgContrast = stdDev / (avgBrightness + 1e-6); // Added epsilon for safety
-
-  // Full Width at Half Maximum (FWHM) estimation
-  const halfMax = peakBrightness / 2;
-  const brightPixels = pixels.filter(p => p > halfMax);
-  const fwhm = brightPixels.length > 0 ? Math.sqrt(brightPixels.length / Math.PI) * 2 : 0;
-
-  return {
-    avgBrightness,
-    avgContrast,
-    fwhm,
-    pixelCount: star.size > 0 ? star.size : brightPixels.length,
-  };
 }
 
 
@@ -128,30 +137,41 @@ export async function findMatchingStars({
   allDetectedStars,
   imageData,
   learnedPatterns,
+  addLog,
   matchThreshold = 0.75
 }: {
   allDetectedStars: Star[],
   imageData: SimpleImageData,
   learnedPatterns: LearnedPattern[],
+  addLog: (message: string) => void,
   matchThreshold?: number
 }): Promise<Star[]> {
-  if (learnedPatterns.length === 0) return [];
-  
-  const matchedStars: Star[] = [];
-  const grayData = toGrayscale(imageData);
+  try {
+    addLog(`[findMatchingStars] Starting match process with ${allDetectedStars.length} detected stars and ${learnedPatterns.length} patterns.`);
+    if (learnedPatterns.length === 0) return [];
+    
+    const matchedStars: Star[] = [];
+    const grayData = toGrayscale(imageData, addLog);
 
-  for (const star of allDetectedStars) {
-    const starChars = getStarCharacteristics(star, imageData, grayData);
-    if (!starChars) continue;
-    
-    const matchScore = compareCharacteristics(starChars, learnedPatterns);
-    
-    if (matchScore >= matchThreshold) {
-      matchedStars.push(star);
+    for (const star of allDetectedStars) {
+      const starChars = getStarCharacteristics(star, imageData, grayData, addLog);
+      if (!starChars) continue;
+      
+      const matchScore = compareCharacteristics(starChars, learnedPatterns);
+      
+      if (matchScore >= matchThreshold) {
+        matchedStars.push(star);
+      }
     }
-  }
 
-  return matchedStars;
+    addLog(`[findMatchingStars] Found ${matchedStars.length} stars matching the patterns.`);
+    return matchedStars;
+  } catch (e) {
+    const errorMessage = e instanceof Error ? e.message : String(e);
+    addLog(`[findMatchingStars] CRASH! ${errorMessage}`);
+    console.error("Error in findMatchingStars:", e);
+    throw new Error(`A critical error occurred in findMatchingStars: ${errorMessage}`);
+  }
 }
 
 
@@ -166,7 +186,6 @@ function compareCharacteristics(
 
   for (const pattern of learnedPatterns) {
     for (const learnedChar of pattern.characteristics) {
-      // Return a score from 0 to 1, where 1 is a perfect match.
       const brightDiff = Math.abs(starChars.avgBrightness - learnedChar.avgBrightness) / (learnedChar.avgBrightness + 1e-6);
       const contrastDiff = Math.abs(starChars.avgContrast - learnedChar.avgContrast) / (learnedChar.avgContrast + 1e-6);
       const fwhmDiff = Math.abs(starChars.fwhm - learnedChar.fwhm) / (learnedChar.fwhm + 1e-6);
