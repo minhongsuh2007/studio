@@ -146,7 +146,6 @@ export async function findMatchingStars({
     
     const matchScore = compareCharacteristics(starChars, learnedPatterns);
     
-    // Note: The original code had a typo here (matchScore >= matchScore). Correcting it.
     if (matchScore >= matchThreshold) {
       matchedStars.push(star);
     }

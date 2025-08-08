@@ -174,18 +174,16 @@ function stackImagesMedian(images: (Uint8ClampedArray | null)[]): Uint8ClampedAr
         const pixelValuesR: number[] = [];
         const pixelValuesG: number[] = [];
         const pixelValuesB: number[] = [];
-        let validPixelCount = 0;
-
+        
         for (const img of validImages) {
             if (img[i + 3] > 128) { // Consider only valid pixels
                 pixelValuesR.push(img[i]);
                 pixelValuesG.push(img[i + 1]);
                 pixelValuesB.push(img[i + 2]);
-                validPixelCount++;
             }
         }
         
-        if (validPixelCount > 0) {
+        if (pixelValuesR.length > 0) {
             pixelValuesR.sort((a, b) => a - b);
             pixelValuesG.sort((a, b) => a - b);
             pixelValuesB.sort((a, b) => a - b);
@@ -268,7 +266,6 @@ export async function aiAlignAndStack(
   
   if (!refEntry.imageData) throw new Error("Reference image has no data.");
 
-  // Correctly reconstruct the Uint8ClampedArray from the plain number[]
   const refImageData = new Uint8ClampedArray(refEntry.imageData.data);
   const alignedImageDatas: (Uint8ClampedArray | null)[] = [refImageData];
   
