@@ -25,7 +25,7 @@ import { Progress } from "@/components/ui/progress";
 import { Slider } from "@/components/ui/slider";
 import { StarAnnotationCanvas } from '@/components/astrostacker/StarAnnotationCanvas';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Switch } from '@/components/ui/switch';
+import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import NextImage from 'next/image';
 
@@ -810,5 +810,3 @@ export default function AstroStackerPage() {
     </div>
   );
 }
-
-    
