@@ -154,14 +154,14 @@ export async function findMatchingStars({
     const grayData = toGrayscale(imageData, addLog);
 
     for (const star of allDetectedStars) {
-      const starChars = getStarCharacteristics(star, imageData, grayData, addLog);
-      if (!starChars) continue;
-      
-      const matchScore = compareCharacteristics(starChars, learnedPatterns);
-      
-      if (matchScore >= matchThreshold) {
-        matchedStars.push(star);
-      }
+        const starChars = getStarCharacteristics(star, imageData, grayData, addLog);
+        if (!starChars) continue;
+        
+        const matchScore = compareCharacteristics(starChars, learnedPatterns);
+        
+        if (matchScore >= matchThreshold) {
+            matchedStars.push(star);
+        }
     }
 
     addLog(`[findMatchingStars] Found ${matchedStars.length} stars matching the patterns.`);

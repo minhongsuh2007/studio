@@ -3,26 +3,25 @@
 
 import type { StackingMode, Transform } from '@/lib/astro-align';
 import { findMatchingStars } from '@/lib/ai-star-matcher';
-import type { LearnedPattern } from '@/lib/ai-star-matcher';
+import type { LearnedPattern, SimpleImageData } from '@/lib/ai-star-matcher';
 import type { Star } from '@/lib/astro-align';
 
 // Redefine a serializable version of ImageQueueEntry for server-side use.
 export interface SerializableImageQueueEntry {
   id: string;
   fileName: string;
-  imageData: number[] | null,
+  imageData: SimpleImageData | null,
   detectedStars: Star[];
   analysisDimensions: { width: number; height: number; };
 };
-
 
 /**
  * Calculates the transformation required to align two point sets.
  * Solves for the similarity transform (translation, rotation, scale).
  */
-function getTransformFromTwoStars(refStars: Star[], targetStars: Star[], addLog: (m: string) => void): Transform | null {
+function getTransformFromTwoStars(refStars: Star[], targetStars: Star[], logs: string[]): Transform | null {
     if (refStars.length < 2 || targetStars.length < 2) {
-        addLog(`[getTransform] Error: Not enough stars. Ref: ${refStars.length}, Target: ${targetStars.length}`);
+        logs.push(`[getTransform] Error: Not enough stars. Ref: ${refStars.length}, Target: ${targetStars.length}`);
         return null;
     }
 
@@ -38,7 +37,7 @@ function getTransformFromTwoStars(refStars: Star[], targetStars: Star[], addLog:
     
     const q_len_sq = q2_minus_q1.x**2 + q2_minus_q1.y**2;
     if (q_len_sq === 0) {
-        addLog(`[getTransform] Error: Target stars are at the same position.`);
+        logs.push(`[getTransform] Error: Target stars are at the same position.`);
         return null;
     }
 
@@ -55,7 +54,7 @@ function getTransformFromTwoStars(refStars: Star[], targetStars: Star[], addLog:
     const dx = p1.x - scale * (q1.x * cosAngle - q1.y * sinAngle);
     const dy = p1.y - scale * (q1.x * sinAngle + q1.y * cosAngle);
 
-    addLog(`[getTransform] Success: scale=${scale.toFixed(3)}, angle=${(angle*180/Math.PI).toFixed(2)}°, dx=${dx.toFixed(2)}, dy=${dy.toFixed(2)}`);
+    logs.push(`[getTransform] Success: scale=${scale.toFixed(3)}, angle=${(angle*180/Math.PI).toFixed(2)}°, dx=${dx.toFixed(2)}, dy=${dy.toFixed(2)}`);
     return { dx, dy, angle, scale };
 }
 
@@ -69,13 +68,13 @@ function warpImage(
     srcWidth: number,
     srcHeight: number,
     transform: Transform,
-    addLog: (m: string) => void
+    logs: string[]
 ): Uint8ClampedArray | null {
     const dstData = new Uint8ClampedArray(srcData.length);
     const { dx, dy, angle, scale } = transform;
 
     if (scale === 0) {
-        addLog("[warpImage] Error: Transform scale is zero. Returning empty image.");
+        logs.push("[warpImage] Error: Transform scale is zero. Returning empty image.");
         return null;
     }
 
@@ -125,15 +124,15 @@ function warpImage(
             dstData[dstIdx + 3] = 255;
         }
     }
-    addLog("[warpImage] Image warping completed.");
+    logs.push("[warpImage] Image warping completed.");
     return dstData;
 }
 
 
 // --- ROBUST STACKING IMPLEMENTATIONS ---
 
-function stackImagesAverage(images: Uint8ClampedArray[], addLog: (m:string)=>void): Uint8ClampedArray {
-    addLog(`[stackAverage] Stacking ${images.length} images.`);
+function stackImagesAverage(images: Uint8ClampedArray[], logs: string[]): Uint8ClampedArray {
+    logs.push(`[stackAverage] Stacking ${images.length} images.`);
     const length = images[0].length;
     const accum = new Float32Array(length);
     const counts = new Uint8Array(length / 4);
@@ -159,12 +158,12 @@ function stackImagesAverage(images: Uint8ClampedArray[], addLog: (m:string)=>voi
             result[i + 3] = 255;
         }
     }
-    addLog(`[stackAverage] Finished.`);
+    logs.push(`[stackAverage] Finished.`);
     return result;
 }
 
-function stackImagesMedian(images: Uint8ClampedArray[], addLog: (m:string)=>void): Uint8ClampedArray {
-    addLog(`[stackMedian] Stacking ${images.length} images.`);
+function stackImagesMedian(images: Uint8ClampedArray[], logs: string[]): Uint8ClampedArray {
+    logs.push(`[stackMedian] Stacking ${images.length} images.`);
     const length = images[0].length;
     const result = new Uint8ClampedArray(length);
     const pixelValuesR: number[] = [];
@@ -195,12 +194,12 @@ function stackImagesMedian(images: Uint8ClampedArray[], addLog: (m:string)=>void
             result[i + 3] = 255;
         }
     }
-    addLog(`[stackMedian] Finished.`);
+    logs.push(`[stackMedian] Finished.`);
     return result;
 }
 
-function stackImagesSigmaClip(images: Uint8ClampedArray[], addLog: (m:string)=>void, sigma = 2.0): Uint8ClampedArray {
-    addLog(`[stackSigmaClip] Stacking ${images.length} images.`);
+function stackImagesSigmaClip(images: Uint8ClampedArray[], logs: string[], sigma = 2.0): Uint8ClampedArray {
+    logs.push(`[stackSigmaClip] Stacking ${images.length} images.`);
     const length = images[0].length;
     const result = new Uint8ClampedArray(length);
 
@@ -247,7 +246,7 @@ function stackImagesSigmaClip(images: Uint8ClampedArray[], addLog: (m:string)=>v
             result[i + 3] = 255;
         }
     }
-    addLog(`[stackSigmaClip] Finished.`);
+    logs.push(`[stackSigmaClip] Finished.`);
     return result;
 }
 
@@ -256,91 +255,100 @@ function stackImagesSigmaClip(images: Uint8ClampedArray[], addLog: (m:string)=>v
 export async function aiAlignAndStack(
   imageEntries: SerializableImageQueueEntry[],
   learnedPatterns: LearnedPattern[],
-  mode: StackingMode,
-  addLog: (message: string) => void,
-  setProgress: (progress: number) => void
-): Promise<Uint8ClampedArray> {
-  addLog("[aiAlignAndStack] Starting AI alignment and stacking process.");
-  if (imageEntries.length === 0) {
-    addLog("[aiAlignAndStack] Error: No images provided.");
-    throw new Error("No valid images provided for stacking.");
-  }
-  if (!imageEntries[0].imageData) {
-    addLog("[aiAlignAndStack] Error: Reference image has no image data.");
-    throw new Error("Reference image has no data.");
-  }
-
-  const refEntry = imageEntries[0];
-  const { width, height } = refEntry.analysisDimensions;
+  mode: StackingMode
+): Promise<{stackedImageData: number[] | null, logs: string[]}> {
+  const logs: string[] = [];
+  logs.push("[aiAlignAndStack] Starting AI alignment and stacking process.");
   
-  const refImageData = new Uint8ClampedArray(refEntry.imageData);
-  const alignedImageDatas: (Uint8ClampedArray | null)[] = [refImageData];
-  
-  const refSimpleImageData = { data: refEntry.imageData, width, height };
-
-  addLog(`[aiAlignAndStack] Finding matching stars for reference image: ${refEntry.fileName}`);
-  const refStars = (await findMatchingStars({ allDetectedStars: refEntry.detectedStars, imageData: refSimpleImageData, learnedPatterns, addLog }))
-    .sort((a, b) => b.brightness - a.brightness);
-
-  if (refStars.length < 2) {
-    addLog(`[aiAlignAndStack] Error: AI Pattern matching found ${refStars.length} stars in reference image. Cannot align.`);
-    throw new Error("AI Pattern matching found fewer than 2 stars in reference image. Cannot align.");
-  }
-  addLog(`[aiAlignAndStack] Found ${refStars.length} matching stars in reference.`);
-
-  for (let i = 1; i < imageEntries.length; i++) {
-    const targetEntry = imageEntries[i];
-    addLog(`--- Aligning Image ${i+1}/${imageEntries.length}: ${targetEntry.fileName} ---`);
-    setProgress((i) / imageEntries.length);
-
-    if (!targetEntry.imageData) {
-      addLog(`Skipping image ${targetEntry.fileName}: missing image data.`);
-      alignedImageDatas.push(null);
-      continue;
+  try {
+    if (imageEntries.length === 0) {
+      logs.push("[aiAlignAndStack] Error: No images provided.");
+      throw new Error("No valid images provided for stacking.");
+    }
+    if (!imageEntries[0].imageData) {
+      logs.push("[aiAlignAndStack] Error: Reference image has no image data.");
+      throw new Error("Reference image has no data.");
     }
 
-    const targetClampedData = new Uint8ClampedArray(targetEntry.imageData);
-    const targetSimpleImageData = { data: targetEntry.imageData, width, height };
+    const refEntry = imageEntries[0];
+    const { width, height } = refEntry.analysisDimensions;
     
-    addLog(`[aiAlignAndStack] Finding matching stars for target image: ${targetEntry.fileName}`);
-    const targetStars = (await findMatchingStars({ allDetectedStars: targetEntry.detectedStars, imageData: targetSimpleImageData, learnedPatterns, addLog }))
-        .sort((a, b) => b.brightness - a.brightness);
+    const refImageData = new Uint8ClampedArray(refEntry.imageData.data);
+    const alignedImageDatas: (Uint8ClampedArray | null)[] = [refImageData];
+    
+    logs.push(`[aiAlignAndStack] Finding matching stars for reference image: ${refEntry.fileName}`);
+    const refStars = (await findMatchingStars({ allDetectedStars: refEntry.detectedStars, imageData: refEntry.imageData, learnedPatterns, addLog: (m:string) => logs.push(m) }))
+      .sort((a, b) => b.brightness - a.brightness);
 
-    if (targetStars.length < 2) {
-        addLog(`Skipping image ${targetEntry.fileName}: AI pattern matching found only ${targetStars.length} stars.`);
+    if (refStars.length < 2) {
+      logs.push(`[aiAlignAndStack] Error: AI Pattern matching found ${refStars.length} stars in reference image. Cannot align.`);
+      throw new Error("AI Pattern matching found fewer than 2 stars in reference image. Cannot align.");
+    }
+    logs.push(`[aiAlignAndStack] Found ${refStars.length} matching stars in reference.`);
+
+    for (let i = 1; i < imageEntries.length; i++) {
+      const targetEntry = imageEntries[i];
+      logs.push(`--- Aligning Image ${i+1}/${imageEntries.length}: ${targetEntry.fileName} ---`);
+
+      if (!targetEntry.imageData) {
+        logs.push(`Skipping image ${targetEntry.fileName}: missing image data.`);
         alignedImageDatas.push(null);
         continue;
+      }
+
+      const targetClampedData = new Uint8ClampedArray(targetEntry.imageData.data);
+      
+      logs.push(`[aiAlignAndStack] Finding matching stars for target image: ${targetEntry.fileName}`);
+      const targetStars = (await findMatchingStars({ allDetectedStars: targetEntry.detectedStars, imageData: targetEntry.imageData, learnedPatterns, addLog: (m:string) => logs.push(m) }))
+          .sort((a, b) => b.brightness - a.brightness);
+
+      if (targetStars.length < 2) {
+          logs.push(`Skipping image ${targetEntry.fileName}: AI pattern matching found only ${targetStars.length} stars.`);
+          alignedImageDatas.push(null);
+          continue;
+      }
+      logs.push(`[aiAlignAndStack] Found ${targetStars.length} matching stars in target.`);
+
+      const transform = getTransformFromTwoStars(refStars, targetStars, logs);
+
+      if (!transform) {
+          logs.push(`Could not determine robust AI transform for ${targetEntry.fileName}. Skipping.`);
+          alignedImageDatas.push(null);
+          continue;
+      }
+      
+      logs.push(`Warping image ${targetEntry.fileName}...`);
+      const warpedData = warpImage(targetClampedData, width, height, transform, logs);
+      alignedImageDatas.push(warpedData);
     }
-     addLog(`[aiAlignAndStack] Found ${targetStars.length} matching stars in target.`);
 
-    const transform = getTransformFromTwoStars(refStars, targetStars, addLog);
+    logs.push(`All images processed. Stacking with mode: ${mode}...`);
 
-    if (!transform) {
-        addLog(`Could not determine robust AI transform for ${targetEntry.fileName}. Skipping.`);
-        alignedImageDatas.push(null);
-        continue;
+    const validImagesToStack = alignedImageDatas.filter((img): img is Uint8ClampedArray => img !== null);
+    if (validImagesToStack.length < 1) {
+      throw new Error("No images could be successfully aligned to stack.");
     }
     
-    addLog(`Warping image ${targetEntry.fileName}...`);
-    const warpedData = warpImage(targetClampedData, width, height, transform, addLog);
-    alignedImageDatas.push(warpedData);
-  }
+    let finalImage: Uint8ClampedArray;
+    switch (mode) {
+      case 'median':
+          finalImage = stackImagesMedian(validImagesToStack, logs);
+          break;
+      case 'sigma':
+          finalImage = stackImagesSigmaClip(validImagesToStack, logs);
+          break;
+      case 'average':
+      default:
+          finalImage = stackImagesAverage(validImagesToStack, logs);
+          break;
+    }
+    return { stackedImageData: Array.from(finalImage), logs };
 
-  addLog(`All images processed. Stacking with mode: ${mode}...`);
-  setProgress(1);
-
-  const validImagesToStack = alignedImageDatas.filter((img): img is Uint8ClampedArray => img !== null);
-  if (validImagesToStack.length < 1) {
-    throw new Error("No images could be successfully aligned to stack.");
-  }
-
-  switch (mode) {
-    case 'median':
-        return stackImagesMedian(validImagesToStack, addLog);
-    case 'sigma':
-        return stackImagesSigmaClip(validImagesToStack, addLog);
-    case 'average':
-    default:
-        return stackImagesAverage(validImagesToStack, addLog);
+  } catch(e) {
+      const errorMessage = e instanceof Error ? e.message : String(e);
+      logs.push(`[CRITICAL ERROR in aiAlignAndStack]: ${errorMessage}`);
+      console.error(e);
+      // Return logs but no image data on crash
+      return { stackedImageData: null, logs };
   }
 }

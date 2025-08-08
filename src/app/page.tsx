@@ -510,12 +510,25 @@ export default function AstroStackerPage() {
         const serializableImageEntries = allImageStarData.map(entry => ({
             id: entry.id,
             fileName: entry.file.name,
-            imageData: entry.imageData ? Array.from(entry.imageData.data) : null,
+            imageData: entry.imageData ? {
+                data: Array.from(entry.imageData.data),
+                width: entry.imageData.width,
+                height: entry.imageData.height,
+            } : null,
             detectedStars: entry.detectedStars,
             analysisDimensions: entry.analysisDimensions
         }));
 
-        stackedImageData = await aiAlignAndStack(serializableImageEntries, activePatterns, stackingMode, (m) => addLog(`[AI ALIGN] ${m}`), (p) => setProgressPercent(p * 100));
+        const result = await aiAlignAndStack(serializableImageEntries, activePatterns, stackingMode);
+        
+        // Add returned logs to the UI
+        result.logs.forEach(logMsg => addLog(`[AI ALIGN] ${logMsg}`));
+
+        if (!result.stackedImageData) {
+            throw new Error("AI alignment and stacking process did not return an image.");
+        }
+        stackedImageData = new Uint8ClampedArray(result.stackedImageData);
+
       } else {
         // Standard Alignment
         const refImageForStandard = allImageStarData[0];
@@ -534,7 +547,7 @@ export default function AstroStackerPage() {
       canvas.height = height;
       const ctx = canvas.getContext('2d');
       if (!ctx) throw new Error("Could not create canvas context to display result.");
-      ctx.putImageData(new ImageData(new Uint8ClampedArray(stackedImageData.buffer), width, height), 0, 0);
+      ctx.putImageData(new ImageData(stackedImageData, width, height), 0, 0);
   
       const resultDataUrl = canvas.toDataURL(outputFormat === 'jpeg' ? 'image/jpeg' : 'image/png', jpegQuality / 100);
       if (!resultDataUrl || resultDataUrl.length < MIN_VALID_DATA_URL_LENGTH) throw new Error("Failed to generate a valid preview URL for the stacked image.");
@@ -644,20 +657,20 @@ export default function AstroStackerPage() {
         setLearnedPatterns(prevPatterns => {
             const newPatterns = prevPatterns.filter(p => p.id !== patternId);
             saveLearnedPatterns(newPatterns);
-            
-            setSelectedPatternIDs(prevSelected => {
-                const newSelectedIDs = new Set(prevSelected);
-                newSelectedIDs.delete(patternId);
-                return newSelectedIDs;
-            });
-            
-            if (patternId === 'aggregated-user-pattern') {
-                setManualSelectedStars([]);
-                setCanvasStars([]);
-            }
-            addLog(`Pattern ${patternId} deleted.`);
             return newPatterns;
         });
+        
+        setSelectedPatternIDs(prevSelected => {
+            const newSelectedIDs = new Set(prevSelected);
+            newSelectedIDs.delete(patternId);
+            return newSelectedIDs;
+        });
+        
+        if (patternId === 'aggregated-user-pattern') {
+            setManualSelectedStars([]);
+            setCanvasStars([]);
+        }
+        addLog(`Pattern ${patternId} deleted.`);
     }
   };
 
@@ -680,7 +693,7 @@ export default function AstroStackerPage() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <ImageUploadArea onFilesAdded={handleFilesAdded} isProcessing={isUiDisabled} multiple={true} />
-                {isProcessingStack && progressPercent > 0 && (
+                {isProcessingStack && alignmentMethod === 'standard' && progressPercent > 0 && (
                   <div className="space-y-2 my-4">
                     <Progress value={progressPercent} className="w-full h-3" />
                     <p className="text-sm text-center text-muted-foreground">{t('stackingProgress', {progressPercent: Math.round(progressPercent)})}</p>
@@ -724,7 +737,7 @@ export default function AstroStackerPage() {
                         {logs.map((log) => (
                           <div key={log.id} className="mb-1 font-mono">
                             <span className="text-muted-foreground mr-2">{log.timestamp}</span>
-                            <span className={ log.message.toLowerCase().includes('error') || log.message.toLowerCase().includes('failed') ? 'text-destructive' : log.message.toLowerCase().includes('warn') ? 'text-yellow-500' : log.message.startsWith('[ALIGN]') ? 'text-sky-400' : 'text-foreground/80'}>{log.message}</span>
+                            <span className={ log.message.toLowerCase().includes('error') || log.message.toLowerCase().includes('failed') ? 'text-destructive' : log.message.toLowerCase().includes('warn') ? 'text-yellow-500' : log.message.startsWith('[ALIGN]') || log.message.startsWith('[AI ALIGN]') ? 'text-sky-400' : 'text-foreground/80'}>{log.message}</span>
                           </div>
                         ))}
                       </ScrollArea>
