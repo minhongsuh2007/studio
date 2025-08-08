@@ -78,19 +78,17 @@ export function ImageQueueItem({
         {file.name}
       </div>
       <CardFooter className="p-2 border-t">
-        {isReferenceImage && (
-           <Button
-            variant={isManualSelectMode ? "secondary" : "outline"}
-            size="sm"
-            onClick={onManualSelectToggle}
-            disabled={isProcessing || isAnalyzing || !isAnalyzed}
-            className="w-full"
-            title={!isAnalyzed ? "Waiting for analysis to complete..." : "Select stars manually on this reference image"}
-          >
-            <Edit3 className="mr-2 h-4 w-4" />
-            {isManualSelectMode ? "Exit Selection Mode" : "Select Stars"}
-          </Button>
-        )}
+         <Button
+          variant={isManualSelectMode ? "secondary" : "outline"}
+          size="sm"
+          onClick={onManualSelectToggle}
+          disabled={isProcessing || isAnalyzing || !isAnalyzed}
+          className="w-full"
+          title={!isAnalyzed ? "Waiting for analysis to complete..." : "Select stars manually on this image for AI learning"}
+        >
+          <Edit3 className="mr-2 h-4 w-4" />
+          {isManualSelectMode ? "Exit Selection Mode" : "Select Stars"}
+        </Button>
       </CardFooter>
     </Card>
   );
