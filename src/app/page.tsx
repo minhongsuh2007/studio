@@ -426,7 +426,7 @@ export default function AstroStackerPage() {
     const { data, width, height } = imageToLearnFrom.imageData;
     const newCharacteristics = await extractCharacteristicsFromImage({
       stars: manualSelectedStars,
-      imageData: { data: new Uint8ClampedArray(data.buffer), width, height }
+      imageData: { data: Array.from(data), width, height } // Convert to plain array
     });
     
     setLearnedPatterns(prev => {
@@ -619,7 +619,7 @@ export default function AstroStackerPage() {
         const {data, width, height} = testImage.imageData!;
         const matched = await findMatchingStars({
           allDetectedStars: testImage.detectedStars, 
-          imageData: {data: new Uint8ClampedArray(data.buffer), width, height}, 
+          imageData: {data: Array.from(data), width, height}, // Convert to plain array
           learnedPatterns: activePatterns
         });
         setTestImageMatchedStars(matched);
@@ -704,7 +704,7 @@ export default function AstroStackerPage() {
                     <CardFooter className="p-3 flex flex-col gap-2">
                        <Button onClick={handleWipeAllStars} className="w-full" variant="destructive" size="sm"><Eraser className="mr-2 h-4 w-4" />Wipe All Stars</Button>
                       <Button onClick={handleConfirmManualSelection} className="w-full" variant="secondary"><CheckCircle className="mr-2 h-4 w-4" />Confirm & Learn Pattern</Button>
-                      <Button onClick={() => setManualSelectImageId(null)} className="w-full"><X className="mr-2 h-4 w-4" />Cancel</Button>
+                      <Button onClick={() => {setManualSelectImageId(null); setManualSelectedStars([]); setCanvasStars([]);}} className="w-full"><X className="mr-2 h-4 w-4" />Cancel</Button>
                     </CardFooter>
                   </Card>
                 )}

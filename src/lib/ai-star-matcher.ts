@@ -21,7 +21,7 @@ export interface LearnedPattern {
 
 // A simplified representation of ImageData suitable for server-side processing
 export interface SimpleImageData {
-    data: Uint8ClampedArray;
+    data: number[]; // Use a plain array for serialization
     width: number;
     height: number;
 }
@@ -126,7 +126,7 @@ export async function findMatchingStars({
     
     const matchScore = compareCharacteristics(starChars, learnedPatterns);
     
-    if (matchScore >= matchThreshold) {
+    if (matchScore >= matchScore) {
       matchedStars.push(star);
     }
   }
@@ -161,5 +161,3 @@ function compareCharacteristics(
   }
   return bestScore;
 }
-
-    
