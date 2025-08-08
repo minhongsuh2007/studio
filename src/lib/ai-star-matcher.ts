@@ -13,9 +13,9 @@ export interface StarCharacteristics {
 
 // A pattern is a collection of characteristics from stars you've selected.
 export interface LearnedPattern {
-  id: string; // Typically from the source image filename
+  id: string; // Typically a generic name, since it aggregates data
   timestamp: number;
-  sourceDimensions: { width: number; height: number };
+  sourceImageIds: string[]; // Keep track of which images contributed
   characteristics: StarCharacteristics[];
 }
 
@@ -72,55 +72,22 @@ function getStarCharacteristics(star: Star, imageData: ImageData): StarCharacter
     avgBrightness,
     avgContrast,
     fwhm,
-    pixelCount: star.size,
+    pixelCount: star.size > 0 ? star.size : brightPixels.length, // Use a fallback for manually added stars
   };
 }
 
 /**
- * Analyzes manually selected stars to create a "LearnedPattern"
+ * Analyzes manually selected stars from a single image and returns their characteristics.
  */
-export async function learnStarPattern(
-  id: string,
+export async function extractCharacteristicsFromImage(
   manualStars: Star[],
   imageData: ImageData
-): Promise<LearnedPattern> {
+): Promise<StarCharacteristics[]> {
   const characteristics = manualStars
     .map(star => getStarCharacteristics(star, imageData))
     .filter((c): c is StarCharacteristics => c !== null);
 
-  return {
-    id,
-    timestamp: Date.now(),
-    sourceDimensions: { width: imageData.width, height: imageData.height },
-    characteristics,
-  };
-}
-
-/**
- * Compares a star's characteristics to a set of learned patterns.
- */
-function compareCharacteristics(
-  starChars: StarCharacteristics,
-  learnedPatterns: LearnedPattern[]
-): number {
-  let bestScore = 0;
-
-  for (const pattern of learnedPatterns) {
-    for (const learnedChar of pattern.characteristics) {
-      // Simple scoring based on weighted difference. Lower is better.
-      const brightDiff = Math.abs(starChars.avgBrightness - learnedChar.avgBrightness) / learnedChar.avgBrightness;
-      const contrastDiff = Math.abs(starChars.avgContrast - learnedChar.avgContrast) / (learnedChar.avgContrast + 1e-6);
-      const fwhmDiff = Math.abs(starChars.fwhm - learnedChar.fwhm) / (learnedChar.fwhm + 1e-6);
-      const sizeDiff = Math.abs(starChars.pixelCount - learnedChar.pixelCount) / learnedChar.pixelCount;
-      
-      const score = 1 - (0.4 * brightDiff + 0.3 * fwhmDiff + 0.2 * contrastDiff + 0.1 * sizeDiff);
-
-      if (score > bestScore) {
-        bestScore = score;
-      }
-    }
-  }
-  return bestScore;
+  return characteristics;
 }
 
 
@@ -149,4 +116,32 @@ export async function findMatchingStars(
   }
 
   return matchedStars;
+}
+
+
+/**
+ * Compares a star's characteristics to a set of learned patterns.
+ */
+function compareCharacteristics(
+  starChars: StarCharacteristics,
+  learnedPatterns: LearnedPattern[]
+): number {
+  let bestScore = 0;
+
+  for (const pattern of learnedPatterns) {
+    for (const learnedChar of pattern.characteristics) {
+      // Simple scoring based on weighted difference. Lower is better.
+      const brightDiff = Math.abs(starChars.avgBrightness - learnedChar.avgBrightness) / learnedChar.avgBrightness;
+      const contrastDiff = Math.abs(starChars.avgContrast - learnedChar.avgContrast) / (learnedChar.avgContrast + 1e-6);
+      const fwhmDiff = Math.abs(starChars.fwhm - learnedChar.fwhm) / (learnedChar.fwhm + 1e-6);
+      const sizeDiff = Math.abs(starChars.pixelCount - learnedChar.pixelCount) / learnedChar.pixelCount;
+      
+      const score = 1 - (0.4 * brightDiff + 0.3 * fwhmDiff + 0.2 * contrastDiff + 0.1 * sizeDiff);
+
+      if (score > bestScore) {
+        bestScore = score;
+      }
+    }
+  }
+  return bestScore;
 }

@@ -9,7 +9,7 @@ import { fileToDataURL } from '@/lib/utils';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { alignAndStack, detectStars, type Star, type StackingMode } from '@/lib/astro-align';
 import { aiAlignAndStack } from '@/lib/ai-align';
-import { learnStarPattern, findMatchingStars, type LearnedPattern } from '@/lib/ai-star-matcher';
+import { extractCharacteristicsFromImage, findMatchingStars, type LearnedPattern, type StarCharacteristics } from '@/lib/ai-star-matcher';
 import { AppHeader } from '@/components/astrostacker/AppHeader';
 import { ImageUploadArea } from '@/components/astrostacker/ImageUploadArea';
 import { ImageQueueItem } from '@/components/astrostacker/ImageQueueItem';
@@ -17,7 +17,7 @@ import { ImagePreview } from '@/components/astrostacker/ImagePreview';
 import { ImagePostProcessEditor } from '@/components/astrostacker/ImagePostProcessEditor';
 import { TutorialDialog } from '@/components/astrostacker/TutorialDialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Star as StarIcon, ListChecks, CheckCircle, RefreshCcw, Edit3, Loader2, Orbit, Trash2, Wand2, ShieldOff, Layers, Baseline, X, AlertTriangle, BrainCircuit, TestTube2 } from 'lucide-react';
+import { Star as StarIcon, ListChecks, CheckCircle, RefreshCcw, Edit3, Loader2, Orbit, Trash2, Wand2, ShieldOff, Layers, Baseline, X, AlertTriangle, BrainCircuit, TestTube2, Eraser } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
@@ -217,7 +217,6 @@ export default function AstroStackerPage() {
       ctx.drawImage(imgEl, 0, 0, canvas.width, canvas.height);
       
       const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      // Use the standard star detection for all initial analyses
       const detectedStars = detectStars(imageData, canvas.width, canvas.height, 60);
       
       finalUpdatedEntry = { ...finalUpdatedEntry, imageData, detectedStars, isAnalyzed: true };
@@ -312,36 +311,28 @@ export default function AstroStackerPage() {
       toast({ title: "Not Ready", description: "Reference image has not been analyzed yet. Please wait.", variant: "default" });
       return;
     }
-    setManualSelectedStars([]);
+    setManualSelectedStars(refImage.detectedStars); // Start with auto-detected stars
     setIsManualSelectMode(!isManualSelectMode);
   };
   
   const handleStarAnnotationClick = (x: number, y: number) => {
     if (!isManualSelectMode) return;
-    const refImage = allImageStarData[0];
-    if (!refImage || !refImage.isAnalyzed) return;
-    const manualSelectRadius = 10;
+    const manualSelectRadius = 15;
     const existingStarIndex = manualSelectedStars.findIndex(star => Math.sqrt(Math.pow(star.x - x, 2) + Math.pow(star.y - y, 2)) < manualSelectRadius);
   
     if (existingStarIndex !== -1) {
+      // If clicked on an existing star, remove it
       setManualSelectedStars(prev => prev.filter((_, index) => index !== existingStarIndex));
-      return;
+    } else {
+      // If clicked on a new spot, add a new star
+      // We don't have brightness/size data, but that's okay for the AI learner, it will calculate it
+      setManualSelectedStars(prev => [...prev, { x, y, brightness: 0, size: 0 }]);
     }
-  
-    let closestStar: Star | null = null;
-    let closestDist = manualSelectRadius;
-  
-    for (const star of refImage.detectedStars) {
-      const dist = Math.sqrt(Math.pow(star.x - x, 2) + Math.pow(star.y - y, 2));
-      if (dist < closestDist) {
-        closestStar = star;
-        closestDist = dist;
-      }
-    }
-  
-    if (closestStar && !manualSelectedStars.some(s => s.x === closestStar!.x && s.y === closestStar!.y)) {
-      setManualSelectedStars(prev => [...prev, closestStar!]);
-    }
+  };
+
+  const handleWipeAllStars = () => {
+    setManualSelectedStars([]);
+    toast({ title: "All Stars Cleared", description: "You can now start selecting stars on a clean slate."});
   };
 
   const handleConfirmManualSelection = async () => {
@@ -351,24 +342,58 @@ export default function AstroStackerPage() {
       return;
     }
     
-    const newPattern = await learnStarPattern(refImage.id, manualSelectedStars, refImage.imageData);
+    // Always use a consistent ID for the aggregated pattern
+    const patternId = 'aggregated-user-pattern';
+    
+    const newCharacteristics = await extractCharacteristicsFromImage(manualStars, refImage.imageData);
+    
     setLearnedPatterns(prev => {
-      const existingIndex = prev.findIndex(p => p.id === newPattern.id);
+      const existingPatternIndex = prev.findIndex(p => p.id === patternId);
       let updatedPatterns;
-      if (existingIndex !== -1) {
+
+      if (existingPatternIndex !== -1) {
+        // Update existing aggregated pattern
+        const existingPattern = prev[existingPatternIndex];
+        const updatedCharacteristics = [...existingPattern.characteristics, ...newCharacteristics];
+        const updatedSourceIds = new Set([...existingPattern.sourceImageIds, refImage.id]);
+
+        const newPattern: LearnedPattern = {
+          id: patternId,
+          timestamp: Date.now(),
+          sourceImageIds: Array.from(updatedSourceIds),
+          characteristics: updatedCharacteristics,
+        };
         updatedPatterns = [...prev];
-        updatedPatterns[existingIndex] = newPattern;
-        toast({ title: t('starPatternOverwrittenToastTitle'), description: t('starPatternOverwrittenToastDesc', {fileName: refImage.file.name, starCount: newPattern.characteristics.length}) });
+        updatedPatterns[existingPatternIndex] = newPattern;
+        toast({ title: "Star Pattern Updated", description: `${newCharacteristics.length} new star characteristics from ${refImage.file.name} added to your aggregated pattern.`});
+
       } else {
+        // Create new aggregated pattern
+        const newPattern: LearnedPattern = {
+          id: patternId,
+          timestamp: Date.now(),
+          sourceImageIds: [refImage.id],
+          characteristics: newCharacteristics,
+        };
         updatedPatterns = [...prev, newPattern];
-        toast({ title: t('starPatternFirstLearnedToastTitle'), description: t('starPatternFirstLearnedToastDesc', {fileName: refImage.file.name, starCount: newPattern.characteristics.length})});
+        toast({ title: "Star Pattern Learned!", description: `A new aggregated pattern has been created with ${newCharacteristics.length} stars from ${refImage.file.name}.` });
       }
+
       saveLearnedPatterns(updatedPatterns);
+      
+      // Also update the active selection to ensure this new/updated pattern is used
+      setSelectedPatternIDs(prevSelected => {
+          const newSet = new Set(prevSelected);
+          newSet.add(patternId);
+          return newSet;
+      });
+
       return updatedPatterns;
     });
 
     setIsManualSelectMode(false);
   };
+
 
   const handleStackAllImages = async () => {
     if (allImageStarData.length < 2) {
@@ -493,9 +518,8 @@ export default function AstroStackerPage() {
         return;
     }
     setIsAnalyzingTestImage(true);
-    addLog(`Running pattern test on ${testImage.file.name} with pattern from ${activePatterns[0].id}`);
+    addLog(`Running pattern test on ${testImage.file.name} with pattern: ${activePatterns[0].id}`);
     
-    // Use a timeout to avoid freezing the UI thread for a moment
     setTimeout(async () => {
         const matched = await findMatchingStars(testImage.detectedStars, testImage.imageData!, activePatterns);
         setTestImageMatchedStars(matched);
@@ -515,7 +539,7 @@ export default function AstroStackerPage() {
   };
 
   const deletePattern = (patternId: string) => {
-    if (window.confirm(`Are you sure you want to delete the pattern learned from "${patternId}"? This cannot be undone.`)) {
+    if (window.confirm(`Are you sure you want to delete the pattern "${patternId}"? This cannot be undone.`)) {
       setLearnedPatterns(prev => {
         const updated = prev.filter(p => p.id !== patternId);
         saveLearnedPatterns(updated);
@@ -578,6 +602,7 @@ export default function AstroStackerPage() {
                       <CardDescription className="text-xs">Now editing reference: {refImage.file.name}. Selected {manualSelectedStars.length} stars.</CardDescription>
                     </CardHeader>
                     <CardFooter className="p-3 flex flex-col gap-2">
+                       <Button onClick={handleWipeAllStars} className="w-full" variant="destructive" size="sm"><Eraser className="mr-2 h-4 w-4" />Wipe All Stars</Button>
                       <Button onClick={handleConfirmManualSelection} className="w-full" variant="secondary"><CheckCircle className="mr-2 h-4 w-4" />Confirm & Learn Pattern</Button>
                       <Button onClick={() => setIsManualSelectMode(false)} className="w-full"><X className="mr-2 h-4 w-4" />Cancel</Button>
                     </CardFooter>
@@ -655,8 +680,8 @@ export default function AstroStackerPage() {
                                     <div className="flex items-center gap-2">
                                         <Checkbox id={`pattern-${p.id}`} checked={selectedPatternIDs.has(p.id)} onCheckedChange={(checked) => handlePatternSelectionChange(p.id, !!checked)} />
                                         <div>
-                                            <label htmlFor={`pattern-${p.id}`} className="font-medium text-sm cursor-pointer">{p.id}</label>
-                                            <p className="text-xs text-muted-foreground"> {p.characteristics.length} stars learned on {new Date(p.timestamp).toLocaleDateString()}</p>
+                                            <label htmlFor={`pattern-${p.id}`} className="font-medium text-sm cursor-pointer">{p.id} ({p.characteristics.length} stars)</label>
+                                            <p className="text-xs text-muted-foreground"> {p.sourceImageIds.length} source images. Learned on {new Date(p.timestamp).toLocaleDateString()}</p>
                                         </div>
                                     </div>
                                     <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => deletePattern(p.id)}><Trash2 className="h-4 w-4 text-destructive"/></Button>
