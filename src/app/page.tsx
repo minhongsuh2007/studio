@@ -633,16 +633,14 @@ export default function AstroStackerPage() {
 
   const deletePattern = (patternId: string) => {
     if (window.confirm(`Are you sure you want to delete the pattern "${patternId}"? This cannot be undone.`)) {
-        setLearnedPatterns(prev => {
-            const updated = prev.filter(p => p.id !== patternId);
-            saveLearnedPatterns(updated);
-            return updated;
-        });
-        setSelectedPatternIDs(prev => {
-            const newSet = new Set(prev);
-            newSet.delete(patternId);
-            return newSet;
-        });
+        const newPatterns = learnedPatterns.filter(p => p.id !== patternId);
+        const newSelectedIDs = new Set(selectedPatternIDs);
+        newSelectedIDs.delete(patternId);
+
+        setLearnedPatterns(newPatterns);
+        setSelectedPatternIDs(newSelectedIDs);
+        saveLearnedPatterns(newPatterns);
+
         if (patternId === 'aggregated-user-pattern') {
             setManualSelectedStars([]);
             setCanvasStars([]);
