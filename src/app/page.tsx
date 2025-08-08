@@ -9,7 +9,7 @@ import { fileToDataURL } from '@/lib/utils';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { alignAndStack, detectStars, type Star, type StackingMode } from '@/lib/astro-align';
 import { aiAlignAndStack } from '@/lib/ai-align';
-import { extractCharacteristicsFromImage, findMatchingStars, type LearnedPattern, type StarCharacteristics, type SimpleImageData } from '@/lib/ai-star-matcher';
+import { extractCharacteristicsFromImage, findMatchingStars, type LearnedPattern, type SimpleImageData } from '@/lib/ai-star-matcher';
 import { AppHeader } from '@/components/astrostacker/AppHeader';
 import { ImageUploadArea } from '@/components/astrostacker/ImageUploadArea';
 import { ImageQueueItem } from '@/components/astrostacker/ImageQueueItem';
@@ -426,7 +426,7 @@ export default function AstroStackerPage() {
     const { data, width, height } = imageToLearnFrom.imageData;
     const newCharacteristics = await extractCharacteristicsFromImage({
       stars: manualSelectedStars,
-      imageData: { data: Array.from(data), width, height } // Convert to plain array
+      imageData: { data: Array.from(data), width, height }
     });
     
     setLearnedPatterns(prev => {
@@ -619,7 +619,7 @@ export default function AstroStackerPage() {
         const {data, width, height} = testImage.imageData!;
         const matched = await findMatchingStars({
           allDetectedStars: testImage.detectedStars, 
-          imageData: {data: Array.from(data), width, height}, // Convert to plain array
+          imageData: {data: Array.from(data), width, height},
           learnedPatterns: activePatterns
         });
         setTestImageMatchedStars(matched);
@@ -821,3 +821,5 @@ export default function AstroStackerPage() {
     </div>
   );
 }
+
+    
