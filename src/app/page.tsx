@@ -537,7 +537,7 @@ export default function AstroStackerPage() {
       canvas.height = height;
       const ctx = canvas.getContext('2d');
       if (!ctx) throw new Error("Could not create canvas context to display result.");
-      ctx.putImageData(new ImageData(new Uint8ClampedArray(stackedImageData), width, height), 0, 0);
+      ctx.putImageData(new ImageData(new Uint8ClampedArray(stackedImageData.buffer), width, height), 0, 0);
   
       const resultDataUrl = canvas.toDataURL(outputFormat === 'jpeg' ? 'image/jpeg' : 'image/png', jpegQuality / 100);
       if (!resultDataUrl || resultDataUrl.length < MIN_VALID_DATA_URL_LENGTH) throw new Error("Failed to generate a valid preview URL for the stacked image.");
@@ -643,24 +643,18 @@ export default function AstroStackerPage() {
 
   const deletePattern = (patternId: string) => {
     if (window.confirm(`Are you sure you want to delete the pattern "${patternId}"? This cannot be undone.`)) {
-      setLearnedPatterns(prevPatterns => {
-        const newPatterns = prevPatterns.filter(p => p.id !== patternId);
-        saveLearnedPatterns(newPatterns);
-        return newPatterns;
-      });
-  
-      setSelectedPatternIDs(prevSelected => {
-        const newSelectedIDs = new Set(prevSelected);
-        newSelectedIDs.delete(patternId);
-        return newSelectedIDs;
-      });
-  
-      // If the aggregated user pattern is deleted, also clear the current manual selections
+      const newPatterns = learnedPatterns.filter(p => p.id !== patternId);
+      const newSelectedIDs = new Set(selectedPatternIDs);
+      newSelectedIDs.delete(patternId);
+
+      setLearnedPatterns(newPatterns);
+      setSelectedPatternIDs(newSelectedIDs);
+      saveLearnedPatterns(newPatterns);
+      
       if (patternId === 'aggregated-user-pattern') {
         setManualSelectedStars([]);
         setCanvasStars([]);
       }
-      
       addLog(`Pattern ${patternId} deleted.`);
     }
   };

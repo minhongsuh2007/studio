@@ -45,16 +45,19 @@ function getTransformFromTwoStars(refStars: Star[], targetStars: Star[]): Transf
     const targetAngle = Math.atan2(targetVec.y, targetVec.x);
     const angle = targetAngle - refAngle;
 
-    const cosAngle = Math.cos(-angle);
-    const sinAngle = Math.sin(-angle);
+    const cosAngle = Math.cos(angle);
+    const sinAngle = Math.sin(angle);
     
-    const rotatedTargetX = target1.x * cosAngle - target1.y * sinAngle;
-    const rotatedTargetY = target1.x * sinAngle + target1.y * cosAngle;
+    // The transformation maps a point p_target to p_ref
+    // p_ref.x = scale * (p_target.x * cos - p_target.y * sin) + dx
+    // p_ref.y = scale * (p_target.x * sin + p_target.y * cos) + dy
+    // We can solve for dx and dy using our reference star `target1` which should map to `ref1`
+    
+    const dx = ref1.x - scale * (target1.x * cosAngle - target1.y * sinAngle);
+    const dy = ref1.y - scale * (target1.x * sinAngle + target1.y * cosAngle);
 
-    const dx = ref1.x - rotatedTargetX / scale;
-    const dy = ref1.y - rotatedTargetY / scale;
-    
-    return { dx, dy, angle: -angle, scale: 1/scale };
+    // We return the INVERSE transform params for warping, but it's easier to compute the forward one first.
+    return { dx, dy, angle, scale };
 }
 
 
@@ -73,31 +76,32 @@ function warpImage(
 
     if (scale === 0) return dstData;
 
-    const cosAngle = Math.cos(angle);
-    const sinAngle = Math.sin(angle);
-    
+    // We need the INVERSE transform to go from destination pixel to source pixel
     const invScale = 1 / scale;
+    const cosAngle = Math.cos(-angle);
+    const sinAngle = Math.sin(-angle);
 
     for (let y = 0; y < srcHeight; y++) {
         for (let x = 0; x < srcWidth; x++) {
             
-            const x1 = x - dx;
-            const y1 = y - dy;
+            // Apply inverse translation
+            const translatedX = x - dx;
+            const translatedY = y - dy;
 
-            const x2 = x1 * invScale;
-            const y2 = y1 * invScale;
-
-            const srcX = x2 * cosAngle - y2 * sinAngle;
-            const srcY = x2 * sinAngle + y2 * cosAngle;
+            // Apply inverse rotation and scaling
+            const srcX = invScale * (translatedX * cosAngle - translatedY * sinAngle);
+            const srcY = invScale * (translatedX * sinAngle + translatedY * cosAngle);
             
+            // Bilinear interpolation
             const x_floor = Math.floor(srcX);
             const y_floor = Math.floor(srcY);
+
+            if (x_floor < 0 || x_floor >= srcWidth - 1 || y_floor < 0 || y_floor >= srcHeight - 1) {
+                continue; // Pixel is outside the source image bounds
+            }
+            
             const x_ceil = x_floor + 1;
             const y_ceil = y_floor + 1;
-            
-            if (x_floor < 0 || x_ceil >= srcWidth || y_floor < 0 || y_ceil >= srcHeight) {
-                continue;
-            }
             
             const x_ratio = srcX - x_floor;
             const y_ratio = srcY - y_floor;
@@ -110,6 +114,7 @@ function warpImage(
                  const c01 = srcData[(y_ceil * srcWidth + x_floor) * 4 + channel];
                  const c11 = srcData[(y_ceil * srcWidth + x_ceil) * 4 + channel];
 
+                 // These checks should not be necessary with the bounds check above, but as a safeguard:
                  if (c00 === undefined || c10 === undefined || c01 === undefined || c11 === undefined) continue;
 
                  const c_x0 = c00 * (1 - x_ratio) + c10 * x_ratio;
@@ -117,7 +122,8 @@ function warpImage(
 
                  dstData[dstIdx + channel] = c_x0 * (1 - y_ratio) + c_x1 * y_ratio;
             }
-            if (dstData[dstIdx+3] === 0 && (dstData[dstIdx] > 0 || dstData[dstIdx+1] > 0 || dstData[dstIdx+2] > 0)) {
+            // Ensure alpha is set for pixels with color data
+            if (dstData[dstIdx] > 0 || dstData[dstIdx+1] > 0 || dstData[dstIdx+2] > 0) {
               dstData[dstIdx+3] = 255;
             }
         }
@@ -137,7 +143,7 @@ function stackImagesAverage(images: (Uint8ClampedArray | null)[]): Uint8ClampedA
 
     for (const img of validImages) {
         for (let i = 0; i < length; i += 4) {
-            if (img[i+3] > 0) {
+            if (img[i+3] > 128) { // Use a threshold for alpha
                 accum[i] += img[i];
                 accum[i + 1] += img[i + 1];
                 accum[i + 2] += img[i + 2];
@@ -167,14 +173,16 @@ function stackImagesMedian(images: (Uint8ClampedArray | null)[]): Uint8ClampedAr
     const pixelValues: number[] = [];
 
     for (let i = 0; i < length; i += 4) {
+        let hasData = false;
         for (let channel = 0; channel < 3; channel++) {
             pixelValues.length = 0;
             for (const img of validImages) {
-                if (img[i + 3] > 0) {
+                if (img[i + 3] > 128) {
                     pixelValues.push(img[i + channel]);
                 }
             }
             if (pixelValues.length > 0) {
+                hasData = true;
                 pixelValues.sort((a, b) => a - b);
                 const mid = Math.floor(pixelValues.length / 2);
                 result[i + channel] = pixelValues.length % 2 !== 0
@@ -183,7 +191,9 @@ function stackImagesMedian(images: (Uint8ClampedArray | null)[]): Uint8ClampedAr
             }
         }
         
-        result[i + 3] = pixelValues.length > 0 ? 255 : 0;
+        if (hasData) {
+            result[i + 3] = 255;
+        }
     }
     return result;
 }
@@ -196,15 +206,18 @@ function stackImagesSigmaClip(images: (Uint8ClampedArray | null)[], sigma = 2.0)
     const pixelValues: number[] = [];
 
     for (let i = 0; i < length; i += 4) {
+        let hasData = false;
         for (let channel = 0; channel < 3; channel++) {
             pixelValues.length = 0;
             for (const img of validImages) {
-                if (img[i + 3] > 0) {
+                if (img[i + 3] > 128) {
                     pixelValues.push(img[i + channel]);
                 }
             }
 
             if (pixelValues.length === 0) continue;
+            hasData = true;
+
             if (pixelValues.length < 3) {
                  result[i + channel] = pixelValues.reduce((a, b) => a + b, 0) / pixelValues.length;
                  continue;
@@ -230,7 +243,9 @@ function stackImagesSigmaClip(images: (Uint8ClampedArray | null)[], sigma = 2.0)
                  result[i + channel] = pixelValues.length % 2 !== 0 ? pixelValues[mid] : (pixelValues[mid - 1] + pixelValues[mid]) / 2;
             }
         }
-        result[i + 3] = pixelValues.length > 0 ? 255 : 0;
+        if (hasData) {
+            result[i + 3] = 255;
+        }
     }
     return result;
 }
