@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { fileToDataURL } from '@/lib/utils';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { alignAndStack, detectStars, type Star, type StackingMode } from '@/lib/astro-align';
-import { aiAlignAndStack } from '@/lib/ai-align';
+import { aiClientAlignAndStack } from '@/lib/ai-client-stack';
 import { extractCharacteristicsFromImage, findMatchingStars, type LearnedPattern, type SimpleImageData } from '@/lib/ai-star-matcher';
 import { AppHeader } from '@/components/astrostacker/AppHeader';
 import { ImageUploadArea } from '@/components/astrostacker/ImageUploadArea';
@@ -541,45 +541,11 @@ export default function AstroStackerPage() {
     addLog(`[STACK START] Method: ${alignmentMethod}. Stacking ${allImageStarData.length} images. Mode: ${stackingMode}.`);
   
     try {
+      let stackedImageData;
       if (alignmentMethod === 'ai') {
         const activePatterns = learnedPatterns.filter(p => selectedPatternIDs.has(p.id));
         addLog(`Using ${activePatterns.length} learned patterns for AI alignment.`);
-
-        const serializableImageEntries = allImageStarData.map(entry => ({
-            id: entry.id,
-            fileName: entry.file.name,
-            imageData: entry.imageData ? {
-                data: Array.from(entry.imageData.data),
-                width: entry.imageData.width,
-                height: entry.imageData.height,
-            } : null,
-            detectedStars: entry.detectedStars,
-            analysisDimensions: entry.analysisDimensions
-        }));
-
-        const result = await aiAlignAndStack(serializableImageEntries, activePatterns, stackingMode);
-        
-        // Add returned logs to the UI
-        result.logs.forEach(logMsg => addLog(`[AI ALIGN] ${logMsg}`));
-
-        if (!result.stackedImageData) {
-            throw new Error("AI alignment and stacking process did not return an image.");
-        }
-        const { width, height } = allImageStarData[0].analysisDimensions;
-        const stackedImageData = new Uint8ClampedArray(result.stackedImageData);
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) throw new Error("Could not create canvas context to display result.");
-        ctx.putImageData(new ImageData(stackedImageData, width, height), 0, 0);
-    
-        const resultDataUrl = canvas.toDataURL(outputFormat === 'jpeg' ? 'image/jpeg' : 'image/png', jpegQuality / 100);
-        if (!resultDataUrl || resultDataUrl.length < MIN_VALID_DATA_URL_LENGTH) throw new Error("Failed to generate a valid preview URL for the stacked image.");
-    
-        setStackedImage(resultDataUrl);
-        setImageForPostProcessing(resultDataUrl);
-        setEditedPreviewUrl(resultDataUrl);
+        stackedImageData = await aiClientAlignAndStack(allImageStarData, activePatterns, stackingMode, addLog, (p) => setProgressPercent(p*100));
 
       } else {
         const imageDatas = allImageStarData.map(entry => entry.imageData).filter((d): d is ImageData => d !== null);
@@ -593,22 +559,23 @@ export default function AstroStackerPage() {
         if (refStarsForStandard.length < 2) {
           throw new Error("Standard alignment requires at least 2 stars in the reference image. Please use Manual Select or ensure auto-detection finds stars.");
         }
-        const stackedImageData = await alignAndStack(allImageStarData, refStarsForStandard, stackingMode, (p) => setProgressPercent(p * 100));
-        const { width, height } = allImageStarData[0].analysisDimensions;
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) throw new Error("Could not create canvas context to display result.");
-        ctx.putImageData(new ImageData(stackedImageData, width, height), 0, 0);
-    
-        const resultDataUrl = canvas.toDataURL(outputFormat === 'jpeg' ? 'image/jpeg' : 'image/png', jpegQuality / 100);
-        if (!resultDataUrl || resultDataUrl.length < MIN_VALID_DATA_URL_LENGTH) throw new Error("Failed to generate a valid preview URL for the stacked image.");
-    
-        setStackedImage(resultDataUrl);
-        setImageForPostProcessing(resultDataUrl);
-        setEditedPreviewUrl(resultDataUrl);
+        stackedImageData = await alignAndStack(allImageStarData, refStarsForStandard, stackingMode, (p) => setProgressPercent(p * 100));
       }
+
+      const { width, height } = allImageStarData[0].analysisDimensions;
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error("Could not create canvas context to display result.");
+      ctx.putImageData(new ImageData(stackedImageData, width, height), 0, 0);
+  
+      const resultDataUrl = canvas.toDataURL(outputFormat === 'jpeg' ? 'image/jpeg' : 'image/png', jpegQuality / 100);
+      if (!resultDataUrl || resultDataUrl.length < MIN_VALID_DATA_URL_LENGTH) throw new Error("Failed to generate a valid preview URL for the stacked image.");
+  
+      setStackedImage(resultDataUrl);
+      setImageForPostProcessing(resultDataUrl);
+      setEditedPreviewUrl(resultDataUrl);
   
       setBrightness(100); setExposure(0); setSaturation(100);
       setShowPostProcessEditor(true);
@@ -751,7 +718,7 @@ export default function AstroStackerPage() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <ImageUploadArea onFilesAdded={handleFilesAdded} isProcessing={isUiDisabled} multiple={true} />
-                {isProcessingStack && alignmentMethod === 'standard' && progressPercent > 0 && (
+                {isProcessingStack && progressPercent > 0 && (
                   <div className="space-y-2 my-4">
                     <Progress value={progressPercent} className="w-full h-3" />
                     <p className="text-sm text-center text-muted-foreground">{t('stackingProgress', {progressPercent: Math.round(progressPercent)})}</p>
