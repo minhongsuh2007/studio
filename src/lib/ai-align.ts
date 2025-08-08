@@ -9,7 +9,11 @@ import type { Star } from '@/lib/astro-align';
 // Redefine a serializable version of ImageQueueEntry for server-side use.
 export interface SerializableImageQueueEntry {
   id: string;
-  imageData: SimpleImageData | null;
+  imageData: {
+      data: number[];
+      width: number;
+      height: number;
+  } | null;
   detectedStars: Star[];
   analysisDimensions: { width: number; height: number; };
 };
