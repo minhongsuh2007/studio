@@ -508,12 +508,11 @@ export default function AstroStackerPage() {
         addLog(`Using ${activePatterns.length} learned patterns for AI alignment.`);
 
         const serializableImageEntries = allImageStarData.map(entry => ({
-            ...entry,
-            imageData: entry.imageData ? {
-                data: Array.from(entry.imageData.data),
-                width: entry.imageData.width,
-                height: entry.imageData.height
-            } : null
+            id: entry.id,
+            fileName: entry.file.name,
+            imageData: entry.imageData ? Array.from(entry.imageData.data) : null,
+            detectedStars: entry.detectedStars,
+            analysisDimensions: entry.analysisDimensions
         }));
 
         stackedImageData = await aiAlignAndStack(serializableImageEntries, activePatterns, stackingMode, (m) => addLog(`[AI ALIGN] ${m}`), (p) => setProgressPercent(p * 100));

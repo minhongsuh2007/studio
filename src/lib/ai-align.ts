@@ -9,20 +9,16 @@ import type { Star } from '@/lib/astro-align';
 // Redefine a serializable version of ImageQueueEntry for server-side use.
 export interface SerializableImageQueueEntry {
   id: string;
-  file: { name: string };
-  imageData: {
-      data: number[]; // Received as a plain array
-      width: number;
-      height: number;
-  } | null;
+  fileName: string;
+  imageData: number[] | null,
   detectedStars: Star[];
   analysisDimensions: { width: number; height: number; };
 };
 
 
 /**
- * Calculates the transformation required to align two point sets based on their two brightest stars.
- * This version uses a more robust method to solve for the similarity transform.
+ * Calculates the transformation required to align two point sets.
+ * Solves for the similarity transform (translation, rotation, scale).
  */
 function getTransformFromTwoStars(refStars: Star[], targetStars: Star[], addLog: (m: string) => void): Transform | null {
     if (refStars.length < 2 || targetStars.length < 2) {
@@ -36,21 +32,23 @@ function getTransformFromTwoStars(refStars: Star[], targetStars: Star[], addLog:
     const p2_minus_p1 = { x: p2.x - p1.x, y: p2.y - p1.y };
     const q2_minus_q1 = { x: q2.x - q1.x, y: q2.y - q1.y };
     
-    const p_dist_sq = p2_minus_p1.x**2 + p2_minus_p1.y**2;
-    if (p_dist_sq === 0) {
-        addLog(`[getTransform] Error: Reference stars are at the same position.`);
-        return null;
-    }
-
-    const q_dist_sq = q2_minus_q1.x**2 + q2_minus_q1.y**2;
-    if (q_dist_sq === 0) {
+    // Using dot and cross product to find scale and rotation
+    const p_dot_q = p2_minus_p1.x * q2_minus_q1.x + p2_minus_p1.y * q2_minus_q1.y;
+    const p_cross_q = p2_minus_p1.x * q2_minus_q1.y - p2_minus_p1.y * q2_minus_q1.x;
+    
+    const q_len_sq = q2_minus_q1.x**2 + q2_minus_q1.y**2;
+    if (q_len_sq === 0) {
         addLog(`[getTransform] Error: Target stars are at the same position.`);
         return null;
     }
 
-    const scale = Math.sqrt(p_dist_sq / q_dist_sq);
+    const a = p_dot_q / q_len_sq;
+    const b = p_cross_q / q_len_sq;
 
-    const angle = Math.atan2(p2_minus_p1.y, p2_minus_p1.x) - Math.atan2(q2_minus_q1.y, q2_minus_q1.x);
+    const scale = Math.sqrt(a**2 + b**2);
+    const angle = Math.atan2(b, a); // atan2(sin, cos)
+
+    // Now solve for translation
     const cosAngle = Math.cos(angle);
     const sinAngle = Math.sin(angle);
 
@@ -72,43 +70,47 @@ function warpImage(
     srcHeight: number,
     transform: Transform,
     addLog: (m: string) => void
-): Uint8ClampedArray {
+): Uint8ClampedArray | null {
     const dstData = new Uint8ClampedArray(srcData.length);
     const { dx, dy, angle, scale } = transform;
 
     if (scale === 0) {
         addLog("[warpImage] Error: Transform scale is zero. Returning empty image.");
-        return dstData;
+        return null;
     }
 
     const invScale = 1 / scale;
-    const cosAngleInv = Math.cos(-angle);
-    const sinAngleInv = Math.sin(-angle);
+    const cosAngle = Math.cos(-angle); // Use the negative angle for inverse rotation
+    const sinAngle = Math.sin(-angle);
 
     for (let y_dst = 0; y_dst < srcHeight; y_dst++) {
         for (let x_dst = 0; x_dst < srcWidth; x_dst++) {
             
+            // Step 1: Inverse translate the destination coordinate
             const x_translated = x_dst - dx;
             const y_translated = y_dst - dy;
-
-            const x_src = invScale * (x_translated * cosAngleInv - y_translated * sinAngleInv);
-            const y_src = invScale * (x_translated * sinAngleInv + y_translated * cosAngleInv);
             
+            // Step 2: Inverse rotate and scale to find the source coordinate
+            const x_src = invScale * (x_translated * cosAngle - y_translated * sinAngle);
+            const y_src = invScale * (x_translated * sinAngle + y_translated * cosAngle);
+            
+            // Check if the source coordinate is within the bounds of the source image
+            if (x_src < 0 || x_src >= srcWidth - 1 || y_src < 0 || y_src >= srcHeight - 1) {
+                continue; // This pixel is outside the source image, leave it black (and transparent)
+            }
+
+            // Step 3: Bilinear interpolation
             const x_floor = Math.floor(x_src);
             const y_floor = Math.floor(y_src);
             const x_ceil = x_floor + 1;
             const y_ceil = y_floor + 1;
 
-            if (x_floor < 0 || x_ceil >= srcWidth || y_floor < 0 || y_ceil >= srcHeight) {
-                continue;
-            }
-            
             const x_ratio = x_src - x_floor;
             const y_ratio = y_src - y_floor;
 
             const dstIdx = (y_dst * srcWidth + x_dst) * 4;
 
-            for (let channel = 0; channel < 3; channel++) {
+            for (let channel = 0; channel < 3; channel++) { // RGB channels
                  const c00 = srcData[(y_floor * srcWidth + x_floor) * 4 + channel];
                  const c10 = srcData[(y_floor * srcWidth + x_ceil) * 4 + channel];
                  const c01 = srcData[(y_ceil * srcWidth + x_floor) * 4 + channel];
@@ -119,10 +121,8 @@ function warpImage(
 
                  dstData[dstIdx + channel] = c_x0 * (1 - y_ratio) + c_x1 * y_ratio;
             }
-            
-            if (dstData[dstIdx] > 0 || dstData[dstIdx+1] > 0 || dstData[dstIdx+2] > 0) {
-              dstData[dstIdx+3] = 255;
-            }
+            // Mark the pixel as opaque since it has data
+            dstData[dstIdx + 3] = 255;
         }
     }
     addLog("[warpImage] Image warping completed.");
@@ -130,19 +130,17 @@ function warpImage(
 }
 
 
-// --- STACKING IMPLEMENTATIONS ---
+// --- ROBUST STACKING IMPLEMENTATIONS ---
 
-function stackImagesAverage(images: (Uint8ClampedArray | null)[], addLog: (m:string)=>void): Uint8ClampedArray {
-    const validImages = images.filter((img): img is Uint8ClampedArray => img !== null);
-    if (validImages.length === 0) throw new Error("No valid images to stack");
-    addLog(`[stackAverage] Stacking ${validImages.length} images.`);
-    const length = validImages[0].length;
+function stackImagesAverage(images: Uint8ClampedArray[], addLog: (m:string)=>void): Uint8ClampedArray {
+    addLog(`[stackAverage] Stacking ${images.length} images.`);
+    const length = images[0].length;
     const accum = new Float32Array(length);
     const counts = new Uint8Array(length / 4);
 
-    for (const img of validImages) {
+    for (const img of images) {
         for (let i = 0; i < length; i += 4) {
-            if (img[i+3] > 128) {
+            if (img[i+3] > 128) { // Check alpha channel
                 accum[i] += img[i];
                 accum[i + 1] += img[i + 1];
                 accum[i + 2] += img[i + 2];
@@ -165,19 +163,20 @@ function stackImagesAverage(images: (Uint8ClampedArray | null)[], addLog: (m:str
     return result;
 }
 
-function stackImagesMedian(images: (Uint8ClampedArray | null)[], addLog: (m:string)=>void): Uint8ClampedArray {
-    const validImages = images.filter((img): img is Uint8ClampedArray => img !== null);
-    if (validImages.length === 0) throw new Error("No valid images to stack");
-    addLog(`[stackMedian] Stacking ${validImages.length} images.`);
-    const length = validImages[0].length;
+function stackImagesMedian(images: Uint8ClampedArray[], addLog: (m:string)=>void): Uint8ClampedArray {
+    addLog(`[stackMedian] Stacking ${images.length} images.`);
+    const length = images[0].length;
     const result = new Uint8ClampedArray(length);
-
+    const pixelValuesR: number[] = [];
+    const pixelValuesG: number[] = [];
+    const pixelValuesB: number[] = [];
+    
     for (let i = 0; i < length; i += 4) {
-        const pixelValuesR: number[] = [];
-        const pixelValuesG: number[] = [];
-        const pixelValuesB: number[] = [];
+        pixelValuesR.length = 0;
+        pixelValuesG.length = 0;
+        pixelValuesB.length = 0;
         
-        for (const img of validImages) {
+        for (const img of images) {
             if (img[i + 3] > 128) {
                 pixelValuesR.push(img[i]);
                 pixelValuesG.push(img[i + 1]);
@@ -200,18 +199,16 @@ function stackImagesMedian(images: (Uint8ClampedArray | null)[], addLog: (m:stri
     return result;
 }
 
-function stackImagesSigmaClip(images: (Uint8ClampedArray | null)[], addLog: (m:string)=>void, sigma = 2.0): Uint8ClampedArray {
-    const validImages = images.filter((img): img is Uint8ClampedArray => img !== null);
-    if (validImages.length === 0) throw new Error("No valid images to stack");
-    addLog(`[stackSigmaClip] Stacking ${validImages.length} images.`);
-    const length = validImages[0].length;
+function stackImagesSigmaClip(images: Uint8ClampedArray[], addLog: (m:string)=>void, sigma = 2.0): Uint8ClampedArray {
+    addLog(`[stackSigmaClip] Stacking ${images.length} images.`);
+    const length = images[0].length;
     const result = new Uint8ClampedArray(length);
 
     for (let i = 0; i < length; i += 4) {
         let hasData = false;
         for (let channel = 0; channel < 3; channel++) {
             const pixelValues: number[] = [];
-            for (const img of validImages) {
+            for (const img of images) {
                 if (img[i + 3] > 128) {
                     pixelValues.push(img[i + channel]);
                 }
@@ -229,6 +226,7 @@ function stackImagesSigmaClip(images: (Uint8ClampedArray | null)[], addLog: (m:s
             const mean = sum / pixelValues.length;
             const stdev = Math.sqrt(pixelValues.map(x => Math.pow(x - mean, 2)).reduce((a, b) => a + b) / pixelValues.length);
 
+            // If stdev is 0, all pixels are the same. Just use the mean.
             if (stdev === 0) {
                  result[i + channel] = mean;
                  continue;
@@ -239,7 +237,7 @@ function stackImagesSigmaClip(images: (Uint8ClampedArray | null)[], addLog: (m:s
             
             if (filtered.length > 0) {
                 result[i + channel] = filtered.reduce((a, b) => a + b, 0) / filtered.length;
-            } else { 
+            } else { // If all pixels are outliers, fallback to median
                  pixelValues.sort((a,b) => a-b);
                  const mid = Math.floor(pixelValues.length / 2);
                  result[i + channel] = pixelValues.length % 2 !== 0 ? pixelValues[mid] : (pixelValues[mid - 1] + pixelValues[mid]) / 2;
@@ -275,12 +273,12 @@ export async function aiAlignAndStack(
   const refEntry = imageEntries[0];
   const { width, height } = refEntry.analysisDimensions;
   
-  const refImageData = new Uint8ClampedArray(refEntry.imageData.data);
+  const refImageData = new Uint8ClampedArray(refEntry.imageData);
   const alignedImageDatas: (Uint8ClampedArray | null)[] = [refImageData];
   
-  const refSimpleImageData = { ...refEntry.imageData, data: Array.from(refImageData) };
+  const refSimpleImageData = { data: refEntry.imageData, width, height };
 
-  addLog(`[aiAlignAndStack] Finding matching stars for reference image: ${refEntry.file.name}`);
+  addLog(`[aiAlignAndStack] Finding matching stars for reference image: ${refEntry.fileName}`);
   const refStars = (await findMatchingStars({ allDetectedStars: refEntry.detectedStars, imageData: refSimpleImageData, learnedPatterns, addLog }))
     .sort((a, b) => b.brightness - a.brightness);
 
@@ -292,24 +290,24 @@ export async function aiAlignAndStack(
 
   for (let i = 1; i < imageEntries.length; i++) {
     const targetEntry = imageEntries[i];
-    addLog(`--- Aligning Image ${i+1}/${imageEntries.length}: ${targetEntry.file.name} ---`);
+    addLog(`--- Aligning Image ${i+1}/${imageEntries.length}: ${targetEntry.fileName} ---`);
     setProgress((i) / imageEntries.length);
 
     if (!targetEntry.imageData) {
-      addLog(`Skipping image ${targetEntry.file.name}: missing image data.`);
+      addLog(`Skipping image ${targetEntry.fileName}: missing image data.`);
       alignedImageDatas.push(null);
       continue;
     }
 
-    const targetClampedData = new Uint8ClampedArray(targetEntry.imageData.data);
-    const targetSimpleImageData = { ...targetEntry.imageData, data: Array.from(targetClampedData) };
+    const targetClampedData = new Uint8ClampedArray(targetEntry.imageData);
+    const targetSimpleImageData = { data: targetEntry.imageData, width, height };
     
-    addLog(`[aiAlignAndStack] Finding matching stars for target image: ${targetEntry.file.name}`);
+    addLog(`[aiAlignAndStack] Finding matching stars for target image: ${targetEntry.fileName}`);
     const targetStars = (await findMatchingStars({ allDetectedStars: targetEntry.detectedStars, imageData: targetSimpleImageData, learnedPatterns, addLog }))
         .sort((a, b) => b.brightness - a.brightness);
 
     if (targetStars.length < 2) {
-        addLog(`Skipping image ${targetEntry.file.name}: AI pattern matching found only ${targetStars.length} stars.`);
+        addLog(`Skipping image ${targetEntry.fileName}: AI pattern matching found only ${targetStars.length} stars.`);
         alignedImageDatas.push(null);
         continue;
     }
@@ -318,12 +316,12 @@ export async function aiAlignAndStack(
     const transform = getTransformFromTwoStars(refStars, targetStars, addLog);
 
     if (!transform) {
-        addLog(`Could not determine robust AI transform for ${targetEntry.file.name}. Skipping.`);
+        addLog(`Could not determine robust AI transform for ${targetEntry.fileName}. Skipping.`);
         alignedImageDatas.push(null);
         continue;
     }
     
-    addLog(`Warping image ${targetEntry.file.name}...`);
+    addLog(`Warping image ${targetEntry.fileName}...`);
     const warpedData = warpImage(targetClampedData, width, height, transform, addLog);
     alignedImageDatas.push(warpedData);
   }
@@ -331,13 +329,18 @@ export async function aiAlignAndStack(
   addLog(`All images processed. Stacking with mode: ${mode}...`);
   setProgress(1);
 
+  const validImagesToStack = alignedImageDatas.filter((img): img is Uint8ClampedArray => img !== null);
+  if (validImagesToStack.length < 1) {
+    throw new Error("No images could be successfully aligned to stack.");
+  }
+
   switch (mode) {
     case 'median':
-        return stackImagesMedian(alignedImageDatas, addLog);
+        return stackImagesMedian(validImagesToStack, addLog);
     case 'sigma':
-        return stackImagesSigmaClip(alignedImageDatas, addLog);
+        return stackImagesSigmaClip(validImagesToStack, addLog);
     case 'average':
     default:
-        return stackImagesAverage(alignedImageDatas, addLog);
+        return stackImagesAverage(validImagesToStack, addLog);
   }
 }
