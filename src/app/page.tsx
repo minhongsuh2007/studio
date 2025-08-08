@@ -632,18 +632,14 @@ export default function AstroStackerPage() {
 
   const deletePattern = (patternId: string) => {
     if (window.confirm(`Are you sure you want to delete the pattern "${patternId}"? This cannot be undone.`)) {
-      setLearnedPatterns(prevPatterns => {
-        const newPatterns = prevPatterns.filter(p => p.id !== patternId);
-        saveLearnedPatterns(newPatterns); // Persist the change
-        return newPatterns;
-      });
-  
-      setSelectedPatternIDs(prevSelected => {
-        const newSelectedIDs = new Set(prevSelected);
-        newSelectedIDs.delete(patternId);
-        return newSelectedIDs;
-      });
-  
+      const newPatterns = learnedPatterns.filter(p => p.id !== patternId);
+      const newSelectedIDs = new Set(selectedPatternIDs);
+      newSelectedIDs.delete(patternId);
+
+      setLearnedPatterns(newPatterns);
+      setSelectedPatternIDs(newSelectedIDs);
+      saveLearnedPatterns(newPatterns);
+
       // If the aggregated user pattern is deleted, clear the current manual selections
       if (patternId === 'aggregated-user-pattern') {
         setManualSelectedStars([]);
@@ -822,5 +818,3 @@ export default function AstroStackerPage() {
     </div>
   );
 }
-
-    
