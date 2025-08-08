@@ -505,14 +505,13 @@ export default function AstroStackerPage() {
 
       if (alignmentMethod === 'ai') {
         const activePatterns = learnedPatterns.filter(p => selectedPatternIDs.has(p.id));
-        
         addLog(`Using ${activePatterns.length} learned patterns for AI alignment.`);
 
         // Correctly serialize image data for the server action
         const serializableImageEntries = allImageStarData.map(entry => ({
             ...entry,
             imageData: entry.imageData ? {
-                data: Array.from(entry.imageData.data),
+                data: Array.from(entry.imageData.data), // Serialize Uint8ClampedArray
                 width: entry.imageData.width,
                 height: entry.imageData.height
             } : null
@@ -643,19 +642,19 @@ export default function AstroStackerPage() {
 
   const deletePattern = (patternId: string) => {
     if (window.confirm(`Are you sure you want to delete the pattern "${patternId}"? This cannot be undone.`)) {
-      const newPatterns = learnedPatterns.filter(p => p.id !== patternId);
-      const newSelectedIDs = new Set(selectedPatternIDs);
-      newSelectedIDs.delete(patternId);
+        const newPatterns = learnedPatterns.filter(p => p.id !== patternId);
+        const newSelectedIDs = new Set(selectedPatternIDs);
+        newSelectedIDs.delete(patternId);
 
-      setLearnedPatterns(newPatterns);
-      setSelectedPatternIDs(newSelectedIDs);
-      saveLearnedPatterns(newPatterns);
-      
-      if (patternId === 'aggregated-user-pattern') {
-        setManualSelectedStars([]);
-        setCanvasStars([]);
-      }
-      addLog(`Pattern ${patternId} deleted.`);
+        setLearnedPatterns(newPatterns);
+        setSelectedPatternIDs(newSelectedIDs);
+        saveLearnedPatterns(newPatterns);
+        
+        if (patternId === 'aggregated-user-pattern') {
+            setManualSelectedStars([]);
+            setCanvasStars([]);
+        }
+        addLog(`Pattern ${patternId} deleted.`);
     }
   };
 
