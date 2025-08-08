@@ -327,55 +327,97 @@ export default function AstroStackerPage() {
   };
 
   const findNearbyStarCenter = (
-      imageData: ImageData,
-      clickX: number,
-      clickY: number,
-      searchRadius: number = 15
+    imageData: ImageData,
+    clickX: number,
+    clickY: number,
+    searchRadius: number = 20
   ): Star | null => {
       const { data, width, height } = imageData;
+      const getBrightness = (idx: number) => 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
+  
+      // 1. Find the brightest point within the search radius
       const startX = Math.max(0, Math.round(clickX - searchRadius));
       const endX = Math.min(width, Math.round(clickX + searchRadius));
       const startY = Math.max(0, Math.round(clickY - searchRadius));
       const endY = Math.min(height, Math.round(clickY + searchRadius));
-
-      let maxBrightness = 0;
+  
+      let maxBrightness = -1;
+      let peakX = -1, peakY = -1;
+  
       for (let y = startY; y < endY; y++) {
           for (let x = startX; x < endX; x++) {
-              const idx = (y * width + x) * 4;
-              const brightness = 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
-              if (brightness > maxBrightness) {
-                  maxBrightness = brightness;
+              const distSq = (x - clickX)**2 + (y - clickY)**2;
+              if (distSq <= searchRadius**2) {
+                  const idx = (y * width + x) * 4;
+                  const brightness = getBrightness(idx);
+                  if (brightness > maxBrightness) {
+                      maxBrightness = brightness;
+                      peakX = x;
+                      peakY = y;
+                  }
               }
           }
       }
-
-      const threshold = maxBrightness * 0.7; // Threshold for pixels belonging to the star
+  
+      if (peakX === -1) return null; // No point found
+  
+      // 2. Perform a flood fill (BFS) from the peak to find the whole star blob
+      const threshold = maxBrightness * 0.5; // Pixels must be at least 50% of peak brightness
+      const queue: [number, number][] = [[peakX, peakY]];
+      const visited = new Set<string>();
+      const blobPixels: {x: number, y: number, brightness: number}[] = [];
+      visited.add(`${peakX},${peakY}`);
+  
+      while(queue.length > 0) {
+          const [cx, cy] = queue.shift()!;
+          const cIdx = (cy * width + cx) * 4;
+          const cBrightness = getBrightness(cIdx);
+  
+          if (cBrightness < threshold) continue;
+  
+          blobPixels.push({ x: cx, y: cy, brightness: cBrightness });
+  
+          // Check neighbors
+          for(let dy = -1; dy <= 1; dy++) {
+              for (let dx = -1; dx <= 1; dx++) {
+                  if (dx === 0 && dy === 0) continue;
+                  const nx = cx + dx;
+                  const ny = cy + dy;
+                  const nKey = `${nx},${ny}`;
+                  if (nx >= 0 && nx < width && ny >= 0 && ny < height && !visited.has(nKey)) {
+                      visited.add(nKey);
+                      // Add to queue if brightness is above a slightly more lenient threshold, to ensure we get the whole blob
+                      const nIdx = (ny * width + nx) * 4;
+                      if(getBrightness(nIdx) > threshold * 0.8) {
+                          queue.push([nx, ny]);
+                      }
+                  }
+              }
+          }
+      }
+  
+      // 3. Calculate the center of mass of the blob
+      if (blobPixels.length === 0) return null;
+  
       let weightedX = 0;
       let weightedY = 0;
       let totalBrightness = 0;
-      let pixelCount = 0;
-
-      for (let y = startY; y < endY; y++) {
-          for (let x = startX; x < endX; x++) {
-              const idx = (y * width + x) * 4;
-              const brightness = 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
-              if (brightness >= threshold) {
-                  weightedX += x * brightness;
-                  weightedY += y * brightness;
-                  totalBrightness += brightness;
-                  pixelCount++;
-              }
-          }
+      
+      for (const p of blobPixels) {
+          weightedX += p.x * p.brightness;
+          weightedY += p.y * p.brightness;
+          totalBrightness += p.brightness;
       }
-
+  
       if (totalBrightness > 0) {
           return {
               x: weightedX / totalBrightness,
               y: weightedY / totalBrightness,
               brightness: totalBrightness,
-              size: pixelCount,
+              size: blobPixels.length,
           };
       }
+  
       return null;
   };
   
