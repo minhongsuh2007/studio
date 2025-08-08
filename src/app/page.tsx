@@ -414,7 +414,9 @@ export default function AstroStackerPage() {
   const handleConfirmManualSelection = async () => {
     const imageToLearnFrom = allImageStarData.find(img => img.id === manualSelectImageId);
     
-    if (!imageToLearnFrom || !imageToLearnFrom.imageData || manualSelectedStars.length < 2) {
+    if (!imageToLearnFrom || !imageToLearnFrom.imageData) return;
+
+    if (manualSelectedStars.length < 2) {
       toast({ title: "Not Enough Stars", description: "Please select at least 2 stars to define a pattern.", variant: "destructive" });
       return;
     }
@@ -819,5 +821,3 @@ export default function AstroStackerPage() {
     </div>
   );
 }
-
-    
