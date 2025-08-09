@@ -2,6 +2,8 @@
 import type {Metadata} from 'next';
 import './globals.css';
 import { LanguageProvider } from '@/contexts/LanguageContext'; // Added import
+import Script from 'next/script';
+
 
 export const metadata: Metadata = {
   title: 'AstroStacker',
@@ -14,18 +16,29 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    // LanguageProvider wraps html to set lang attribute, but practically,
-    // it's better to wrap the body content for client-side state.
-    // For initial lang on <html>, it might be better handled via next-i18n routing.
-    // For this basic setup, LanguageProvider is inside <body> for client components.
     <html lang="en" className="dark">
       <head>
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+        <Script id="imagemagick-setup">
+          {`
+            var Module = {
+              locateFile: function(path, prefix) {
+                return '/' + path;
+              },
+              onRuntimeInitialized: function() {
+                window.ImageMagick = Module;
+                // Dispatch a custom event to notify that the WASM module is ready
+                document.dispatchEvent(new CustomEvent('wasmReady'));
+              }
+            };
+          `}
+        </Script>
+        <Script src="/imagemagick.js" strategy="lazyOnload" />
       </head>
       <body className="font-body antialiased">
-        <LanguageProvider> {/* Added LanguageProvider */}
+        <LanguageProvider>
           {children}
         </LanguageProvider>
       </body>

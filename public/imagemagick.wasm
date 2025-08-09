@@ -1,0 +1,4 @@
+
+// This file is a placeholder for the WebAssembly binary.
+// Its actual content is binary and very large, so it's represented by this comment.
+// In a real scenario, this file would be the compiled WASM from ImageMagick.
