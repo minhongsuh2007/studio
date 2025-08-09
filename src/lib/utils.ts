@@ -10,10 +10,8 @@ export function cn(...inputs: ClassValue[]) {
 
 // Initialize ImageMagick on module load. This is a crucial step.
 // The library needs to fetch its WASM file, so we provide the URL.
-const wasmUrl = new URL(
-  '@imagemagick/magick-wasm/magick.wasm',
-  import.meta.url
-).href;
+const wasmUrl = '/node_modules/@imagemagick/magick-wasm/dist/magick.wasm';
+
 
 initializeImageMagick(wasmUrl).catch(err => {
   console.error("Failed to initialize ImageMagick", err);
