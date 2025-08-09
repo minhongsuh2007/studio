@@ -159,7 +159,7 @@ export async function findMatchingStars({
   allDetectedStars,
   imageData,
   learnedPatterns,
-  matchThreshold = 0.75
+  matchThreshold = 0.85
 }: {
   allDetectedStars: Star[],
   imageData: SimpleImageData,
@@ -205,33 +205,53 @@ function compareCharacteristics(
   learnedPatterns: LearnedPattern[]
 ): number {
   let bestScore = 0;
-  
-  const rgbDistance = (c1: [number,number,number], c2: [number,number,number]) => {
-      const total1 = c1[0]+c1[1]+c1[2] + 1e-6;
-      const total2 = c2[0]+c2[1]+c2[2] + 1e-6;
-      const r1 = c1[0]/total1, g1 = c1[1]/total1, b1 = c1[2]/total1;
-      const r2 = c2[0]/total2, g2 = c2[1]/total2, b2 = c2[2]/total2;
-      return Math.sqrt((r1-r2)**2 + (g1-g2)**2 + (b1-b2)**2);
-  }
+  const BRIGHTNESS_TOLERANCE = 0.3; // 30% tolerance for brightness difference
+  const RGB_TOLERANCE = 0.2; // 20% tolerance for color difference
+
+  const getBrightness = (rgb: [number, number, number]) => 0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2];
+  const rgbDistance = (c1: [number, number, number], c2: [number, number, number]) => {
+      const total1 = c1[0] + c1[1] + c1[2] + 1e-6;
+      const total2 = c2[0] + c2[1] + c2[2] + 1e-6;
+      const r1 = c1[0] / total1, g1 = c1[1] / total1;
+      const r2 = c2[0] / total2, g2 = c2[1] / total2;
+      return Math.sqrt((r1 - r2) ** 2 + (g1 - g2) ** 2);
+  };
+
+  const starCenterBrightness = getBrightness(starChars.centerRGB);
+  const star3x3Brightness = getBrightness(starChars.patch3x3RGB);
+  const star5x5Brightness = getBrightness(starChars.patch5x5RGB);
 
   for (const pattern of learnedPatterns) {
     for (const learnedChar of pattern.characteristics) {
-      const brightDiff = Math.abs(starChars.avgBrightness - learnedChar.avgBrightness) / (learnedChar.avgBrightness + 1e-6);
-      const contrastDiff = Math.abs(starChars.avgContrast - learnedChar.avgContrast) / (learnedChar.avgContrast + 1e-6);
-      const fwhmDiff = Math.abs(starChars.fwhm - learnedChar.fwhm) / (learnedChar.fwhm + 1e-6);
-      const sizeDiff = Math.abs(starChars.pixelCount - learnedChar.pixelCount) / (learnedChar.pixelCount + 1e-6);
-      
+      // --- Stage 1: Brightness Filtering ---
+      const learnedCenterBrightness = getBrightness(learnedChar.centerRGB);
+      const learned3x3Brightness = getBrightness(learnedChar.patch3x3RGB);
+      const learned5x5Brightness = getBrightness(learnedChar.patch5x5RGB);
+
+      const centerBrightDiff = Math.abs(starCenterBrightness - learnedCenterBrightness) / (learnedCenterBrightness + 1e-6);
+      const bright3x3Diff = Math.abs(star3x3Brightness - learned3x3Brightness) / (learned3x3Brightness + 1e-6);
+      const bright5x5Diff = Math.abs(star5x5Brightness - learned5x5Brightness) / (learned5x5Brightness + 1e-6);
+
+      if (centerBrightDiff > BRIGHTNESS_TOLERANCE || bright3x3Diff > BRIGHTNESS_TOLERANCE || bright5x5Diff > BRIGHTNESS_TOLERANCE) {
+        continue; // Failed brightness test
+      }
+
+      // --- Stage 2: Color Filtering ---
       const centerRgbDiff = rgbDistance(starChars.centerRGB, learnedChar.centerRGB);
       const patch3RgbDiff = rgbDistance(starChars.patch3x3RGB, learnedChar.patch3x3RGB);
       const patch5RgbDiff = rgbDistance(starChars.patch5x5RGB, learnedChar.patch5x5RGB);
-      
-      // Give more weight to non-RGB features, then RGB features
-      const featureDiff = (0.2 * brightDiff + 0.1 * fwhmDiff + 0.1 * contrastDiff + 0.1 * sizeDiff);
-      const rgbFeatureDiff = (0.2 * centerRgbDiff + 0.15 * patch3RgbDiff + 0.15 * patch5RgbDiff);
-      
-      const totalDiff = featureDiff + rgbFeatureDiff;
-      const score = Math.max(0, 1 - totalDiff);
 
+      if (centerRgbDiff > RGB_TOLERANCE || patch3RgbDiff > RGB_TOLERANCE || patch5RgbDiff > RGB_TOLERANCE) {
+          continue; // Failed color test
+      }
+
+      // --- Passed both filters, now calculate score ---
+      // Lower difference is better. Score is 1 - average normalized difference.
+      const avgBrightDiff = (centerBrightDiff + bright3x3Diff + bright5x5Diff) / 3;
+      const avgRgbDiff = (centerRgbDiff + patch3RgbDiff + patch5RgbDiff) / 3;
+
+      const score = Math.max(0, 1 - (avgBrightDiff / BRIGHTNESS_TOLERANCE * 0.5 + avgRgbDiff / RGB_TOLERANCE * 0.5));
+      
       if (score > bestScore) {
         bestScore = score;
       }
