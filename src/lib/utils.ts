@@ -8,41 +8,22 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
-export const fileToDataURL = async (file: File): Promise<string> => {
-  // Check if ImageMagick is ready, but only if it's needed for the file type
-  const isStandardWebFormat = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'].includes(file.type);
-
-  if (isStandardWebFormat) {
-    // Use the fast, native FileReader for standard formats
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        if (e.target?.result) {
-          resolve(e.target.result as string);
-        } else {
-          reject(new Error("FileReader failed for standard image format."));
-        }
-      };
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
-  }
-
-  // For non-standard formats, wait for and use ImageMagick
-  if (!window.ImageMagick) {
-    return new Promise((resolve) => {
-      // Wait for the custom event that signals WASM is ready
-      document.addEventListener('wasmReady', () => {
-        resolve(processFileWithImageMagick(file));
-      }, { once: true });
-    });
-  }
-  
-  return processFileWithImageMagick(file);
+const processWithFileReader = (file: File): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      if (e.target?.result) {
+        resolve(e.target.result as string);
+      } else {
+        reject(new Error("FileReader failed for standard image format."));
+      }
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
 };
 
-
-async function processFileWithImageMagick(file: File): Promise<string> {
+const processFileWithImageMagick = async (file: File): Promise<string> => {
     const Module = window.ImageMagick;
     
     try {
@@ -51,17 +32,12 @@ async function processFileWithImageMagick(file: File): Promise<string> {
         const inPath = '/' + name;
         const outPath = '/output.jpg';
 
-        // Write the file to the virtual FS
         try { Module.FS_unlink(inPath); } catch (e) {}
         Module.FS_createDataFile('/', name, new Uint8Array(buffer), true, true);
         
-        // Execute the command: convert input.ext[0] output.jpg
-        // This attempts to extract the first frame (often the embedded preview)
-        // which is much faster than decoding the full RAW/TIFF.
         const args = ['convert', `${inPath}[0]`, outPath];
         Module.callMain(args);
         
-        // Read the result
         const outData = Module.FS_readFile(outPath);
         const blob = new Blob([outData], { type: 'image/jpeg' });
         
@@ -74,21 +50,32 @@ async function processFileWithImageMagick(file: File): Promise<string> {
 
     } catch (error) {
         console.error("Error processing file with ImageMagick:", error);
-        // Fallback to simple FileReader for basic types if Magick fails (as a safety net)
         if (['image/jpeg', 'image/png', 'image/gif'].includes(file.type)) {
-            return new Promise((resolve, reject) => {
-                const reader = new FileReader();
-                reader.onload = (e) => {
-                    if (e.target?.result) {
-                        resolve(e.target.result as string);
-                    } else {
-                        reject(new Error("Fallback FileReader failed."));
-                    }
-                };
-                reader.onerror = reject;
-                reader.readAsDataURL(file);
-            });
+            return processWithFileReader(file);
         }
         throw new Error(`Failed to process file ${file.name} with ImageMagick.`);
     }
 }
+
+
+export const fileToDataURL = (file: File): Promise<string> => {
+  const isStandardWebFormat = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'].includes(file.type);
+
+  if (isStandardWebFormat) {
+    return processWithFileReader(file);
+  }
+
+  // For non-standard formats, handle ImageMagick loading
+  return new Promise((resolve, reject) => {
+    // If ImageMagick is already loaded, use it immediately.
+    if (window.ImageMagick) {
+      processFileWithImageMagick(file).then(resolve).catch(reject);
+    } else {
+      // Otherwise, wait for the wasmReady event.
+      const handleWasmReady = () => {
+        processFileWithImageMagick(file).then(resolve).catch(reject);
+      };
+      document.addEventListener('wasmReady', handleWasmReady, { once: true });
+    }
+  });
+};
