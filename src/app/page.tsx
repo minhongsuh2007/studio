@@ -7,7 +7,7 @@ import * as tf from '@tensorflow/tfjs';
 import { Button } from '@/components/ui/button';
 import { fileToDataURL } from '@/lib/utils';
 import { useLanguage } from '@/contexts/LanguageContext';
-import { alignAndStack, detectStars, type Star, type StackingMode } from '@/lib/astro-align';
+import { alignAndStack, detectBrightBlobs, type Star, type StackingMode } from '@/lib/astro-align';
 import { aiClientAlignAndStack } from '@/lib/ai-client-stack';
 import { extractCharacteristicsFromImage, findMatchingStars, type LearnedPattern, type SimpleImageData, type StarCharacteristics, predictSingle, buildModel } from '@/lib/ai-star-matcher';
 import type { ModelWeightData } from '@/lib/genkit-types';
@@ -245,10 +245,10 @@ export default function AstroStackerPage() {
       ctx.drawImage(imgEl, 0, 0, canvas.width, canvas.height);
       
       const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const detectedStars = detectStars(imageData, canvas.width, canvas.height, 60);
+      const detectedStars = detectBrightBlobs(imageData, canvas.width, canvas.height);
       
       finalUpdatedEntry = { ...finalUpdatedEntry, imageData, detectedStars, isAnalyzed: true };
-      addLog(`[ANALYZE SUCCESS] Found ${detectedStars.length} stars in ${entryToAnalyze.file.name}.`);
+      addLog(`[ANALYZE SUCCESS] Found ${detectedStars.length} potential star candidates in ${entryToAnalyze.file.name}.`);
   
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -656,7 +656,7 @@ export default function AstroStackerPage() {
             canvas.height = dimensions.height;
             ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
             const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-            const detectedStars = detectStars(imageData, canvas.width, canvas.height, 60);
+            const detectedStars = detectBrightBlobs(imageData, canvas.width, canvas.height);
             return { id: `test-${file.name}-${Date.now()}`, file, previewUrl, isAnalyzing: false, isAnalyzed: true, analysisDimensions: dimensions, imageData, detectedStars };
         } catch (e) {
             return null;
@@ -686,7 +686,7 @@ export default function AstroStackerPage() {
     // This timeout is just to allow the UI to update to the "loading" state before a potentially long-running operation.
     setTimeout(async () => {
         const {data, width, height} = testImage.imageData!;
-        const initialCandidates = detectStars(testImage.imageData!, width, height, 60);
+        const initialCandidates = detectBrightBlobs(testImage.imageData!, width, height);
 
         const { matchedStars, logs } = await findMatchingStars({
           imageData: {data: Array.from(data), width, height},

@@ -20,16 +20,17 @@ export type Transform = {
 // --- STAGE 1: ROBUST STAR DETECTION ---
 
 /**
- * Detects stars using a simple blob detection and center-of-mass calculation.
+ * Detects bright blobs of pixels to be used as star candidates.
+ * A blob is a connected component of pixels where R, G, and B values are all above a certain threshold.
  */
-export function detectStars(
+export function detectBrightBlobs(
   imageData: ImageData,
   width: number,
   height: number,
-  threshold: number
+  threshold: number = 200 // Default to 200 as per new logic
 ): Star[] {
-    const gray = toGrayscale(imageData);
-    const visited = new Uint8Array(gray.length);
+    const { data } = imageData;
+    const visited = new Uint8Array(width * height);
     const stars: Star[] = [];
     const minSize = 3; 
     const maxSize = 500;
@@ -50,9 +51,14 @@ export function detectStars(
         }
         return neighbors;
     };
+    
+    const isPixelAboveThreshold = (idx: number) => {
+        const base = idx * 4;
+        return data[base] > threshold && data[base + 1] > threshold && data[base + 2] > threshold;
+    }
 
-    for (let i = 0; i < gray.length; i++) {
-        if (visited[i] || gray[i] < threshold) continue;
+    for (let i = 0; i < width * height; i++) {
+        if (visited[i] || !isPixelAboveThreshold(i)) continue;
 
         const queue = [i];
         visited[i] = 1;
@@ -63,7 +69,7 @@ export function detectStars(
             blobPixels.push(p);
 
             for (const n of getNeighbors(p)) {
-                if (!visited[n] && gray[n] >= threshold - 20) {
+                if (!visited[n] && isPixelAboveThreshold(n)) {
                     visited[n] = 1;
                     queue.push(n);
                 }
@@ -77,7 +83,8 @@ export function detectStars(
         let weightedY = 0;
 
         for (const p of blobPixels) {
-            const brightness = gray[p];
+            const b_idx = p * 4;
+            const brightness = (data[b_idx] + data[b_idx+1] + data[b_idx+2]) / 3;
             const x = p % width;
             const y = Math.floor(p / width);
             totalBrightness += brightness;
@@ -97,7 +104,6 @@ export function detectStars(
 
     return stars.sort((a, b) => b.brightness - a.brightness);
 }
-
 
 function toGrayscale(imageData: ImageData): Uint8Array {
   const len = imageData.data.length / 4;

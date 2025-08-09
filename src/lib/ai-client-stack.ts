@@ -6,7 +6,7 @@ import type * as tf from '@tensorflow/tfjs';
 import type { StackingMode, Transform } from '@/lib/astro-align';
 import { findMatchingStars } from '@/lib/ai-star-matcher';
 import type { Star } from '@/lib/astro-align';
-import { detectStars } from './astro-align';
+import { detectBrightBlobs } from './astro-align';
 
 // This type definition is duplicated from page.tsx to avoid circular dependencies.
 interface ImageQueueEntry {
@@ -360,7 +360,7 @@ export async function aiClientAlignAndStack(
       if (!entry.imageData) continue;
       
       const { width, height } = entry.analysisDimensions;
-      const initialCandidates = detectStars(entry.imageData, width, height, 60);
+      const initialCandidates = detectBrightBlobs(entry.imageData, width, height);
 
       const { matchedStars, logs } = await findMatchingStars({
           imageData: { data: Array.from(entry.imageData.data), width, height },
