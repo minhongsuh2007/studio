@@ -25,6 +25,16 @@ const nextConfig: NextConfig = {
       '6000-firebase-studio-1748835848084.cluster-zkm2jrwbnbd4awuedc2alqxrpk.cloudworkstations.dev',
     ],
   },
+  webpack: (config, { isServer }) => {
+    // This is the correct way to mock modules that shouldn't be bundled on the client.
+    if (!isServer) {
+        config.resolve.fallback = {
+            ...config.resolve.fallback,
+            fs: false, // This tells webpack to replace `fs` with an empty module on the client side.
+        };
+    }
+    return config;
+  },
 };
 
 export default nextConfig;
