@@ -741,16 +741,22 @@ export default function AstroStackerPage() {
 
                 for (const imported of importedPatterns) {
                     if (newPatternsMap.has(imported.id)) {
+                        // Accumulate characteristics if pattern exists
+                        const existingPattern = newPatternsMap.get(imported.id)!;
+                        existingPattern.characteristics.push(...imported.characteristics);
+                        existingPattern.sourceImageIds = Array.from(new Set([...existingPattern.sourceImageIds, ...imported.sourceImageIds]));
+                        existingPattern.timestamp = Date.now();
                         updatedCount++;
                     } else {
+                        // Add new pattern
+                        newPatternsMap.set(imported.id, imported);
                         newCount++;
                     }
-                    newPatternsMap.set(imported.id, imported);
                 }
                 
                 const finalPatterns = Array.from(newPatternsMap.values());
                 saveLearnedPatterns(finalPatterns);
-                addLog(`Import complete: ${newCount} new patterns added, ${updatedCount} existing patterns updated.`);
+                addLog(`Import complete: ${newCount} new patterns added, ${updatedCount} existing patterns updated by accumulating data.`);
                 window.alert(t('patternsImportedSuccess', { new: newCount, updated: updatedCount }));
                 return finalPatterns;
             });
