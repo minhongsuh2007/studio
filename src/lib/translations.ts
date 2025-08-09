@@ -118,8 +118,8 @@ export const translations: Translations = {
     avgBrightnessLabel: "Avg Brightness",
     avgContrastLabel: "Avg Contrast",
     avgFwhmLabel: "Avg FWHM",
-    learningModeCardTitle: "Pattern Learning Mode",
-    learningModeCardDescription: "Activate to manually teach the system reference star patterns for improved alignment. Patterns are stored in your browser. Select patterns using checkboxes to apply them during stacking.",
+    learningModeCardTitle: "Pattern Learning & Data Management",
+    learningModeCardDescription: "Manually teach the AI star patterns for better alignment. You can also export your learned patterns to a file for backup or sharing, and import patterns from a file.",
     allLearnedPatternsListTitle: "Stored Patterns",
     selectPatternCheckboxLabel: "Select pattern from {fileName} for stacking/testing",
     deletePatternButtonText: "Delete",
@@ -159,7 +159,14 @@ export const translations: Translations = {
     tutorialStep4Title: "Step 4: Configure and Stack",
     tutorialStep4Content: "Below the alignment method, you can configure the 'Stacking Mode' (Average, Median, Sigma Clip) which determines how pixel values are combined. When you're ready, click the main 'Stack Images' button. The app will align each image and then combine them, showing progress.",
     tutorialStep5Title: "Step 5: Post-Process and Download",
-    tutorialStep5Content: "After stacking is complete, the final image will appear. Click 'Finalize & Download Image' to open the post-processing editor. Here, you can adjust Brightness, Exposure, and Saturation to enhance your image. When you are satisfied, click the 'Download Image' button to save the result to your computer."
+    tutorialStep5Content: "After stacking is complete, the final image will appear. Click 'Finalize & Download Image' to open the post-processing editor. Here, you can adjust Brightness, Exposure, and Saturation to enhance your image. When you are satisfied, click the 'Download Image' button to save the result to your computer.",
+
+    exportPatternsButton: "Export Patterns",
+    importPatternsButton: "Import Patterns",
+    importPatternsDropzone: "Drop pattern file here",
+    noPatternsToExport: "No learned patterns to export.",
+    patternsImportedSuccess: "Import successful. Added {new} new patterns and updated {updated} existing ones.",
+    patternImportFailed: "Pattern import failed"
   },
   ko: {
     appTitle: '별하늘',
@@ -266,8 +273,8 @@ export const translations: Translations = {
     avgBrightnessLabel: "평균 밝기",
     avgContrastLabel: "평균 대비",
     avgFwhmLabel: "평균 FWHM",
-    learningModeCardTitle: "패턴 학습 모드",
-    learningModeCardDescription: "수동으로 시스템에 참조 별 패턴을 가르쳐 정렬을 개선하려면 활성화하세요. 패턴은 브라우저에 저장됩니다. 체크박스를 사용하여 패턴을 선택하고 스태킹 중에 적용하세요.",
+    learningModeCardTitle: "패턴 학습 및 데이터 관리",
+    learningModeCardDescription: "수동으로 AI에게 별 패턴을 학습시켜 정렬을 개선합니다. 학습된 패턴을 파일로 내보내 백업하거나 공유하고, 파일에서 패턴을 가져올 수도 있습니다.",
     allLearnedPatternsListTitle: "저장된 패턴",
     selectPatternCheckboxLabel: "스태킹/테스트를 위해 {fileName}에서 패턴 선택",
     deletePatternButtonText: "삭제",
@@ -307,7 +314,14 @@ export const translations: Translations = {
     tutorialStep4Title: "4단계: 설정 및 스태킹",
     tutorialStep4Content: "정렬 방법 아래에서 픽셀 값을 결합하는 방법을 결정하는 '스태킹 모드'(평균, 중앙값, 시그마 클립)를 구성할 수 있습니다. 준비가 되면 메인 '이미지 스태킹' 버튼을 클릭합니다. 앱이 각 이미지를 정렬한 다음 결합하며 진행 상황을 보여줍니다.",
     tutorialStep5Title: "5단계: 후처리 및 다운로드",
-    tutorialStep5Content: "스태킹이 완료되면 최종 이미지가 나타납니다. '이미지 확정 및 다운로드'를 클릭하여 후처리 편집기를 엽니다. 여기에서 밝기, 노출 및 채도를 조정하여 이미지를 향상시킬 수 있습니다. 만족스러우면 '이미지 다운로드' 버튼을 클릭하여 결과를 컴퓨터에 저장하십시오."
+    tutorialStep5Content: "스태킹이 완료되면 최종 이미지가 나타납니다. '이미지 확정 및 다운로드'를 클릭하여 후처리 편집기를 엽니다. 여기에서 밝기, 노출 및 채도를 조정하여 이미지를 향상시킬 수 있습니다. 만족스러우면 '이미지 다운로드' 버튼을 클릭하여 결과를 컴퓨터에 저장하십시오.",
+    
+    exportPatternsButton: "학습 데이터 저장",
+    importPatternsButton: "학습 데이터 불러오기",
+    importPatternsDropzone: "여기에 패턴 파일(.json)을 드롭하세요",
+    noPatternsToExport: "내보낼 학습된 패턴이 없습니다.",
+    patternsImportedSuccess: "가져오기 성공. {new}개의 새 패턴 추가, {updated}개의 기존 패턴 업데이트.",
+    patternImportFailed: "패턴 가져오기 실패"
   },
   zh: {
     appTitle: '天文图像叠加器 (AstroStacker)',
@@ -414,8 +428,8 @@ export const translations: Translations = {
     avgBrightnessLabel: "平均亮度",
     avgContrastLabel: "平均对比度",
     avgFwhmLabel: "平均半峰全宽",
-    learningModeCardTitle: "模式学习模式",
-    learningModeCardDescription: "激活以手动教导系统参考星点模式以改善对齐。模式存储在您的浏览器中。使用复选框选择模式以在叠加期间应用它们。",
+    learningModeCardTitle: "模式学习和数据管理",
+    learningModeCardDescription: "手动教导AI星点模式以改善对齐。您还可以将学习的模式导出到文件进行备份或共享，并从文件导入模式。",
     allLearnedPatternsListTitle: "存储的模式",
     selectPatternCheckboxLabel: "从{fileName}选择用于叠加/测试的模式",
     deletePatternButtonText: "删除",
@@ -455,7 +469,13 @@ export const translations: Translations = {
     tutorialStep4Title: "第四步：配置和叠加",
     tutorialStep4Content: "在对齐方法下方，您可以配置“叠加模式”（平均、中位数、西格玛裁剪），它决定了像素值的组合方式。准备好后，单击主“叠加图像”按钮。应用程序将对齐每个图像，然后将它们组合起来，并显示进度。",
     tutorialStep5Title: "第五步：后期处理和下载",
-    tutorialStep5Content: "叠加完成后，将显示最终图像。单击“完成并下载图像”以打开后期处理编辑器。在这里，您可以调整亮度、曝光和饱和度以增强图像。满意后，单击“下载图像”按钮将结果保存到您的计算机。"
+    tutorialStep5Content: "叠加完成后，将显示最终图像。单击“完成并下载图像”以打开后期处理编辑器。在这里，您可以调整亮度、曝光和饱和度以增强图像。满意后，单击“下载图像”按钮将结果保存到您的计算机。",
+    exportPatternsButton: "导出模式",
+    importPatternsButton: "导入模式",
+    importPatternsDropzone: "在此处放置模式文件",
+    noPatternsToExport: "没有可导出的学习模式。",
+    patternsImportedSuccess: "导入成功。已添加 {new} 个新模式并更新 {updated} 个现有模式。",
+    patternImportFailed: "模式导入失败"
   },
   ja: {
     appTitle: 'アストロスタッカー',
@@ -553,8 +573,8 @@ export const translations: Translations = {
     avgBrightnessLabel: "平均輝度",
     avgContrastLabel: "平均コントラスト",
     avgFwhmLabel: "平均FWHM",
-    learningModeCardTitle: "パターン学習モード",
-    learningModeCardDescription: "手動でシステムに参照星のパターンを教えて、アライメントを改善するために有効にします。パターンはブラウザに保存されます。チェックボックスを使用してパターンを選択し、スタッキング中に適用します。",
+    learningModeCardTitle: "パターン学習とデータ管理",
+    learningModeCardDescription: "手動でAIに星のパターンを教えてアライメントを改善します。学習したパターンをファイルにエクスポートしてバックアップや共有をしたり、ファイルからパターンをインポートしたりすることもできます。",
     allLearnedPatternsListTitle: "保存されたパターン",
     selectPatternCheckboxLabel: "{fileName} からスタッキング/テスト用のパターンを選択",
     deletePatternButtonText: "削除",
@@ -593,7 +613,14 @@ export const translations: Translations = {
     tutorialStep4Title: "ステップ4：設定とスタック",
     tutorialStep4Content: "アライメント方法の下で、ピクセル値の結合方法を決定する「スタッキングモード」（平均、中央値、シグマクリップ）を設定できます。準備ができたら、メインの「画像をスタック」ボタンをクリックします。アプリは各画像を整列させてから結合し、進行状況を表示します。",
     tutorialStep5Title: "ステップ5：後処理とダウンロード",
-    tutorialStep5Content: "スタッキングが完了すると、最終的な画像が表示されます。「画像を最終処理してダウンロード」をクリックして後処理エディタを開きます。ここで、明るさ、露出、彩度を調整して画像を強調できます。満足したら、「画像をダウンロード」ボタンをクリックして結果をコンピュータに保存します。"
+    tutorialStep5Content: "スタッキングが完了すると、最終的な画像が表示されます。「画像を最終処理してダウンロード」をクリックして後処理エディタを開きます。ここで、明るさ、露出、彩度を調整して画像を強調できます。満足したら、「画像をダウンロード」ボタンをクリックして結果をコンピュータに保存します。",
+    
+    exportPatternsButton: "パターンをエクスポート",
+    importPatternsButton: "パターンをインポート",
+    importPatternsDropzone: "ここにパターンファイルをドロップ",
+    noPatternsToExport: "エクスポートする学習済みパターンがありません。",
+    patternsImportedSuccess: "インポートに成功しました。新しいパターン{new}個を追加し、既存のパターン{updated}個を更新しました。",
+    patternImportFailed: "パターンのインポートに失敗しました"
   }
 };
 

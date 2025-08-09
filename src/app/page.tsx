@@ -16,7 +16,7 @@ import { ImagePreview } from '@/components/astrostacker/ImagePreview';
 import { ImagePostProcessEditor } from '@/components/astrostacker/ImagePostProcessEditor';
 import { TutorialDialog } from '@/components/astrostacker/TutorialDialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Star as StarIcon, ListChecks, CheckCircle, RefreshCcw, Edit3, Loader2, Orbit, Trash2, Wand2, ShieldOff, Layers, Baseline, X, AlertTriangle, BrainCircuit, TestTube2, Eraser } from 'lucide-react';
+import { Star as StarIcon, ListChecks, CheckCircle, RefreshCcw, Edit3, Loader2, Orbit, Trash2, Wand2, ShieldOff, Layers, Baseline, X, AlertTriangle, BrainCircuit, TestTube2, Eraser, Download, Upload } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
@@ -698,6 +698,75 @@ export default function AstroStackerPage() {
         addLog(`Pattern ${patternId} deleted.`);
     }
   };
+  
+  const handleExportPatterns = () => {
+    if (learnedPatterns.length === 0) {
+        window.alert(t('noPatternsToExport'));
+        return;
+    }
+    const dataStr = JSON.stringify(learnedPatterns, null, 2);
+    const blob = new Blob([dataStr], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'astrostacker_patterns.json';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    addLog("Exported all learned patterns to astrostacker_patterns.json");
+  };
+
+  const handleImportPatterns = (files: File[]) => {
+    if (files.length === 0) return;
+    const file = files[0];
+    const reader = new FileReader();
+
+    reader.onload = (event) => {
+        try {
+            const content = event.target?.result as string;
+            if (!content) throw new Error("File is empty or could not be read.");
+            
+            const importedPatterns: LearnedPattern[] = JSON.parse(content);
+
+            // Basic validation
+            if (!Array.isArray(importedPatterns) || importedPatterns.some(p => !p.id || !p.characteristics)) {
+                throw new Error("Invalid pattern file format.");
+            }
+
+            setLearnedPatterns(prev => {
+                const newPatternsMap = new Map(prev.map(p => [p.id, p]));
+                let updatedCount = 0;
+                let newCount = 0;
+
+                for (const imported of importedPatterns) {
+                    if (newPatternsMap.has(imported.id)) {
+                        updatedCount++;
+                    } else {
+                        newCount++;
+                    }
+                    newPatternsMap.set(imported.id, imported);
+                }
+                
+                const finalPatterns = Array.from(newPatternsMap.values());
+                saveLearnedPatterns(finalPatterns);
+                addLog(`Import complete: ${newCount} new patterns added, ${updatedCount} existing patterns updated.`);
+                window.alert(t('patternsImportedSuccess', { new: newCount, updated: updatedCount }));
+                return finalPatterns;
+            });
+
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : "Unknown error";
+            addLog(`[ERROR] Pattern import failed: ${errorMessage}`);
+            window.alert(`${t('patternImportFailed')}: ${errorMessage}`);
+        }
+    };
+    reader.onerror = () => {
+      addLog('[ERROR] Failed to read pattern file.');
+      window.alert(t('patternImportFailed'));
+    };
+    reader.readAsText(file);
+  };
 
 
   const imageForAnnotation = allImageStarData.find(img => img.id === manualSelectImageId);
@@ -818,6 +887,10 @@ export default function AstroStackerPage() {
             <Card>
                 <CardHeader><CardTitle className="flex items-center"><BrainCircuit className="mr-2 h-5 w-5" />{t('learningModeCardTitle')}</CardTitle><CardDescription>{t('learningModeCardDescription')}</CardDescription></CardHeader>
                 <CardContent>
+                    <div className="grid grid-cols-2 gap-4 mb-4">
+                      <Button onClick={handleExportPatterns} disabled={learnedPatterns.length === 0}><Download className="mr-2 h-4 w-4" />{t('exportPatternsButton')}</Button>
+                      <ImageUploadArea onFilesAdded={handleImportPatterns} isProcessing={false} multiple={false} accept={{ 'application/json': ['.json'] }} dropzoneText={t('importPatternsDropzone')} buttonText={t('importPatternsButton')} />
+                    </div>
                     <h4 className="font-semibold mb-2">{t('allLearnedPatternsListTitle')}</h4>
                     {learnedPatterns.length === 0 ? (<p className="text-sm text-muted-foreground">{t('noPatternLearnedYetInfo')}</p>) : (
                         <ScrollArea className="h-40 border rounded-md p-2">
