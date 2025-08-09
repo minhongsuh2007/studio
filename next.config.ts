@@ -26,12 +26,11 @@ const nextConfig: NextConfig = {
     ],
   },
   webpack: (config, { isServer }) => {
-    // This is the correct way to mock modules that shouldn't be bundled on the client.
     if (!isServer) {
         config.resolve.fallback = {
             ...config.resolve.fallback,
-            fs: false, // This tells webpack to replace `fs` with an empty module on the client side.
-            '@tensorflow/tfjs-node': false, // Exclude tfjs-node from client-side bundle.
+            fs: false, 
+            '@tensorflow/tfjs-node': false,
         };
     }
     return config;
