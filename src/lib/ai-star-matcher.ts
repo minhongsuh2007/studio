@@ -158,40 +158,6 @@ export async function extractCharacteristicsFromImage({
 
 // --- New Star Matching Logic with TFJS ---
 
-function isStarByBrightnessRelationship(
-    imageData: SimpleImageData, 
-    grayData: Uint8Array, 
-    x: number, 
-    y: number,
-    ratio: number // e.g. 1.1 means center must be 10% brighter than surroundings
-): boolean {
-    const { width } = imageData;
-    const centerIdx = y * width + x;
-    const centerBrightness = grayData[centerIdx];
-
-    let surroundingBrightnessSum = 0;
-    let count = 0;
-    const radius = 1;
-
-    for (let j = -radius; j <= radius; j++) {
-        for (let i = -radius; i <= radius; i++) {
-            if (i === 0 && j === 0) continue;
-            
-            const px = x + i;
-            const py = y + j;
-            const pIdx = py * width + px;
-            surroundingBrightnessSum += grayData[pIdx];
-            count++;
-        }
-    }
-    
-    if (count === 0) return false;
-
-    const avgSurroundingBrightness = surroundingBrightnessSum / count;
-
-    return centerBrightness > avgSurroundingBrightness * ratio && avgSurroundingBrightness > 10;
-}
-
 function mean(arr: number[]) {
   if (!arr || arr.length === 0) return 0;
   return arr.reduce((a, b) => a + b, 0) / arr.length;
@@ -233,45 +199,30 @@ export function predictSingle(model: tf.LayersModel, means: number[], stds: numb
 
 export async function findMatchingStars({
   imageData,
+  candidates,
   model,
   normalization,
 }: {
   imageData: SimpleImageData,
+  candidates: Star[],
   model: tf.LayersModel,
   normalization: { means: number[], stds: number[] },
 }): Promise<{matchedStars: Star[], logs: string[]}> {
     const logs: string[] = [];
     try {
-        const { width, height } = imageData;
-        const grayData = toGrayscale(imageData);
-        if (!grayData) {
-            logs.push("Error: Failed to convert image to grayscale.");
+        if (candidates.length === 0) {
+            logs.push("No initial candidates provided.");
             return { matchedStars: [], logs };
         }
 
-        const candidateStars: Star[] = [];
+        logs.push(`Received ${candidates.length} initial candidates. Filtering with AI model...`);
 
-        // 1. Find raw candidates based on brightness and blob characteristics
-        for (let y = 1; y < height - 1; y++) {
-            for (let x = 1; x < width - 1; x++) {
-                if (isStarByBrightnessRelationship(imageData, grayData, x, y, 1.1)) {
-                    const brightness = grayData[y * width + x];
-                    candidateStars.push({ x, y, brightness, size: 1 });
-                }
-            }
-        }
-        logs.push(`Found ${candidateStars.length} raw candidates.`);
-
-        if (candidateStars.length === 0) {
-            return { matchedStars: [], logs };
-        }
-
-        // 2. Extract features for all candidates
-        const allCharacteristics = (await extractCharacteristicsFromImage({ stars: candidateStars, imageData }))
-            .map((char, index) => ({ char, star: candidateStars[index] }))
+        // 1. Extract features for all candidates
+        const allCharacteristics = (await extractCharacteristicsFromImage({ stars: candidates, imageData }))
+            .map((char, index) => ({ char, star: candidates[index] }))
             .filter(item => item.char);
 
-        // 3. Predict with the model
+        // 2. Predict with the model
         const matchedStars: Star[] = [];
         for (const { char, star } of allCharacteristics) {
             const features = featuresFromCharacteristics(char);
@@ -293,3 +244,5 @@ export async function findMatchingStars({
         throw new Error(`A critical error occurred in findMatchingStars: ${errorMessage}`);
     }
 }
+
+    

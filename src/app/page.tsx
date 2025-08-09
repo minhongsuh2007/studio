@@ -686,8 +686,11 @@ export default function AstroStackerPage() {
     // This timeout is just to allow the UI to update to the "loading" state before a potentially long-running operation.
     setTimeout(async () => {
         const {data, width, height} = testImage.imageData!;
+        const initialCandidates = detectStars(testImage.imageData!, width, height, 60);
+
         const { matchedStars, logs } = await findMatchingStars({
           imageData: {data: Array.from(data), width, height},
+          candidates: initialCandidates,
           model: trainedModel,
           normalization: modelNormalization,
         });
@@ -1111,5 +1114,7 @@ export default function AstroStackerPage() {
     </div>
   );
 }
+
+    
 
     
