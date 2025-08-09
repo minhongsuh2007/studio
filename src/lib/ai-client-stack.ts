@@ -355,8 +355,12 @@ export async function aiClientAlignAndStack(
           imageData: { data: Array.from(entry.imageData.data), width, height },
           learnedPatterns
       });
-      if (matchedStars.length > 1) {
-          allImageStars.push({ imageId: entry.id, stars: matchedStars });
+      
+      const top10Stars = matchedStars.sort((a, b) => b.brightness - a.brightness).slice(0, 10);
+      
+      if (top10Stars.length > 1) {
+          allImageStars.push({ imageId: entry.id, stars: top10Stars });
+          addLog(`[AI-CLIENT] Image ${entry.file.name}: Found ${top10Stars.length} high-confidence stars.`);
       } else {
         addLog(`[AI-CLIENT] Image ${entry.file.name} has < 2 matched stars, excluding from pair search.`);
       }
