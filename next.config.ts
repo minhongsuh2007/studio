@@ -30,7 +30,6 @@ const nextConfig: NextConfig = {
         config.resolve.fallback = {
             ...config.resolve.fallback,
             fs: false, 
-            '@tensorflow/tfjs-node': false,
         };
     }
     return config;

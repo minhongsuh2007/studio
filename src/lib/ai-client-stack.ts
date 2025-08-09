@@ -1,3 +1,4 @@
+
 // @ts-nocheck
 'use client';
 
@@ -112,7 +113,7 @@ function findBestGlobalPair(allImageStars: { imageId: string; stars: Star[] }[],
                         
                         for (const targetPair of checkPairs) {
                             const targetDist = Math.hypot(targetPair[1].x - targetPair[0].x, targetPair[1].y - targetPair[0].y);
-                            const targetAngle = Math.atan2(targetPair[1].y - targetPair[0].y, targetPair[1].x - targetPair[0].y);
+                            const targetAngle = Math.atan2(targetPair[1].y - targetPair[0].y, targetPair[1].x - targetPair[0].x);
 
                             const distError = Math.abs(targetDist - refDist) / refDist;
                             const angleError = Math.abs(targetAngle - refAngle);
