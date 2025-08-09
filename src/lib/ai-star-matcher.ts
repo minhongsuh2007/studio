@@ -159,12 +159,10 @@ export async function findMatchingStars({
   allDetectedStars,
   imageData,
   learnedPatterns,
-  matchThreshold = 0.85
 }: {
   allDetectedStars: Star[],
   imageData: SimpleImageData,
   learnedPatterns: LearnedPattern[],
-  matchThreshold?: number
 }): Promise<{matchedStars: Star[], logs: string[]}> {
   const logs: string[] = [];
   try {
@@ -177,20 +175,35 @@ export async function findMatchingStars({
         return { matchedStars: [], logs };
     }
 
-    const matchedStars: Star[] = [];
+    let matchedStars: Star[] = [];
+    let brightnessTolerance = 0.2; // Start with a strict 20%
+    let rgbTolerance = 0.15; // Start with a strict 15%
+    const MAX_BRIGHTNESS_TOLERANCE = 0.8;
+    const MAX_RGB_TOLERANCE = 0.7;
+    let attempts = 0;
 
-    for (const star of allDetectedStars) {
-        const starChars = getStarCharacteristics(star, imageData, grayData);
-        if (!starChars) continue;
-        
-        const matchScore = compareCharacteristics(starChars, learnedPatterns);
-        
-        if (matchScore >= matchThreshold) {
-            matchedStars.push(star);
-        }
+    while (matchedStars.length < 10 && attempts < 10) {
+      matchedStars = []; // Reset for each attempt
+      logs.push(`[AI-MATCH] Attempt #${attempts + 1}: Finding matches with Brightness Tolerance=${(brightnessTolerance*100).toFixed(0)}%, RGB Tolerance=${(rgbTolerance*100).toFixed(0)}%`);
+
+      for (const star of allDetectedStars) {
+          const starChars = getStarCharacteristics(star, imageData, grayData);
+          if (!starChars) continue;
+          
+          if (compareCharacteristics(starChars, learnedPatterns, brightnessTolerance, rgbTolerance)) {
+              matchedStars.push(star);
+          }
+      }
+
+      if (matchedStars.length < 10) {
+        brightnessTolerance = Math.min(MAX_BRIGHTNESS_TOLERANCE, brightnessTolerance * 1.5);
+        rgbTolerance = Math.min(MAX_RGB_TOLERANCE, rgbTolerance * 1.5);
+      }
+      attempts++;
     }
 
-    logs.push(`[findMatchingStars] Found ${matchedStars.length} stars matching the patterns.`);
+
+    logs.push(`[findMatchingStars] Found ${matchedStars.length} stars matching the patterns after ${attempts} attempt(s).`);
     return { matchedStars, logs };
   } catch (e) {
     const errorMessage = e instanceof Error ? e.message : String(e);
@@ -202,12 +215,10 @@ export async function findMatchingStars({
 
 function compareCharacteristics(
   starChars: StarCharacteristics,
-  learnedPatterns: LearnedPattern[]
-): number {
-  let bestScore = 0;
-  const BRIGHTNESS_TOLERANCE = 0.3; // 30% tolerance for brightness difference
-  const RGB_TOLERANCE = 0.2; // 20% tolerance for color difference
-
+  learnedPatterns: LearnedPattern[],
+  brightnessTolerance: number,
+  rgbTolerance: number
+): boolean {
   const getBrightness = (rgb: [number, number, number]) => 0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2];
   const rgbDistance = (c1: [number, number, number], c2: [number, number, number]) => {
       const total1 = c1[0] + c1[1] + c1[2] + 1e-6;
@@ -232,7 +243,7 @@ function compareCharacteristics(
       const bright3x3Diff = Math.abs(star3x3Brightness - learned3x3Brightness) / (learned3x3Brightness + 1e-6);
       const bright5x5Diff = Math.abs(star5x5Brightness - learned5x5Brightness) / (learned5x5Brightness + 1e-6);
 
-      if (centerBrightDiff > BRIGHTNESS_TOLERANCE || bright3x3Diff > BRIGHTNESS_TOLERANCE || bright5x5Diff > BRIGHTNESS_TOLERANCE) {
+      if (centerBrightDiff > brightnessTolerance || bright3x3Diff > brightnessTolerance || bright5x5Diff > brightnessTolerance) {
         continue; // Failed brightness test
       }
 
@@ -241,21 +252,13 @@ function compareCharacteristics(
       const patch3RgbDiff = rgbDistance(starChars.patch3x3RGB, learnedChar.patch3x3RGB);
       const patch5RgbDiff = rgbDistance(starChars.patch5x5RGB, learnedChar.patch5x5RGB);
 
-      if (centerRgbDiff > RGB_TOLERANCE || patch3RgbDiff > RGB_TOLERANCE || patch5RgbDiff > RGB_TOLERANCE) {
+      if (centerRgbDiff > rgbTolerance || patch3RgbDiff > rgbTolerance || patch5RgbDiff > rgbTolerance) {
           continue; // Failed color test
       }
-
-      // --- Passed both filters, now calculate score ---
-      // Lower difference is better. Score is 1 - average normalized difference.
-      const avgBrightDiff = (centerBrightDiff + bright3x3Diff + bright5x5Diff) / 3;
-      const avgRgbDiff = (centerRgbDiff + patch3RgbDiff + patch5RgbDiff) / 3;
-
-      const score = Math.max(0, 1 - (avgBrightDiff / BRIGHTNESS_TOLERANCE * 0.5 + avgRgbDiff / RGB_TOLERANCE * 0.5));
       
-      if (score > bestScore) {
-        bestScore = score;
-      }
+      // If both tests passed for any learned characteristic, it's a match.
+      return true;
     }
   }
-  return bestScore;
+  return false;
 }
