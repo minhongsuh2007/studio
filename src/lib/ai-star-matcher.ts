@@ -172,15 +172,22 @@ function isCandidateBlob(imageData: SimpleImageData, x: number, y: number): bool
             }
             
             const idx = (py * width + px) * 4;
-            if (data[idx] < 200 || data[idx + 1] < 200 || data[idx + 2] < 200) {
+            // Loosen the RGB threshold slightly to catch more candidates
+            if (data[idx] < 180 || data[idx + 1] < 180 || data[idx + 2] < 180) {
                 return false; // Condition not met
             }
         }
     }
-    return true; // All pixels in 3x3 are > 200
+    return true; // All pixels in 3x3 are > 180
 }
 
-function isStarByBrightnessRelationship(imageData: SimpleImageData, grayData: Uint8Array, x: number, y: number): boolean {
+function isStarByBrightnessRelationship(
+    imageData: SimpleImageData, 
+    grayData: Uint8Array, 
+    x: number, 
+    y: number,
+    ratio: number // e.g. 1.1 means center must be 10% brighter than surroundings
+): boolean {
     const { width } = imageData;
     const centerIdx = y * width + x;
     const centerBrightness = grayData[centerIdx];
@@ -200,26 +207,25 @@ function isStarByBrightnessRelationship(imageData: SimpleImageData, grayData: Ui
             count++;
         }
     }
+    
+    if (count === 0) return false;
 
     const avgSurroundingBrightness = surroundingBrightnessSum / count;
 
-    // A real star should be significantly brighter than its immediate surroundings.
-    // And surroundings should not be completely black (avoids single hot pixels).
-    return centerBrightness > avgSurroundingBrightness * 1.1 && avgSurroundingBrightness > 10;
+    return centerBrightness > avgSurroundingBrightness * ratio && avgSurroundingBrightness > 10;
 }
 
 
 export async function findMatchingStars({
   imageData,
-  learnedPatterns, // This is kept for API compatibility but not used in the new logic
+  learnedPatterns, // Kept for API compatibility
 }: {
   imageData: SimpleImageData,
   learnedPatterns: LearnedPattern[],
 }): Promise<{matchedStars: Star[], logs: string[]}> {
   const logs: string[] = [];
   try {
-    logs.push("Starting new 2-step star detection logic.");
-    const { data, width, height } = imageData;
+    const { width, height } = imageData;
     
     const grayData = toGrayscale(imageData);
     if (!grayData) {
@@ -227,43 +233,48 @@ export async function findMatchingStars({
         return { matchedStars: [], logs };
     }
     
-    const finalStars: Star[] = [];
-    const visited = new Uint8Array(width * height);
+    let finalStars: Star[] = [];
+    let currentRatio = 1.15; // Start with a strict ratio
+    const minRatio = 1.0;
+    const ratioStep = 0.03;
+    const minStarCount = 10;
 
-    // Iterate through each pixel, but skip borders
-    for (let y = 1; y < height - 1; y++) {
-        for (let x = 1; x < width - 1; x++) {
-            const idx = y * width + x;
-            if (visited[idx]) continue;
+    while (finalStars.length < minStarCount && currentRatio >= minRatio) {
+        logs.push(`Attempting star detection with brightness ratio > ${currentRatio.toFixed(2)}`);
+        finalStars = []; // Reset for this attempt
+        const visited = new Uint8Array(width * height);
 
-            // Step 1: Find strong candidates where a 3x3 patch is very bright
-            if (isCandidateBlob(imageData, x, y)) {
-                // Mark the 3x3 area as visited to avoid re-checking adjacent pixels of the same blob
-                for (let j = -1; j <= 1; j++) {
-                    for (let i = -1; i <= 1; i++) {
-                        visited[(y + j) * width + (x + i)] = 1;
+        for (let y = 1; y < height - 1; y++) {
+            for (let x = 1; x < width - 1; x++) {
+                const idx = y * width + x;
+                if (visited[idx]) continue;
+
+                if (isCandidateBlob(imageData, x, y)) {
+                    for (let j = -1; j <= 1; j++) {
+                        for (let i = -1; i <= 1; i++) {
+                            visited[(y + j) * width + (x + i)] = 1;
+                        }
                     }
-                }
 
-                // Step 2: Refine with brightness relationship check
-                if (isStarByBrightnessRelationship(imageData, grayData, x, y)) {
-                    // We found a likely star. For now, treat its properties simply.
-                    // A more advanced version could do a center-of-mass calculation here.
-                    const brightness = grayData[idx];
-                    finalStars.push({
-                        x: x,
-                        y: y,
-                        brightness: brightness,
-                        size: 1, // Placeholder size
-                    });
+                    if (isStarByBrightnessRelationship(imageData, grayData, x, y, currentRatio)) {
+                        const brightness = grayData[idx];
+                        finalStars.push({ x, y, brightness, size: 1 });
+                    }
                 }
             }
         }
+        
+        logs.push(`Found ${finalStars.length} stars at current ratio.`);
+        if (finalStars.length >= minStarCount) break;
+
+        currentRatio -= ratioStep; // Loosen the ratio for the next attempt
     }
     
-    logs.push(`Detection complete. Found ${finalStars.length} stars.`);
-    
-    // Sort by brightness to keep the API consistent
+    if (finalStars.length < minStarCount) {
+        logs.push(`[WARN] Could not find sufficient stars even at the most lenient ratio (${minRatio.toFixed(2)}). Proceeding with ${finalStars.length} stars.`);
+    }
+
+    logs.push(`Final detection complete. Found ${finalStars.length} stars.`);
     finalStars.sort((a, b) => b.brightness - a.brightness);
     
     return { matchedStars: finalStars, logs };
