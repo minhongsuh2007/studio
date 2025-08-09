@@ -10,8 +10,7 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import { alignAndStack, detectStars, type Star, type StackingMode } from '@/lib/astro-align';
 import { aiClientAlignAndStack } from '@/lib/ai-client-stack';
 import { extractCharacteristicsFromImage, findMatchingStars, type LearnedPattern, type SimpleImageData, type StarCharacteristics, predictSingle, buildModel } from '@/lib/ai-star-matcher';
-import { trainStarDetector } from '@/ai/flows/train-star-detector';
-import type { TrainStarDetectorOutput } from '@/ai/flows/train-star-detector';
+import type { ModelWeightData } from '@/lib/genkit-types';
 import { AppHeader } from '@/components/astrostacker/AppHeader';
 import { ImageUploadArea } from '@/components/astrostacker/ImageUploadArea';
 import { ImageQueueItem } from '@/components/astrostacker/ImageQueueItem';
@@ -788,6 +787,81 @@ export default function AstroStackerPage() {
     reader.readAsText(file);
   };
   
+
+  // --- Client-Side Model Training Logic ---
+
+  type Sample = {
+    features: number[];
+    label: number;
+  };
+
+  function featuresFromCharacteristics(c: StarCharacteristics): number[] {
+      const f_centerRGB = c.centerRGB.reduce((a, b) => a + b, 0) / 3;
+      const f_patch3 = c.patch3x3RGB.reduce((a, b) => a + b, 0) / 3;
+      const f_patch5 = c.patch5x5RGB.reduce((a, b) => a + b, 0) / 3;
+      return [
+          c.avgBrightness ?? 0, c.avgContrast ?? 0, c.fwhm ?? 0, c.pixelCount ?? 0,
+          f_centerRGB, f_patch3, f_patch5,
+      ];
+  }
+
+  function normalizeFeatures(mat: number[][]) {
+      const cols = mat[0].length;
+      const means = new Array(cols).fill(0);
+      const stds = new Array(cols).fill(0);
+      const n = mat.length;
+      for (let j = 0; j < cols; j++) {
+          for (let i = 0; i < n; i++) means[j] += mat[i][j];
+          means[j] /= n;
+          for (let i = 0; i < n; i++) stds[j] += Math.pow(mat[i][j] - means[j], 2);
+          stds[j] = Math.sqrt(stds[j] / n) || 1;
+      }
+      const norm = mat.map(row => row.map((v, j) => (v - means[j]) / stds[j]));
+      return { norm, means, stds };
+  }
+
+  async function trainClientModel(samples: Sample[], epochs = 30, batchSize = 16) {
+      if (samples.some(s => typeof s.label === 'undefined')) {
+          throw new Error('Labels are missing for some samples.');
+      }
+      const X = samples.map(s => s.features);
+      const y = samples.map(s => s.label!);
+
+      const { norm, means, stds } = normalizeFeatures(X);
+      const xs = tf.tensor2d(norm);
+      const ys = tf.tensor2d(y.map(v => [v]));
+
+      const split = Math.floor(norm.length * 0.8);
+      const [xTrain, xTest] = [xs.slice([0, 0], [split, xs.shape[1]]), xs.slice([split, 0], [xs.shape[0] - split, xs.shape[1]])];
+      const [yTrain, yTest] = [ys.slice([0, 0], [split, 1]), ys.slice([split, 0], [ys.shape[0] - split, 1])];
+
+      const model = buildModel();
+      model.compile({ optimizer: tf.train.adam(0.001), loss: 'binaryCrossentropy', metrics: ['accuracy'] });
+
+      const history = await model.fit(xTrain, yTrain, {
+          epochs,
+          batchSize,
+          validationData: [xTest, yTest],
+          shuffle: true,
+          callbacks: {
+              onEpochEnd: (epoch, logs) => {
+                  if (logs && (epoch + 1) % 5 === 0) {
+                      const acc = logs.acc || logs.accuracy;
+                      const valAcc = logs.val_acc || logs.val_accuracy;
+                      addLog(`Epoch ${epoch + 1}: Accuracy=${acc ? acc.toFixed(3) : 'N/A'}, Val Accuracy=${valAcc ? valAcc.toFixed(3) : 'N/A'}`);
+                  }
+              }
+          }
+      });
+      
+      const finalEpochLogs = history.history.acc ? { acc: history.history.acc[epochs - 1], val_acc: history.history.val_acc[epochs - 1] } : {};
+
+      tf.dispose([xs, ys, xTrain, xTest, yTrain, yTest]);
+
+      return { model, means, stds, accuracy: finalEpochLogs.acc as number };
+  }
+
+
   const handleTrainModel = async () => {
       const activePatterns = learnedPatterns.filter(p => selectedPatternIDs.has(p.id));
       if (activePatterns.length === 0) {
@@ -795,33 +869,36 @@ export default function AstroStackerPage() {
           return;
       }
       
-      const allCharacteristics = activePatterns.flatMap(p => p.characteristics);
-      if (allCharacteristics.length < 20) {
-        window.alert(`Need at least 20 star samples to train a model. You have ${allCharacteristics.length}. Please add more stars via Manual Select.`);
+      const starCharacteristics = activePatterns.flatMap(p => p.characteristics);
+      if (starCharacteristics.length < 20) {
+        window.alert(`Need at least 20 star samples to train a model. You have ${starCharacteristics.length}. Please add more stars via Manual Select.`);
         return;
       }
       
-      addLog(`[TRAIN] Starting model training with ${allCharacteristics.length} star samples from ${activePatterns.length} patterns.`);
+      addLog(`[TRAIN] Starting client-side model training with ${starCharacteristics.length} star samples.`);
       setIsTrainingModel(true);
       
       try {
-        const result: TrainStarDetectorOutput = await trainStarDetector(allCharacteristics);
+        const starSamples: Sample[] = starCharacteristics.map(c => ({ features: featuresFromCharacteristics(c), label: 1 }));
         
-        if (result.modelWeights && result.modelWeights.length > 0 && result.normalization) {
-            const model = buildModel(); // Build the client-side model structure
-            
-            // Deserialize weights
-            const deserializedWeights = result.modelWeights.map(w => tf.tensor(w.values, w.shape, w.dtype as any));
-            model.setWeights(deserializedWeights);
-
-            setTrainedModel(model);
-            setModelNormalization(result.normalization);
-
-            addLog(`[TRAIN] Model training successful! Accuracy: ${result.accuracy ? (result.accuracy * 100).toFixed(2) : 'N/A'}%. Model is ready.`);
-            window.alert("AI Model trained successfully and is ready for alignment.");
-        } else {
-             throw new Error("Training flow did not return valid model weights.");
+        // Generate artificial noise samples for negative examples
+        const noiseSamples: Sample[] = [];
+        const numNoiseSamples = Math.max(starSamples.length, 20);
+        const numFeatures = starSamples[0].features.length;
+        for (let i = 0; i < numNoiseSamples; i++) {
+            const noiseFeatures = Array(numFeatures).fill(0).map(() => Math.random() * 50);
+            noiseSamples.push({ features: noiseFeatures, label: 0 });
         }
+        
+        const allSamples = [...starSamples, ...noiseSamples];
+
+        const { model, means, stds, accuracy } = await trainClientModel(allSamples);
+        
+        setTrainedModel(model);
+        setModelNormalization({ means, stds });
+
+        addLog(`[TRAIN] Client-side training successful! Accuracy: ${accuracy ? (accuracy * 100).toFixed(2) : 'N/A'}%. Model is ready.`);
+        window.alert("AI Model trained successfully and is ready for alignment.");
 
       } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
