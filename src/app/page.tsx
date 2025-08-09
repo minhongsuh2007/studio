@@ -19,7 +19,7 @@ import { ImagePreview } from '@/components/astrostacker/ImagePreview';
 import { ImagePostProcessEditor } from '@/components/astrostacker/ImagePostProcessEditor';
 import { TutorialDialog } from '@/components/astrostacker/TutorialDialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Star as StarIcon, ListChecks, CheckCircle, RefreshCcw, Edit3, Loader2, Orbit, Trash2, Wand2, ShieldOff, Layers, Baseline, X, AlertTriangle, BrainCircuit, TestTube2, Eraser, Download, Upload, Cpu, AlertCircle } from 'lucide-react';
+import { Star as StarIcon, ListChecks, CheckCircle, RefreshCcw, Edit3, Loader2, Orbit, Trash2, Wand2, ShieldOff, Layers, Baseline, X, AlertTriangle, BrainCircuit, TestTube2, Eraser, Download, Upload, Cpu, AlertCircle, Moon, Sun, Sparkles } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
@@ -30,6 +30,8 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import NextImage from 'next/image';
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
+import { createMasterFrame, applyCalibration } from '@/lib/image-calibration';
 
 interface ImageQueueEntry {
   id: string;
@@ -40,6 +42,15 @@ interface ImageQueueEntry {
   analysisDimensions: { width: number; height: number };
   imageData: ImageData | null;
   detectedStars: Star[];
+}
+
+// Calibration frame specific type
+interface CalibrationFrameEntry {
+  id: string;
+  file: File;
+  previewUrl: string;
+  imageData: ImageData | null;
+  dimensions: { width: number; height: number };
 }
 
 type PreviewFitMode = 'contain' | 'cover';
@@ -77,6 +88,14 @@ export default function AstroStackerPage() {
   const [saturation, setSaturation] = useState(100);
   const [isApplyingAdjustments, setIsApplyingAdjustments] = useState(false);
   const [isTutorialOpen, setIsTutorialOpen] = useState(false);
+
+  // --- Calibration Frame State ---
+  const [darkFrames, setDarkFrames] = useState<CalibrationFrameEntry[]>([]);
+  const [flatFrames, setFlatFrames] = useState<CalibrationFrameEntry[]>([]);
+  const [biasFrames, setBiasFrames] = useState<CalibrationFrameEntry[]>([]);
+  const [useDarks, setUseDarks] = useState(false);
+  const [useFlats, setUseFlats] = useState(false);
+  const [useBias, setUseBias] = useState(false);
   
   // --- AI Learning State ---
   const [learnedPatterns, setLearnedPatterns] = useState<LearnedPattern[]>([]);
@@ -339,6 +358,53 @@ export default function AstroStackerPage() {
       }
     }
   };
+
+  const handleCalibrationFilesAdded = async (
+    files: File[],
+    type: 'dark' | 'flat' | 'bias'
+  ) => {
+      addLog(`[CALIBRATION] Loading ${files.length} ${type} frame(s)...`);
+      const setters = {
+          dark: setDarkFrames,
+          flat: setFlatFrames,
+          bias: setBiasFrames,
+      };
+      const setState = setters[type];
+
+      const newEntriesPromises = files.map(async (file): Promise<CalibrationFrameEntry | null> => {
+          try {
+              const previewUrl = await fileToDataURL(file);
+              const img = new Image();
+              const dimensions = await new Promise<{ width: number; height: number }>((resolve, reject) => {
+                  img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
+                  img.onerror = () => reject(new Error("Could not load image."));
+                  img.src = previewUrl;
+              });
+
+              const canvas = document.createElement('canvas');
+              const ctx = canvas.getContext('2d', { willReadFrequently: true });
+              if (!ctx) throw new Error("Could not get canvas context.");
+              canvas.width = dimensions.width;
+              canvas.height = dimensions.height;
+              ctx.drawImage(img, 0, 0);
+              const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+              
+              addLog(`[CALIBRATION] Loaded ${type} frame: ${file.name} (${dimensions.width}x${dimensions.height})`);
+              return {
+                  id: `${type}-${file.name}-${Date.now()}`,
+                  file, previewUrl, imageData, dimensions,
+              };
+          } catch (error) {
+              addLog(`[ERROR] Failed to load ${type} frame ${file.name}: ${error instanceof Error ? error.message : "Unknown"}`);
+              return null;
+          }
+      });
+
+      const newEntries = (await Promise.all(newEntriesPromises)).filter((e): e is CalibrationFrameEntry => e !== null);
+      if (newEntries.length > 0) {
+        setState(prev => [...prev, ...newEntries]);
+      }
+  };
   
   const handleRemoveImage = (idToRemove: string) => {
     setAllImageStarData(prev => prev.filter(item => item.id !== idToRemove));
@@ -584,22 +650,54 @@ export default function AstroStackerPage() {
     addLog(`[STACK START] Method: ${alignmentMethod}. Stacking ${allImageStarData.length} images. Mode: ${stackingMode}.`);
   
     try {
+      // --- CALIBRATION ---
+      let masterBias: ImageData | null = null;
+      if (useBias && biasFrames.length > 0) {
+        masterBias = await createMasterFrame(biasFrames.map(f => f.imageData), 'average', addLog, 'BIAS');
+      }
+
+      let masterDark: ImageData | null = null;
+      if (useDarks && darkFrames.length > 0) {
+        masterDark = await createMasterFrame(darkFrames.map(f => f.imageData), 'average', addLog, 'DARK');
+        if (masterDark && masterBias) {
+            masterDark = applyCalibration(masterDark, null, masterBias, null, addLog, 'Master Dark');
+        }
+      }
+
+      let masterFlat: ImageData | null = null;
+      if (useFlats && flatFrames.length > 0) {
+          masterFlat = await createMasterFrame(flatFrames.map(f => f.imageData), 'average', addLog, 'FLAT');
+          if (masterFlat && masterBias) {
+              masterFlat = applyCalibration(masterFlat, null, masterBias, null, addLog, 'Master Flat');
+          }
+      }
+
+      addLog("[CALIBRATION] Applying calibration to light frames...");
+      const calibratedLightFrames = allImageStarData.map((entry, index) => {
+          if (!entry.imageData) return entry;
+          setProgressPercent(5 + 15 * (index / allImageStarData.length)); // Calibration is first 20%
+          const calibratedImageData = applyCalibration(entry.imageData, masterDark, masterBias, masterFlat, addLog, entry.file.name);
+          return { ...entry, imageData: calibratedImageData };
+      });
+      addLog("[CALIBRATION] Light frame calibration complete.");
+      setProgressPercent(20);
+
       let stackedImageData;
       if (alignmentMethod === 'ai' && trainedModel && modelNormalization) {
         addLog(`Using TFJS model for AI alignment.`);
         stackedImageData = await aiClientAlignAndStack(
-            allImageStarData, 
+            calibratedLightFrames, 
             { model: trainedModel, normalization: modelNormalization },
             stackingMode, 
             addLog, 
-            (p) => setProgressPercent(p * 100)
+            (p) => setProgressPercent(20 + p * 80) // Alignment/Stacking is remaining 80%
         );
 
       } else {
-        const imageDatas = allImageStarData.map(entry => entry.imageData).filter((d): d is ImageData => d !== null);
+        const imageDatas = calibratedLightFrames.map(entry => entry.imageData).filter((d): d is ImageData => d !== null);
         if (imageDatas.length !== allImageStarData.length) throw new Error("Some images have not been analyzed or loaded correctly.");
         // Standard Alignment
-        const refImageForStandard = allImageStarData[0];
+        const refImageForStandard = calibratedLightFrames[0];
         const refStarsForStandard = (manualSelectImageId === refImageForStandard.id && manualSelectedStars.length > 1) 
             ? manualSelectedStars 
             : refImageForStandard.detectedStars;
@@ -607,7 +705,7 @@ export default function AstroStackerPage() {
         if (refStarsForStandard.length < 2) {
           throw new Error("Standard alignment requires at least 2 stars in the reference image. Please use Manual Select or ensure auto-detection finds stars.");
         }
-        stackedImageData = await alignAndStack(allImageStarData, refStarsForStandard, stackingMode, (p) => setProgressPercent(p * 100));
+        stackedImageData = await alignAndStack(calibratedLightFrames, refStarsForStandard, stackingMode, (p) => setProgressPercent(20 + p * 80));
       }
 
       const { width, height } = allImageStarData[0].analysisDimensions;
@@ -971,6 +1069,101 @@ export default function AstroStackerPage() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <ImageUploadArea onFilesAdded={handleFilesAdded} isProcessing={isUiDisabled} multiple={true} />
+
+                <Accordion type="multiple" className="w-full">
+                  <AccordionItem value="darks">
+                    <AccordionTrigger>
+                      <div className="flex items-center gap-2">
+                        <Moon className="h-5 w-5" />
+                        <div>
+                          <p>Dark Frames ({darkFrames.length})</p>
+                          <span className="text-xs text-muted-foreground font-normal">Optional - for thermal noise</span>
+                        </div>
+                      </div>
+                    </AccordionTrigger>
+                    <AccordionContent className="space-y-2">
+                      <div className="flex items-center space-x-2">
+                        <Switch id="use-darks" checked={useDarks} onCheckedChange={setUseDarks} disabled={isUiDisabled || darkFrames.length === 0} />
+                        <Label htmlFor="use-darks">{t('useDarkFramesLabel')}</Label>
+                      </div>
+                      <ImageUploadArea onFilesAdded={(f) => handleCalibrationFilesAdded(f, 'dark')} isProcessing={isUiDisabled} multiple={true} />
+                      {darkFrames.length > 0 && 
+                        <ScrollArea className="h-32">
+                           <div className="grid grid-cols-2 gap-2 p-1">
+                            {darkFrames.map(f => (
+                              <div key={f.id} className="relative">
+                                <NextImage src={f.previewUrl} alt={f.file.name} width={100} height={60} className="rounded-md object-cover" />
+                                <Button size="icon" variant="destructive" className="absolute top-1 right-1 h-6 w-6" onClick={() => setDarkFrames(p => p.filter(i => i.id !== f.id))}><X className="h-4 w-4"/></Button>
+                              </div>
+                            ))}
+                          </div>
+                        </ScrollArea>
+                      }
+                    </AccordionContent>
+                  </AccordionItem>
+                  <AccordionItem value="flats">
+                    <AccordionTrigger>
+                      <div className="flex items-center gap-2">
+                        <Sun className="h-5 w-5" />
+                         <div>
+                          <p>Flat Frames ({flatFrames.length})</p>
+                          <span className="text-xs text-muted-foreground font-normal">Optional - for dust/vignetting</span>
+                        </div>
+                      </div>
+                    </AccordionTrigger>
+                    <AccordionContent className="space-y-2">
+                      <div className="flex items-center space-x-2">
+                        <Switch id="use-flats" checked={useFlats} onCheckedChange={setUseFlats} disabled={isUiDisabled || flatFrames.length === 0} />
+                        <Label htmlFor="use-flats">{t('useFlatFramesLabel')}</Label>
+                      </div>
+                      <ImageUploadArea onFilesAdded={(f) => handleCalibrationFilesAdded(f, 'flat')} isProcessing={isUiDisabled} multiple={true} />
+                       {flatFrames.length > 0 && 
+                        <ScrollArea className="h-32">
+                          <div className="grid grid-cols-2 gap-2 p-1">
+                            {flatFrames.map(f => (
+                              <div key={f.id} className="relative">
+                                <NextImage src={f.previewUrl} alt={f.file.name} width={100} height={60} className="rounded-md object-cover" />
+                                <Button size="icon" variant="destructive" className="absolute top-1 right-1 h-6 w-6" onClick={() => setFlatFrames(p => p.filter(i => i.id !== f.id))}><X className="h-4 w-4"/></Button>
+                              </div>
+                            ))}
+                          </div>
+                        </ScrollArea>
+                      }
+                    </AccordionContent>
+                  </AccordionItem>
+                  <AccordionItem value="bias">
+                    <AccordionTrigger>
+                      <div className="flex items-center gap-2">
+                        <Sparkles className="h-5 w-5" />
+                        <div>
+                          <p>Bias Frames ({biasFrames.length})</p>
+                          <span className="text-xs text-muted-foreground font-normal">Optional - for read-out noise</span>
+                        </div>
+                      </div>
+                    </AccordionTrigger>
+                    <AccordionContent className="space-y-2">
+                      <div className="flex items-center space-x-2">
+                        <Switch id="use-bias" checked={useBias} onCheckedChange={setUseBias} disabled={isUiDisabled || biasFrames.length === 0} />
+                        <Label htmlFor="use-bias">{t('useBiasFramesLabel')}</Label>
+                      </div>
+                      <ImageUploadArea onFilesAdded={(f) => handleCalibrationFilesAdded(f, 'bias')} isProcessing={isUiDisabled} multiple={true} />
+                       {biasFrames.length > 0 && 
+                        <ScrollArea className="h-32">
+                          <div className="grid grid-cols-2 gap-2 p-1">
+                            {biasFrames.map(f => (
+                              <div key={f.id} className="relative">
+                                <NextImage src={f.previewUrl} alt={f.file.name} width={100} height={60} className="rounded-md object-cover" />
+                                <Button size="icon" variant="destructive" className="absolute top-1 right-1 h-6 w-6" onClick={() => setBiasFrames(p => p.filter(i => i.id !== f.id))}><X className="h-4 w-4"/></Button>
+                              </div>
+                            ))}
+                          </div>
+                        </ScrollArea>
+                      }
+                    </AccordionContent>
+                  </AccordionItem>
+                </Accordion>
+
+
                 {isProcessingStack && progressPercent > 0 && (
                   <div className="space-y-2 my-4">
                     <Progress value={progressPercent} className="w-full h-3" />
@@ -1133,3 +1326,4 @@ export default function AstroStackerPage() {
     
 
     
+
