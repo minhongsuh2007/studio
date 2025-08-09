@@ -2,6 +2,8 @@
 'use server';
 
 import type { Star } from './astro-align';
+import { detectStarsAI } from './ai-star-detection';
+
 
 // The characteristics of a star that we want to learn.
 export interface StarCharacteristics {

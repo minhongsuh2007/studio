@@ -1,9 +1,11 @@
+
 // @ts-nocheck
 'use client';
 
 import type { StackingMode, Transform } from '@/lib/astro-align';
 import { findMatchingStars, type LearnedPattern } from '@/lib/ai-star-matcher';
 import type { Star } from '@/lib/astro-align';
+import { detectStarsAI } from './ai-star-detection';
 
 // This type definition is duplicated from page.tsx to avoid circular dependencies.
 interface ImageQueueEntry {
@@ -22,17 +24,14 @@ interface ImageQueueEntry {
  * Calculates the transformation required to align two point sets.
  * Solves for the similarity transform (translation, rotation, scale).
  */
-function getTransformFromTwoStars(refStars: Star[], targetStars: Star[]): Transform | null {
-    if (refStars.length < 2 || targetStars.length < 2) {
+function getTransformFromStarPair(refStar1: Star, refStar2: Star, targetStar1: Star, targetStar2: Star): Transform | null {
+    if (!refStar1 || !refStar2 || !targetStar1 || !targetStar2) {
         return null;
     }
 
-    const [ref1, ref2] = refStars;
-    const [target1, target2] = targetStars;
-
     // Vectors from star1 to star2
-    const refVec = { x: ref2.x - ref1.x, y: ref2.y - ref1.y };
-    const targetVec = { x: target2.x - target1.x, y: target2.y - target1.y };
+    const refVec = { x: refStar2.x - refStar1.x, y: refStar2.y - refStar1.y };
+    const targetVec = { x: targetStar2.x - targetStar1.x, y: targetStar2.y - targetStar1.y };
 
     // Angle of each vector
     const refAngle = Math.atan2(refVec.y, refVec.x);
@@ -49,14 +48,79 @@ function getTransformFromTwoStars(refStars: Star[], targetStars: Star[]): Transf
 
     const cosAngle = Math.cos(-angle);
     const sinAngle = Math.sin(-angle);
-    const rotatedTargetX = target1.x * cosAngle - target1.y * sinAngle;
-    const rotatedTargetY = target1.x * sinAngle + target1.y * cosAngle;
+    const rotatedTargetX = targetStar1.x * cosAngle - targetStar1.y * sinAngle;
+    const rotatedTargetY = targetStar1.x * sinAngle + targetStar1.y * cosAngle;
 
-    const dx = ref1.x - rotatedTargetX * scale;
-    const dy = ref1.y - rotatedTargetY * scale;
+    const dx = refStar1.x - rotatedTargetX * scale;
+    const dy = refStar1.y - rotatedTargetY * scale;
 
     return { dx, dy, angle: -angle, scale };
 }
+
+/**
+ * Given a set of reference stars and target stars, finds the best pair that exists in both sets.
+ * "Best" is defined as the pair with the most similar geometric relationship (distance, angle).
+ */
+function findBestSharedStarPair(refStars: Star[], targetStars: Star[], addLog: (message: string) => void): { refPair: Star[], targetPair: Star[] } | null {
+    if (refStars.length < 2 || targetStars.length < 2) {
+        addLog("[PAIR-FIND] Not enough stars in one of the sets to find a pair.");
+        return null;
+    }
+
+    let bestMatch = {
+        refPair: null,
+        targetPair: null,
+        error: Infinity
+    };
+    
+    // Iterate through all possible pairs in the reference set
+    for (let i = 0; i < refStars.length; i++) {
+        for (let j = i + 1; j < refStars.length; j++) {
+            const refPair = [refStars[i], refStars[j]];
+            const refDistSq = (refPair[1].x - refPair[0].x)**2 + (refPair[1].y - refPair[0].y)**2;
+            const refAngle = Math.atan2(refPair[1].y - refPair[0].y, refPair[1].x - refPair[0].x);
+
+            // Now find the best corresponding pair in the target set
+            for (let k = 0; k < targetStars.length; k++) {
+                for (let l = k + 1; l < targetStars.length; l++) {
+                    const targetPair = [targetStars[k], targetStars[l]];
+                    const targetDistSq = (targetPair[1].x - targetPair[0].x)**2 + (targetPair[1].y - targetPair[0].y)**2;
+                    const targetAngle = Math.atan2(targetPair[1].y - targetPair[0].y, targetPair[1].x - targetPair[0].x);
+
+                    // Compare normalized distance and angle difference
+                    const distError = Math.abs(targetDistSq - refDistSq) / refDistSq; // Normalized distance error
+                    const angleError = Math.abs(targetAngle - refAngle) / (2 * Math.PI); // Normalized angle error
+                    
+                    const totalError = distError + angleError; // Simple error metric
+
+                    if (totalError < bestMatch.error) {
+                        bestMatch = { refPair, targetPair, error: totalError };
+                    }
+
+                    // Check the swapped target pair as well
+                    const targetPairSwapped = [targetStars[l], targetStars[k]];
+                    const targetAngleSwapped = Math.atan2(targetPairSwapped[1].y - targetPairSwapped[0].y, targetPairSwapped[1].x - targetPairSwapped[0].x);
+                    const angleErrorSwapped = Math.abs(targetAngleSwapped - refAngle) / (2 * Math.PI);
+                    const totalErrorSwapped = distError + angleErrorSwapped;
+
+                    if (totalErrorSwapped < bestMatch.error) {
+                        bestMatch = { refPair, targetPair: targetPairSwapped, error: totalErrorSwapped };
+                    }
+                }
+            }
+        }
+    }
+    
+    const ACCEPTABLE_ERROR_THRESHOLD = 0.1; // Heuristic: 10% tolerance for combined error
+    if (bestMatch.refPair && bestMatch.error < ACCEPTABLE_ERROR_THRESHOLD) {
+        addLog(`[PAIR-FIND] Found best matching pair with error score: ${bestMatch.error.toFixed(4)}`);
+        return { refPair: bestMatch.refPair, targetPair: bestMatch.targetPair };
+    }
+
+    addLog(`[PAIR-FIND] No reliable star pair found. Best error score (${bestMatch.error.toFixed(4)}) exceeded threshold.`);
+    return null;
+}
+
 
 /**
  * Warps an image using a similarity transform (translation, rotation, scale).
@@ -259,8 +323,10 @@ export async function aiClientAlignAndStack(
 
   // Find reference stars using AI
   addLog(`[AI-CLIENT] Finding reference stars in ${refEntry.file.name} using AI patterns.`);
+  const aiDetectedRefStars = detectStarsAI(refEntry.imageData, width, height, 50);
+
   const { matchedStars: refStars, logs: refLogs } = await findMatchingStars({
-      allDetectedStars: refEntry.detectedStars,
+      allDetectedStars: aiDetectedRefStars,
       imageData: { data: Array.from(refEntry.imageData.data), width, height },
       learnedPatterns
   });
@@ -269,7 +335,7 @@ export async function aiClientAlignAndStack(
   if (refStars.length < 2) {
       throw new Error(`AI alignment failed: Found only ${refStars.length} matching stars in the reference image. At least 2 are required.`);
   }
-  addLog(`[AI-CLIENT] Found ${refStars.length} reference stars.`);
+  addLog(`[AI-CLIENT] Found ${refStars.length} reference stars candidates.`);
 
   const alignedImageDatas: (Uint8ClampedArray | null)[] = [refEntry.imageData.data];
   
@@ -277,7 +343,6 @@ export async function aiClientAlignAndStack(
     const targetEntry = imageEntries[i];
     const progress = (i + 1) / imageEntries.length;
     addLog(`--- Aligning Image ${i+1}/${imageEntries.length}: ${targetEntry.file.name} ---`);
-
 
     if (!targetEntry.imageData) {
       alignedImageDatas.push(null);
@@ -287,8 +352,9 @@ export async function aiClientAlignAndStack(
     }
 
     addLog(`[AI-CLIENT] Finding target stars in ${targetEntry.file.name}`);
+    const aiDetectedTargetStars = detectStarsAI(targetEntry.imageData, width, height, 50);
     const { matchedStars: targetStars, logs: targetLogs } = await findMatchingStars({
-        allDetectedStars: targetEntry.detectedStars,
+        allDetectedStars: aiDetectedTargetStars,
         imageData: { data: Array.from(targetEntry.imageData.data), width, height },
         learnedPatterns
     });
@@ -297,16 +363,29 @@ export async function aiClientAlignAndStack(
     if (targetStars.length < 2) {
         alignedImageDatas.push(null);
         setProgress(progress);
-        addLog(`[AI-CLIENT] Skipping ${targetEntry.file.name}: Found only ${targetStars.length} stars.`);
+        addLog(`[AI-CLIENT] Skipping ${targetEntry.file.name}: Found only ${targetStars.length} matching stars.`);
+        continue;
+    }
+    addLog(`[AI-CLIENT] Found ${targetStars.length} target star candidates for ${targetEntry.file.name}.`);
+    
+    const sharedPair = findBestSharedStarPair(refStars, targetStars, addLog);
+
+    if (!sharedPair) {
+        alignedImageDatas.push(null);
+        setProgress(progress);
+        addLog(`[AI-CLIENT] Skipping ${targetEntry.file.name}: Could not find a reliable shared star pair.`);
         continue;
     }
 
-    const transform = getTransformFromTwoStars(refStars, targetStars);
+    const [ref1, ref2] = sharedPair.refPair;
+    const [target1, target2] = sharedPair.targetPair;
+    const transform = getTransformFromStarPair(ref1, ref2, target1, target2);
+
 
     if (!transform) {
         alignedImageDatas.push(null);
         setProgress(progress);
-        addLog(`[AI-CLIENT] Skipping ${targetEntry.file.name}: Could not compute transform.`);
+        addLog(`[AI-CLIENT] Skipping ${targetEntry.file.name}: Could not compute transform from shared pair.`);
         continue;
     }
     addLog(`[AI-CLIENT] Transform for ${targetEntry.file.name}: scale=${transform.scale.toFixed(3)}, angle=${(transform.angle*180/Math.PI).toFixed(2)}°, dx=${transform.dx.toFixed(2)}, dy=${transform.dy.toFixed(2)}`);
