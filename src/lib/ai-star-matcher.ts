@@ -1,7 +1,7 @@
 
-'use server';
-
+'use client';
 import type { Star } from './astro-align';
+import * as tf from '@tensorflow/tfjs';
 
 export interface StarCharacteristics {
   avgBrightness: number;
@@ -156,30 +156,7 @@ export async function extractCharacteristicsFromImage({
 }
 
 
-// --- New Star Matching Logic ---
-
-function isCandidateBlob(imageData: SimpleImageData, x: number, y: number): boolean {
-    const { data, width, height } = imageData;
-    const radius = 1; // For a 3x3 patch
-
-    for (let j = -radius; j <= radius; j++) {
-        for (let i = -radius; i <= radius; i++) {
-            const px = x + i;
-            const py = y + j;
-
-            if (px < 0 || px >= width || py < 0 || py >= height) {
-                return false; // Out of bounds
-            }
-            
-            const idx = (py * width + px) * 4;
-            // Loosen the RGB threshold slightly to catch more candidates
-            if (data[idx] < 180 || data[idx + 1] < 180 || data[idx + 2] < 180) {
-                return false; // Condition not met
-            }
-        }
-    }
-    return true; // All pixels in 3x3 are > 180
-}
+// --- New Star Matching Logic with TFJS ---
 
 function isStarByBrightnessRelationship(
     imageData: SimpleImageData, 
@@ -215,74 +192,104 @@ function isStarByBrightnessRelationship(
     return centerBrightness > avgSurroundingBrightness * ratio && avgSurroundingBrightness > 10;
 }
 
+function mean(arr: number[]) {
+  if (!arr || arr.length === 0) return 0;
+  return arr.reduce((a, b) => a + b, 0) / arr.length;
+}
+
+function featuresFromCharacteristics(c: StarCharacteristics): number[] {
+    const f_centerRGB = mean(c.centerRGB || []);
+    const f_patch3 = mean(c.patch3x3RGB || []);
+    const f_patch5 = mean(c.patch5x5RGB || []);
+    return [
+        c.avgBrightness ?? 0,
+        c.avgContrast ?? 0,
+        c.fwhm ?? 0,
+        c.pixelCount ?? 0,
+        f_centerRGB,
+        f_patch3,
+        f_patch5,
+    ];
+}
+
+
+export function buildModel(): tf.LayersModel {
+    const model = tf.sequential();
+    model.add(tf.layers.dense({ inputShape: [7], units: 32, activation: 'relu' }));
+    model.add(tf.layers.dropout({ rate: 0.2 }));
+    model.add(tf.layers.dense({ units: 16, activation: 'relu' }));
+    model.add(tf.layers.dense({ units: 1, activation: 'sigmoid' }));
+    return model;
+}
+
+export function predictSingle(model: tf.LayersModel, means: number[], stds: number[], features: number[]): number {
+  const norm = features.map((v, j) => (v - means[j]) / stds[j]);
+  const input = tf.tensor2d([norm]);
+  const p = model.predict(input) as tf.Tensor;
+  const prob = p.dataSync()[0];
+  tf.dispose([input, p]);
+  return prob;
+}
 
 export async function findMatchingStars({
   imageData,
-  learnedPatterns, // Kept for API compatibility
+  model,
+  normalization,
 }: {
   imageData: SimpleImageData,
-  learnedPatterns: LearnedPattern[],
+  model: tf.LayersModel,
+  normalization: { means: number[], stds: number[] },
 }): Promise<{matchedStars: Star[], logs: string[]}> {
-  const logs: string[] = [];
-  try {
-    const { width, height } = imageData;
-    
-    const grayData = toGrayscale(imageData);
-    if (!grayData) {
-        logs.push("Error: Failed to convert image to grayscale.");
-        return { matchedStars: [], logs };
-    }
-    
-    let finalStars: Star[] = [];
-    let currentRatio = 1.15; // Start with a strict ratio
-    const minRatio = 1.0;
-    const ratioStep = 0.03;
-    const minStarCount = 10;
+    const logs: string[] = [];
+    try {
+        const { width, height } = imageData;
+        const grayData = toGrayscale(imageData);
+        if (!grayData) {
+            logs.push("Error: Failed to convert image to grayscale.");
+            return { matchedStars: [], logs };
+        }
 
-    while (finalStars.length < minStarCount && currentRatio >= minRatio) {
-        logs.push(`Attempting star detection with brightness ratio > ${currentRatio.toFixed(2)}`);
-        finalStars = []; // Reset for this attempt
-        const visited = new Uint8Array(width * height);
+        const candidateStars: Star[] = [];
 
+        // 1. Find raw candidates based on brightness and blob characteristics
         for (let y = 1; y < height - 1; y++) {
             for (let x = 1; x < width - 1; x++) {
-                const idx = y * width + x;
-                if (visited[idx]) continue;
-
-                if (isCandidateBlob(imageData, x, y)) {
-                    for (let j = -1; j <= 1; j++) {
-                        for (let i = -1; i <= 1; i++) {
-                            visited[(y + j) * width + (x + i)] = 1;
-                        }
-                    }
-
-                    if (isStarByBrightnessRelationship(imageData, grayData, x, y, currentRatio)) {
-                        const brightness = grayData[idx];
-                        finalStars.push({ x, y, brightness, size: 1 });
-                    }
+                if (isStarByBrightnessRelationship(imageData, grayData, x, y, 1.1)) {
+                    const brightness = grayData[y * width + x];
+                    candidateStars.push({ x, y, brightness, size: 1 });
                 }
             }
         }
-        
-        logs.push(`Found ${finalStars.length} stars at current ratio.`);
-        if (finalStars.length >= minStarCount) break;
+        logs.push(`Found ${candidateStars.length} raw candidates.`);
 
-        currentRatio -= ratioStep; // Loosen the ratio for the next attempt
+        if (candidateStars.length === 0) {
+            return { matchedStars: [], logs };
+        }
+
+        // 2. Extract features for all candidates
+        const allCharacteristics = (await extractCharacteristicsFromImage({ stars: candidateStars, imageData }))
+            .map((char, index) => ({ char, star: candidateStars[index] }))
+            .filter(item => item.char);
+
+        // 3. Predict with the model
+        const matchedStars: Star[] = [];
+        for (const { char, star } of allCharacteristics) {
+            const features = featuresFromCharacteristics(char);
+            const probability = predictSingle(model, normalization.means, normalization.stds, features);
+            if (probability > 0.6) { // Confidence threshold
+                matchedStars.push(star);
+            }
+        }
+
+        logs.push(`Model classified ${matchedStars.length} candidates as stars.`);
+
+        matchedStars.sort((a, b) => b.brightness - a.brightness);
+        return { matchedStars, logs };
+
+    } catch (e) {
+        const errorMessage = e instanceof Error ? e.message : String(e);
+        logs.push(`CRASH in findMatchingStars! ${errorMessage}`);
+        console.error("Error in findMatchingStars:", e);
+        throw new Error(`A critical error occurred in findMatchingStars: ${errorMessage}`);
     }
-    
-    if (finalStars.length < minStarCount) {
-        logs.push(`[WARN] Could not find sufficient stars even at the most lenient ratio (${minRatio.toFixed(2)}). Proceeding with ${finalStars.length} stars.`);
-    }
-
-    logs.push(`Final detection complete. Found ${finalStars.length} stars.`);
-    finalStars.sort((a, b) => b.brightness - a.brightness);
-    
-    return { matchedStars: finalStars, logs };
-
-  } catch (e) {
-    const errorMessage = e instanceof Error ? e.message : String(e);
-    logs.push(`CRASH in findMatchingStars! ${errorMessage}`);
-    console.error("Error in findMatchingStars:", e);
-    throw new Error(`A critical error occurred in findMatchingStars: ${errorMessage}`);
-  }
 }

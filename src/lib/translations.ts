@@ -132,10 +132,10 @@ export const translations: Translations = {
     learnedDateLabel: "Learned: {date}",
 
     learnTestCardTitle: "Learn Test Module",
-    learnTestCardDescription: "Upload an image here to see which stars are recognized based on a *single selected* learned pattern's characteristics.",
+    learnTestCardDescription: "Upload an image here to see which stars are recognized based on the trained AI model.",
     uploadTestImageButton: "Upload Test Image",
     runPatternTestButton: "Run Pattern Test",
-    analyzingTestImageProgress: "Analyzing test image with learned pattern...",
+    analyzingTestImageProgress: "Analyzing test image with AI model...",
     noActivePatternForTestToastTitle: "No Pattern Selected for Test",
     noActivePatternForTestToastDesc: "Please select exactly one learned pattern from the list above to run a test.",
     learnTestSelectSinglePatternTitle: "Select One Pattern for Test",
@@ -153,9 +153,9 @@ export const translations: Translations = {
     tutorialStep1Title: "Step 1: Upload Images",
     tutorialStep1Content: "Click 'Drag & drop images here' or drop your astrophotography files into the box. Common formats (JPG, PNG) and many RAW formats (TIF, FITS, etc.) are supported thanks to ImageMagick. After uploading, the app automatically analyzes each image to detect stars.",
     tutorialStep2Title: "Step 2: Choose Alignment Method",
-    tutorialStep2Content: "On the left panel, select your 'Alignment Method'.\n\n- Standard (2-Star): This classic method uses the two brightest stars in your first (REF) image to align all others. It's fast and simple. For best results, you can click 'Select Stars' on the reference image to manually pick the two alignment stars.\n\n- AI Pattern: This powerful method uses learned star patterns to find the best stars for alignment, which is more robust for noisy images. See the next step to learn how to create a pattern.",
-    tutorialStep3Title: "Step 3: (AI Method) Teach a Star Pattern",
-    tutorialStep3Content: "To use the 'AI Pattern' method, you first need to teach the AI what to look for.\n1. On any analyzed image in the queue, click 'Select Stars'.\n2. In the main preview, click on at least two distinct, clear stars. Red circles will appear.\n3. Click the 'Confirm & Learn Pattern' button.\nThis creates a 'pattern' based on the characteristics of the stars you selected. It's stored in your browser. You can create a single, robust pattern by adding stars from multiple images to it.",
+    tutorialStep2Content: "On the left panel, select your 'Alignment Method'.\n\n- Standard (2-Star): This classic method uses the two brightest stars in your first (REF) image to align all others. It's fast and simple. For best results, you can click 'Select Stars' on the reference image to manually pick the two alignment stars.\n\n- AI Pattern: This powerful method uses a machine learning model to find the best stars for alignment. To use it, you must first teach the AI.",
+    tutorialStep3Title: "Step 3: (AI Method) Teach the AI",
+    tutorialStep3Content: "To use the 'AI Pattern' method, you first need to create training data and train a model.\n1. On any analyzed image, click 'Select Stars'.\n2. In the main preview, click on at least 20-30 distinct, clear stars. You can do this across multiple images by confirming the selection for each.\n3. Click 'Confirm & Learn Pattern'. This saves the characteristics of your selected stars.\n4. In the 'Pattern Learning' card, check the patterns you want to use for training.\n5. Click 'Train AI Model'. This sends the data to the server to train a model, which is then sent back to your browser. Once trained, the model is ready.",
     tutorialStep4Title: "Step 4: Configure and Stack",
     tutorialStep4Content: "Below the alignment method, you can configure the 'Stacking Mode' (Average, Median, Sigma Clip) which determines how pixel values are combined. When you're ready, click the main 'Stack Images' button. The app will align each image and then combine them, showing progress.",
     tutorialStep5Title: "Step 5: Post-Process and Download",
@@ -166,7 +166,9 @@ export const translations: Translations = {
     importPatternsDropzone: "Drop pattern file here",
     noPatternsToExport: "No learned patterns to export.",
     patternsImportedSuccess: "Import successful. Added {new} new patterns and updated {updated} existing ones.",
-    patternImportFailed: "Pattern import failed"
+    patternImportFailed: "Pattern import failed",
+    trainModelButton: "Train AI Model",
+    trainingModelButton: "Training Model..."
   },
   ko: {
     appTitle: '별하늘',
@@ -287,10 +289,10 @@ export const translations: Translations = {
     learnedDateLabel: "학습일: {date}",
 
     learnTestCardTitle: "학습 테스트 모듈",
-    learnTestCardDescription: "*단일 선택된* 학습된 패턴의 특성을 기반으로 어떤 별이 인식되는지 보려면 여기에 이미지를 업로드하세요.",
+    learnTestCardDescription: "훈련된 AI 모델을 기반으로 어떤 별이 인식되는지 보려면 여기에 이미지를 업로드하세요.",
     uploadTestImageButton: "테스트 이미지 업로드",
     runPatternTestButton: "패턴 테스트 실행",
-    analyzingTestImageProgress: "학습된 패턴으로 테스트 이미지 분석 중...",
+    analyzingTestImageProgress: "AI 모델로 테스트 이미지 분석 중...",
     noActivePatternForTestToastTitle: "테스트를 위해 선택된 패턴 없음",
     noActivePatternForTestToastDesc: "테스트를 실행하려면 위 목록에서 학습된 패턴을 정확히 하나 선택하세요.",
     learnTestSelectSinglePatternTitle: "테스트를 위해 하나의 패턴 선택",
@@ -308,9 +310,9 @@ export const translations: Translations = {
     tutorialStep1Title: "1단계: 이미지 업로드",
     tutorialStep1Content: "'여기에 이미지 끌어다 놓기'를 클릭하거나 천체 사진 파일(JPG, PNG 등 일반 형식 및 TIF, FITS 등 다양한 RAW 형식 지원)을 상자로 끌어다 놓습니다. ImageMagick 덕분에 다양한 형식이 지원됩니다. 업로드 후 앱은 각 이미지를 자동으로 분석하여 별을 감지합니다.",
     tutorialStep2Title: "2단계: 정렬 방법 선택",
-    tutorialStep2Content: "왼쪽 패널에서 '정렬 방법'을 선택합니다.\n\n- 표준 (2-Star): 이 고전적인 방법은 첫 번째(REF) 이미지에서 가장 밝은 두 별을 사용하여 다른 모든 이미지를 정렬합니다. 빠르고 간단합니다. 최상의 결과를 얻으려면 참조 이미지에서 '별 선택'을 클릭하여 두 개의 정렬 별을 수동으로 선택할 수 있습니다.\n\n- AI 패턴: 이 강력한 방법은 학습된 별 패턴을 사용하여 정렬에 가장 적합한 별을 찾으므로 노이즈가 많은 이미지에 더 강력합니다. 패턴을 만드는 방법은 다음 단계를 참조하세요.",
-    tutorialStep3Title: "3단계: (AI 방법) 별 패턴 학습시키기",
-    tutorialStep3Content: "'AI 패턴' 방법을 사용하려면 먼저 AI에게 무엇을 찾아야 하는지 가르쳐야 합니다.\n1. 대기열의 분석된 이미지에서 '별 선택'을 클릭합니다.\n2. 메인 미리보기에서 두 개 이상의 뚜렷하고 선명한 별을 클릭합니다. 빨간색 원이 나타납니다.\n3. '확인 및 패턴 학습' 버튼을 클릭합니다.\n이렇게 하면 선택한 별의 특성을 기반으로 '패턴'이 생성됩니다. 이 패턴은 브라우저에 저장됩니다. 여러 이미지의 별을 추가하여 단일의 강력한 패턴을 만들 수 있습니다.",
+    tutorialStep2Content: "왼쪽 패널에서 '정렬 방법'을 선택합니다.\n\n- 표준 (2-Star): 이 고전적인 방법은 첫 번째(REF) 이미지에서 가장 밝은 두 별을 사용하여 다른 모든 이미지를 정렬합니다. 빠르고 간단합니다. 최상의 결과를 얻으려면 참조 이미지에서 '별 선택'을 클릭하여 두 개의 정렬 별을 수동으로 선택할 수 있습니다.\n\n- AI 패턴: 이 강력한 방법은 머신러닝 모델을 사용하여 정렬에 가장 적합한 별을 찾습니다. 이를 사용하려면 먼저 AI를 학습시켜야 합니다.",
+    tutorialStep3Title: "3단계: (AI 방법) AI 학습시키기",
+    tutorialStep3Content: "'AI 패턴' 방법을 사용하려면 먼저 학습 데이터를 만들고 모델을 훈련해야 합니다.\n1. 분석된 이미지에서 '별 선택'을 클릭합니다.\n2. 메인 미리보기에서 최소 20-30개의 뚜렷하고 선명한 별을 클릭합니다. 각 이미지에 대해 선택을 확인하여 여러 이미지에 걸쳐 이 작업을 수행할 수 있습니다.\n3. '확인 및 패턴 학습'을 클릭합니다. 이렇게 하면 선택한 별의 특성이 저장됩니다.\n4. '패턴 학습' 카드에서 훈련에 사용할 패턴을 선택합니다.\n5. 'AI 모델 훈련'을 클릭합니다. 이렇게 하면 데이터가 서버로 전송되어 모델을 훈련한 다음 브라우저로 다시 전송됩니다. 훈련이 완료되면 모델을 사용할 준비가 된 것입니다.",
     tutorialStep4Title: "4단계: 설정 및 스태킹",
     tutorialStep4Content: "정렬 방법 아래에서 픽셀 값을 결합하는 방법을 결정하는 '스태킹 모드'(평균, 중앙값, 시그마 클립)를 구성할 수 있습니다. 준비가 되면 메인 '이미지 스태킹' 버튼을 클릭합니다. 앱이 각 이미지를 정렬한 다음 결합하며 진행 상황을 보여줍니다.",
     tutorialStep5Title: "5단계: 후처리 및 다운로드",
@@ -321,7 +323,9 @@ export const translations: Translations = {
     importPatternsDropzone: "여기에 패턴 파일(.json)을 드롭하세요",
     noPatternsToExport: "내보낼 학습된 패턴이 없습니다.",
     patternsImportedSuccess: "가져오기 성공. {new}개의 새 패턴 추가, {updated}개의 기존 패턴 업데이트.",
-    patternImportFailed: "패턴 가져오기 실패"
+    patternImportFailed: "패턴 가져오기 실패",
+    trainModelButton: "AI 모델 훈련",
+    trainingModelButton: "모델 훈련 중..."
   },
   zh: {
     appTitle: '天文图像叠加器 (AstroStacker)',
@@ -442,10 +446,10 @@ export const translations: Translations = {
     learnedDateLabel: "学习日期：{date}",
 
     learnTestCardTitle: "学习测试模块",
-    learnTestCardDescription: "在此处上传图像，以根据*单个选定的*学习模式的特征查看哪些星点被识别。",
+    learnTestCardDescription: "在此处上传图像，以根据训练好的AI模型查看哪些星点被识别。",
     uploadTestImageButton: "上传测试图像",
     runPatternTestButton: "运行模式测试",
-    analyzingTestImageProgress: "正在使用学习的模式分析测试图像...",
+    analyzingTestImageProgress: "正在使用AI模型分析测试图像...",
     noActivePatternForTestToastTitle: "未选择用于测试的模式",
     noActivePatternForTestToastDesc: "请从上面的列表中选择一个学习的模式以进行测试。",
     learnTestSelectSinglePatternTitle: "为测试选择一个模式",
@@ -463,9 +467,9 @@ export const translations: Translations = {
     tutorialStep1Title: "第一步：上传图像",
     tutorialStep1Content: "单击“在此处拖放图像”或将您的天文摄影文件拖放到框中。支持常见格式（JPG、PNG）和许多RAW格式（TIF、FITS等），这要归功于ImageMagick。上传后，应用程序会自动分析每个图像以检测星点。",
     tutorialStep2Title: "第二步：选择对齐方法",
-    tutorialStep2Content: "在左侧面板上，选择您的“对齐方法”。\n\n- 标准（2星）：这种经典方法使用您的第一张（REF）图像中最亮的两颗星来对齐所有其他图像。它快速而简单。为获得最佳效果，您可以单击参考图像上的“选择星点”以手动选择两个对齐星点。\n\n- AI模式：这种强大的方法使用学习的星点模式来找到最佳的对齐星点，这对于有噪点的图像更稳定。请参阅下一步了解如何创建模式。",
-    tutorialStep3Title: "第三步：（AI方法）教导星点模式",
-    tutorialStep3Content: "要使用“AI模式”方法，您首先需要教AI要寻找什么。\n1. 在队列中任何已分析的图像上，单击“选择星点”。\n2. 在主预览中，单击至少两个不同、清晰的星点。将出现红色圆圈。\n3. 单击“确认并学习模式”按钮。\n这将根据您选择的星点的特征创建一个“模式”。它存储在您的浏览器中。您可以通过向其中添加来自多个图像的星点来创建一个单一、稳健的模式。",
+    tutorialStep2Content: "在左侧面板上，选择您的“对齐方法”。\n\n- 标准（2星）：这种经典方法使用您的第一张（REF）图像中最亮的两颗星来对齐所有其他图像。它快速而简单。为获得最佳效果，您可以单击参考图像上的“选择星点”以手动选择两个对齐星点。\n\n- AI模式：这种强大的方法使用机器学习模型来找到最佳的对齐星点。要使用它，您必须首先教导AI。",
+    tutorialStep3Title: "第三步：（AI方法）教导AI",
+    tutorialStep3Content: "要使用“AI模式”方法，您首先需要创建训练数据并训练模型。\n1. 在任何已分析的图像上，单击“选择星点”。\n2. 在主预览中，单击至少20-30个不同、清晰的星点。您可以通过确认为每个图像的选择来跨多个图像执行此操作。\n3. 单击“确认并学习模式”。这将保存您选择的星点的特征。\n4. 在“模式学习”卡中，选中您要用于训练的模式。\n5. 单击“训练AI模型”。这将数据发送到服务器以训练模型，然后将其发送回您的浏览器。训练后，模型即可使用。",
     tutorialStep4Title: "第四步：配置和叠加",
     tutorialStep4Content: "在对齐方法下方，您可以配置“叠加模式”（平均、中位数、西格玛裁剪），它决定了像素值的组合方式。准备好后，单击主“叠加图像”按钮。应用程序将对齐每个图像，然后将它们组合起来，并显示进度。",
     tutorialStep5Title: "第五步：后期处理和下载",
@@ -475,7 +479,9 @@ export const translations: Translations = {
     importPatternsDropzone: "在此处放置模式文件",
     noPatternsToExport: "没有可导出的学习模式。",
     patternsImportedSuccess: "导入成功。已添加 {new} 个新模式并更新 {updated} 个现有模式。",
-    patternImportFailed: "模式导入失败"
+    patternImportFailed: "模式导入失败",
+    trainModelButton: "训练AI模型",
+    trainingModelButton: "正在训练模型..."
   },
   ja: {
     appTitle: 'アストロスタッカー',
@@ -539,7 +545,7 @@ export const translations: Translations = {
     logMasterFlatFailed: "マスターフラットフレームの作成に失敗しました（有効なフラットが処理されませんでした）。",
     logBiasSubtractedFromFlat: "フラットフレームからバイアス（もしあれば）が減算されました: {flatFrameName}",
     biasFramesUploadTitle: 'バイアスフレーム（オプション）',
-    biasFramesUploadDescription: '1つ以上のバイアスフレーム（JPG/PNG/WEBP/FITS）をアップ로드します。平均化されてマスターバイアスになり、カメラの読み出しノイズを表します。使用する場合、ライト、ダーク、フラットフレームから減算されます。同様の寸法であることを確認してください。',
+    biasFramesUploadDescription: '1つ以上のバイアスフレーム（JPG/PNG/WEBP/FITS）をアップ로드합니다。平均化されてマスターバイアスになり、カメラの読み出しノイズを表します。使用する場合、ライト、ダーク、フラットフレームから減算されます。同様の寸法であることを確認してください。',
     useBiasFramesLabel: 'バイアスフレーム減算を有効にする',
     biasFramesPreviewTitle: 'バイアスフレームプレビュー ({count})',
     biasFramesMissing: "バイアスフレーム減算が有効になっていますが、バイアスフレームがアップロードされていないか、読み込みに失敗しました。",
@@ -586,7 +592,7 @@ export const translations: Translations = {
     noActivePatternSelectedInfo: "現在選択されているパターンはありません。以下のリストのチェックボックスをオンにして、アライメントガイダンスまたはテスト用のパターンを選択してください。",
     learnedDateLabel: "学習日: {date}",
     learnTestCardTitle: "学習テストモジュール",
-    learnTestCardDescription: "ここに画像をアップロードして、*単一の選択された*学習済みパターンの特性に基づいてどの星が認識されるかを確認します。",
+    learnTestCardDescription: "ここに画像をアップロードして、訓練されたAIモデルに基づいてどの星が認識されるかを確認します。",
     uploadTestImageButton: "テスト画像をアップロード",
     runPatternTestButton: "パターンテストを実行",
     analyzingTestImageProgress: "学習したパターンでテスト画像を分析中...",
@@ -607,9 +613,9 @@ export const translations: Translations = {
     tutorialStep1Title: "ステップ1：画像をアップロード",
     tutorialStep1Content: "「ここに画像をドラッグ＆ドロップ」をクリックするか、天体写真ファイルをボックスにドロップします。一般的な形式（JPG、PNG）や多くのRAW形式（TIF、FITSなど）がImageMagickのおかげでサポートされています。アップロード後、アプリは各画像を自動的に分析して星を検出します。",
     tutorialStep2Title: "ステップ2：アライメント方法を選択",
-    tutorialStep2Content: "左側のパネルで、「アライメント方法」を選択します。\n\n- 標準（2つ星）：このクラシックな方法は、最初の（REF）画像の最も明るい2つの星を使用して他のすべての画像を整列させます。高速でシンプルです。最良の結果を得るには、参照画像で「星を選択」をクリックして2つのアライメント星を手動で選択できます。\n\n- AIパターン：この強力な方法は、学習した星のパターンを使用してアライメントに最適な星を見つけるため、ノイズの多い画像に対してより堅牢です。パターンの作成方法については、次のステップを参照してください。",
-    tutorialStep3Title: "ステップ3：（AI方式）星のパターンを教える",
-    tutorialStep3Content: "「AIパターン」方式を使用するには、まずAIに何を探すべきかを教える必要があります。\n1. キュー内の分析済み画像で「星を選択」をクリックします。\n2. メインプレビューで、2つ以上の明確な星をクリックします。赤い円が表示されます。\n3. 「確認してパターンを学習」ボタンをクリックします。\nこれにより、選択した星の特性に基づいて「パターン」が作成されます。これはブラウザに保存されます。複数の画像から星を追加することで、単一で堅牢なパターンを作成できます。",
+    tutorialStep2Content: "左側のパネルで、「アライメント方法」を選択します。\n\n- 標準（2つ星）：このクラシックな方法は、最初の（REF）画像の最も明るい2つの星を使用して他のすべての画像を整列させます。高速でシンプルです。最良の結果を得るには、参照画像で「星を選択」をクリックして2つのアライメント星を手動で選択できます。\n\n- AIパターン：この強力な方法は、機械学習モデルを使用してアライメントに最適な星を見つけます。これを使用するには、まずAIを教える必要があります。",
+    tutorialStep3Title: "ステップ3：（AI方式）AIを教える",
+    tutorialStep3Content: "「AIパターン」方式を使用するには、まずトレーニングデータを作成し、モデルをトレーニングする必要があります。\n1. 分析済みの画像で「星を選択」をクリックします。\n2. メインプレビューで、少なくとも20〜30個の明確な星をクリックします。各画像の選択を確認することで、複数の画像にわたってこれを行うことができます。\n3. 「確認してパターンを学習」をクリックします。これにより、選択した星の特性が保存されます。\n4. 「パターン学習」カードで、トレーニングに使用するパターンにチェックを入れます。\n5. 「AIモデルをトレーニング」をクリックします。これにより、データがサーバーに送信されてモデルがトレーニングされ、ブラウザに返されます。トレーニングが完了すると、モデルを使用する準備が整います。",
     tutorialStep4Title: "ステップ4：設定とスタック",
     tutorialStep4Content: "アライメント方法の下で、ピクセル値の結合方法を決定する「スタッキングモード」（平均、中央値、シグマクリップ）を設定できます。準備ができたら、メインの「画像をスタック」ボタンをクリックします。アプリは各画像を整列させてから結合し、進行状況を表示します。",
     tutorialStep5Title: "ステップ5：後処理とダウンロード",
@@ -620,12 +626,12 @@ export const translations: Translations = {
     importPatternsDropzone: "ここにパターンファイルをドロップ",
     noPatternsToExport: "エクスポートする学習済みパターンがありません。",
     patternsImportedSuccess: "インポートに成功しました。新しいパターン{new}個を追加し、既存のパターン{updated}個を更新しました。",
-    patternImportFailed: "パターンのインポートに失敗しました"
+    patternImportFailed: "パターンのインポートに失敗しました",
+    trainModelButton: "AIモデルを訓練",
+    trainingModelButton: "モデルを訓練中..."
   }
 };
 
 export const defaultLocale: Locale = 'en';
 
 export const getTranslations = (locale: Locale) => translations[locale] || translations[defaultLocale];
-
-    

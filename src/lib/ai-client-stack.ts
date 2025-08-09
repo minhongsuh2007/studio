@@ -1,8 +1,9 @@
 // @ts-nocheck
 'use client';
 
+import type * as tf from '@tensorflow/tfjs';
 import type { StackingMode, Transform } from '@/lib/astro-align';
-import { findMatchingStars, type LearnedPattern } from '@/lib/ai-star-matcher';
+import { findMatchingStars } from '@/lib/ai-star-matcher';
 import type { Star } from '@/lib/astro-align';
 
 // This type definition is duplicated from page.tsx to avoid circular dependencies.
@@ -15,6 +16,14 @@ interface ImageQueueEntry {
   analysisDimensions: { width: number; height: number };
   imageData: ImageData | null;
   detectedStars: Star[];
+}
+
+interface ModelPackage {
+    model: tf.LayersModel;
+    normalization: {
+        means: number[],
+        stds: number[]
+    }
 }
 
 
@@ -103,7 +112,7 @@ function findBestGlobalPair(allImageStars: { imageId: string; stars: Star[] }[],
                         
                         for (const targetPair of checkPairs) {
                             const targetDist = Math.hypot(targetPair[1].x - targetPair[0].x, targetPair[1].y - targetPair[0].y);
-                            const targetAngle = Math.atan2(targetPair[1].y - targetPair[0].y, targetPair[1].x - targetPair[0].x);
+                            const targetAngle = Math.atan2(targetPair[1].y - targetPair[0].y, targetPair[1].x - targetPair[0].y);
 
                             const distError = Math.abs(targetDist - refDist) / refDist;
                             const angleError = Math.abs(targetAngle - refAngle);
@@ -332,7 +341,7 @@ function stackImagesSigmaClip(images: (Uint8ClampedArray | null)[], sigma = 2.0)
 // --- MAIN AI ALIGNMENT & STACKING FUNCTION ---
 export async function aiClientAlignAndStack(
   imageEntries: ImageQueueEntry[],
-  learnedPatterns: LearnedPattern[],
+  modelPackage: ModelPackage,
   mode: StackingMode,
   addLog: (message: string) => void,
   setProgress: (progress: number) => void
@@ -342,15 +351,16 @@ export async function aiClientAlignAndStack(
     throw new Error("AI stacking requires at least two images.");
   }
   
-  // 1. Find candidate stars in ALL images first using the cross-validation method
+  // 1. Find candidate stars in ALL images first using the TFJS model
   const allImageStars: { imageId: string; stars: Star[] }[] = [];
-  addLog("[AI-CLIENT] Step 1: Identifying candidate stars in all images using cross-validation...");
+  addLog("[AI-CLIENT] Step 1: Identifying candidate stars in all images using TFJS model...");
   for (const entry of imageEntries) {
       if (!entry.imageData) continue;
       
       const { matchedStars, logs } = await findMatchingStars({
           imageData: { data: Array.from(entry.imageData.data), width: entry.analysisDimensions.width, height: entry.analysisDimensions.height },
-          learnedPatterns
+          model: modelPackage.model,
+          normalization: modelPackage.normalization,
       });
       logs.forEach(logMsg => addLog(`[AI-MATCH] ${entry.file.name}: ${logMsg}`));
 

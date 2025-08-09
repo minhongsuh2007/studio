@@ -3,12 +3,14 @@
 
 import type React from 'react';
 import { useState, useEffect, useRef, useCallback }from 'react';
+import * as tf from '@tensorflow/tfjs';
 import { Button } from '@/components/ui/button';
 import { fileToDataURL } from '@/lib/utils';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { alignAndStack, detectStars, type Star, type StackingMode } from '@/lib/astro-align';
 import { aiClientAlignAndStack } from '@/lib/ai-client-stack';
-import { extractCharacteristicsFromImage, findMatchingStars, type LearnedPattern, type SimpleImageData } from '@/lib/ai-star-matcher';
+import { extractCharacteristicsFromImage, findMatchingStars, type LearnedPattern, type SimpleImageData, type StarCharacteristics, predictSingle, buildModel } from '@/lib/ai-star-matcher';
+import { trainStarDetector, type TrainStarDetectorOutput } from '@/ai/flows/train-star-detector';
 import { AppHeader } from '@/components/astrostacker/AppHeader';
 import { ImageUploadArea } from '@/components/astrostacker/ImageUploadArea';
 import { ImageQueueItem } from '@/components/astrostacker/ImageQueueItem';
@@ -16,7 +18,7 @@ import { ImagePreview } from '@/components/astrostacker/ImagePreview';
 import { ImagePostProcessEditor } from '@/components/astrostacker/ImagePostProcessEditor';
 import { TutorialDialog } from '@/components/astrostacker/TutorialDialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Star as StarIcon, ListChecks, CheckCircle, RefreshCcw, Edit3, Loader2, Orbit, Trash2, Wand2, ShieldOff, Layers, Baseline, X, AlertTriangle, BrainCircuit, TestTube2, Eraser, Download, Upload } from 'lucide-react';
+import { Star as StarIcon, ListChecks, CheckCircle, RefreshCcw, Edit3, Loader2, Orbit, Trash2, Wand2, ShieldOff, Layers, Baseline, X, AlertTriangle, BrainCircuit, TestTube2, Eraser, Download, Upload, Cpu } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
@@ -52,6 +54,7 @@ export default function AstroStackerPage() {
   const [allImageStarData, setAllImageStarData] = useState<ImageQueueEntry[]>([]);
   const [stackedImage, setStackedImage] = useState<string | null>(null);
   const [isProcessingStack, setIsProcessingStack] = useState(false);
+  const [isTrainingModel, setIsTrainingModel] = useState(false);
   const [stackingMode, setStackingMode] = useState<StackingMode>('average');
   const [alignmentMethod, setAlignmentMethod] = useState<AlignmentMethod>('standard');
   const [previewFitMode, setPreviewFitMode] = useState<PreviewFitMode>('contain');
@@ -80,6 +83,11 @@ export default function AstroStackerPage() {
   const [isAnalyzingTestImage, setIsAnalyzingTestImage] = useState(false);
   const [testImageMatchedStars, setTestImageMatchedStars] = useState<Star[]>([]);
   const [canvasStars, setCanvasStars] = useState<Star[]>([]);
+
+  // --- TFJS Model State ---
+  const [trainedModel, setTrainedModel] = useState<tf.LayersModel | null>(null);
+  const [modelNormalization, setModelNormalization] = useState<{ means: number[], stds: number[] } | null>(null);
+
 
   useEffect(() => {
     try {
@@ -529,8 +537,8 @@ export default function AstroStackerPage() {
       window.alert("Please wait for all images to be analyzed before stacking.");
       return;
     }
-    if (alignmentMethod === 'ai' && selectedPatternIDs.size === 0) {
-        window.alert("AI Alignment method is selected, but no learned patterns are checked for use. Please select patterns from the Learning Mode section, or switch to Standard alignment.");
+    if (alignmentMethod === 'ai' && !trainedModel) {
+        window.alert("AI Alignment is selected, but the model hasn't been trained. Please add star patterns and click 'Train AI Model'.");
         return;
     }
   
@@ -542,10 +550,15 @@ export default function AstroStackerPage() {
   
     try {
       let stackedImageData;
-      if (alignmentMethod === 'ai') {
-        const activePatterns = learnedPatterns.filter(p => selectedPatternIDs.has(p.id));
-        addLog(`Using ${activePatterns.length} learned patterns for AI alignment.`);
-        stackedImageData = await aiClientAlignAndStack(allImageStarData, activePatterns, stackingMode, addLog, (p) => setProgressPercent(p*100));
+      if (alignmentMethod === 'ai' && trainedModel && modelNormalization) {
+        addLog(`Using TFJS model for AI alignment.`);
+        stackedImageData = await aiClientAlignAndStack(
+            allImageStarData, 
+            { model: trainedModel, normalization: modelNormalization },
+            stackingMode, 
+            addLog, 
+            (p) => setProgressPercent(p * 100)
+        );
 
       } else {
         const imageDatas = allImageStarData.map(entry => entry.imageData).filter((d): d is ImageData => d !== null);
@@ -642,21 +655,21 @@ export default function AstroStackerPage() {
         window.alert(t('noTestImageToastTitle'));
         return;
     }
-    const activePatterns = learnedPatterns.filter(p => selectedPatternIDs.has(p.id));
-    if (activePatterns.length !== 1) {
-        window.alert(t('noActivePatternForTestToastTitle'));
+    if (!trainedModel || !modelNormalization) {
+        window.alert("AI model is not trained. Please train the model before running a test.");
         return;
     }
+    
     setIsAnalyzingTestImage(true);
-    addLog(`Running pattern test on ${testImage.file.name} with pattern: ${activePatterns[0].id}`);
+    addLog(`Running model test on ${testImage.file.name}`);
     
     // This timeout is just to allow the UI to update to the "loading" state before a potentially long-running operation.
     setTimeout(async () => {
         const {data, width, height} = testImage.imageData!;
         const { matchedStars, logs } = await findMatchingStars({
-          allDetectedStars: testImage.detectedStars, 
           imageData: {data: Array.from(data), width, height},
-          learnedPatterns: activePatterns
+          model: trainedModel,
+          normalization: modelNormalization,
         });
         
         logs.forEach(logMsg => addLog(`[AI TEST] ${logMsg}`));
@@ -773,11 +786,55 @@ export default function AstroStackerPage() {
     };
     reader.readAsText(file);
   };
+  
+  const handleTrainModel = async () => {
+      const activePatterns = learnedPatterns.filter(p => selectedPatternIDs.has(p.id));
+      if (activePatterns.length === 0) {
+          window.alert("Please select at least one pattern to train the model.");
+          return;
+      }
+      
+      const allCharacteristics = activePatterns.flatMap(p => p.characteristics);
+      if (allCharacteristics.length < 20) {
+        window.alert(`Need at least 20 star samples to train a model. You have ${allCharacteristics.length}. Please add more stars via Manual Select.`);
+        return;
+      }
+      
+      addLog(`[TRAIN] Starting model training with ${allCharacteristics.length} star samples from ${activePatterns.length} patterns.`);
+      setIsTrainingModel(true);
+      
+      try {
+        const result: TrainStarDetectorOutput = await trainStarDetector(allCharacteristics);
+        
+        if (result.modelWeights && result.modelWeights.length > 0 && result.normalization) {
+            const model = buildModel(); // Build the client-side model structure
+            
+            // Deserialize weights
+            const deserializedWeights = result.modelWeights.map(w => tf.tensor(w.values, w.shape, w.dtype as any));
+            model.setWeights(deserializedWeights);
+
+            setTrainedModel(model);
+            setModelNormalization(result.normalization);
+
+            addLog(`[TRAIN] Model training successful! Accuracy: ${result.accuracy ? (result.accuracy * 100).toFixed(2) : 'N/A'}%. Model is ready.`);
+            window.alert("AI Model trained successfully and is ready for alignment.");
+        } else {
+             throw new Error("Training flow did not return valid model weights.");
+        }
+
+      } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          addLog(`[TRAIN ERROR] ${errorMessage}`);
+          window.alert(`Model training failed: ${errorMessage}`);
+      } finally {
+          setIsTrainingModel(false);
+      }
+  };
 
 
   const imageForAnnotation = allImageStarData.find(img => img.id === manualSelectImageId);
   const canStartStacking = allImageStarData.length >= 2 && allImageStarData.every(img => img.isAnalyzed);
-  const isUiDisabled = isProcessingStack || allImageStarData.some(img => img.isAnalyzing);
+  const isUiDisabled = isProcessingStack || isTrainingModel || allImageStarData.some(img => img.isAnalyzing);
   const currentYear = new Date().getFullYear();
 
   return (
@@ -895,8 +952,13 @@ export default function AstroStackerPage() {
                 <CardContent>
                     <div className="grid grid-cols-2 gap-4 mb-4">
                       <Button onClick={handleExportPatterns} disabled={learnedPatterns.length === 0}><Download className="mr-2 h-4 w-4" />{t('exportPatternsButton')}</Button>
-                      <ImageUploadArea onFilesAdded={handleImportPatterns} isProcessing={false} multiple={false} accept={{ 'application/json': ['.json'] }} dropzoneText={t('importPatternsDropzone')} buttonText={t('importPatternsButton')} />
+                      <ImageUploadArea onFilesAdded={handleImportPatterns} isProcessing={isUiDisabled} multiple={false} accept={{ 'application/json': ['.json'] }} dropzoneText={t('importPatternsDropzone')} buttonText={t('importPatternsButton')} />
                     </div>
+                     <Button onClick={handleTrainModel} disabled={isUiDisabled || learnedPatterns.filter(p => selectedPatternIDs.has(p.id)).length === 0} className="w-full mb-4">
+                        {isTrainingModel ? <><Loader2 className="mr-2 h-4 w-4 animate-spin"/>{t('trainingModelButton')}</> : <><Cpu className="mr-2 h-4 w-4" />{t('trainModelButton')}</>}
+                    </Button>
+                    {trainedModel && <Alert variant="default" className="mb-4"><AlertCircle className="h-4 w-4" /><AlertTitle>Model Trained</AlertTitle><AlertDescription>An AI model has been trained and is ready. The 'AI Pattern' stacking method will now use this model.</AlertDescription></Alert>}
+
                     <h4 className="font-semibold mb-2">{t('allLearnedPatternsListTitle')}</h4>
                     {learnedPatterns.length === 0 ? (<p className="text-sm text-muted-foreground">{t('noPatternLearnedYetInfo')}</p>) : (
                         <ScrollArea className="h-40 border rounded-md p-2">
@@ -920,8 +982,8 @@ export default function AstroStackerPage() {
             <Card>
                 <CardHeader><CardTitle className="flex items-center"><TestTube2 className="mr-2 h-5 w-5" />{t('learnTestCardTitle')}</CardTitle><CardDescription>{t('learnTestCardDescription')}</CardDescription></CardHeader>
                 <CardContent className="space-y-4">
-                    <ImageUploadArea onFilesAdded={handleTestFileAdded} isProcessing={isAnalyzingTestImage} multiple={false} />
-                    <Button onClick={runPatternTest} disabled={isAnalyzingTestImage || !testImage} className="w-full">
+                    <ImageUploadArea onFilesAdded={handleTestFileAdded} isProcessing={isAnalyzingTestImage || isUiDisabled} multiple={false} />
+                    <Button onClick={runPatternTest} disabled={isAnalyzingTestImage || isUiDisabled || !testImage} className="w-full">
                         {isAnalyzingTestImage ? <><Loader2 className="mr-2 h-4 w-4 animate-spin"/>{t('analyzingTestImageProgress')}</> : <>{t('runPatternTestButton')}</>}
                     </Button>
                     {testImage && <p className="text-sm text-center text-muted-foreground">{t('recognizedStarsCount', {count: testImageMatchedStars.length})}</p>}
