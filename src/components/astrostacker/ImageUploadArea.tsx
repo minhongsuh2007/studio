@@ -29,6 +29,13 @@ export function ImageUploadArea({ onFilesAdded, isProcessing, multiple = true }:
       'image/png': ['.png'],
       'image/gif': ['.gif'],
       'image/webp': ['.webp'],
+      'image/tiff': ['.tif', '.tiff'],
+      'image/fits': ['.fit', '.fits'],
+      'image/x-canon-cr2': ['.cr2'],
+      'image/x-nikon-nef': ['.nef'],
+      'image/x-sony-arw': ['.arw'],
+      'image/x-adobe-dng': ['.dng'],
+      'image/x-raw': ['.raw'],
     },
     multiple: multiple, 
     disabled: isProcessing,
@@ -50,7 +57,7 @@ export function ImageUploadArea({ onFilesAdded, isProcessing, multiple = true }:
           {multiple ? "Drag & drop images here" : "Drag & drop a single image here"}
         </p>
         <p className="text-sm text-muted-foreground">
-          or click to select {multiple ? "files" : "a file"} (JPG, PNG supported).
+          or click to select {multiple ? "files" : "a file"} (JPG, PNG, TIFF, FITS, RAW supported).
         </p>
         <Button
             type="button"
