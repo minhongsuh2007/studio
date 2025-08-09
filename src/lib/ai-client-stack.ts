@@ -4,7 +4,6 @@
 import type { StackingMode, Transform } from '@/lib/astro-align';
 import { findMatchingStars, type LearnedPattern } from '@/lib/ai-star-matcher';
 import type { Star } from '@/lib/astro-align';
-import { detectStarsAI } from './ai-star-detection';
 
 // This type definition is duplicated from page.tsx to avoid circular dependencies.
 interface ImageQueueEntry {
@@ -38,8 +37,8 @@ function getTransformFromStarPair(refStar1: Star, refStar2: Star, targetStar1: S
     let angle = targetAngle - refAngle;
 
     // Scale from the lengths of the vectors
-    const refDist = Math.sqrt(refVec.x * refVec.x + refVec.y * refVec.y);
-    const targetDist = Math.sqrt(targetVec.x * targetVec.x + targetVec.y * targetVec.y);
+    const refDist = Math.hypot(refVec.x, refVec.y);
+    const targetDist = Math.hypot(targetVec.x, targetVec.y);
 
     if (refDist === 0) return null;
     let scale = targetDist / refDist;
@@ -343,24 +342,23 @@ export async function aiClientAlignAndStack(
     throw new Error("AI stacking requires at least two images.");
   }
   
-  // 1. Find candidate stars in ALL images first
+  // 1. Find candidate stars in ALL images first using the cross-validation method
   const allImageStars: { imageId: string; stars: Star[] }[] = [];
-  addLog("[AI-CLIENT] Step 1: Identifying candidate stars in all images...");
+  addLog("[AI-CLIENT] Step 1: Identifying candidate stars in all images using cross-validation...");
   for (const entry of imageEntries) {
       if (!entry.imageData) continue;
-      const { width, height } = entry.analysisDimensions;
-      const aiDetectedStars = detectStarsAI(entry.imageData, width, height, 50);
-      const { matchedStars } = await findMatchingStars({
-          allDetectedStars: aiDetectedStars,
-          imageData: { data: Array.from(entry.imageData.data), width, height },
+      
+      const { matchedStars, logs } = await findMatchingStars({
+          imageData: { data: Array.from(entry.imageData.data), width: entry.analysisDimensions.width, height: entry.analysisDimensions.height },
           learnedPatterns
       });
+      logs.forEach(logMsg => addLog(`[AI-MATCH] ${entry.file.name}: ${logMsg}`));
+
+      const topStars = matchedStars.sort((a, b) => b.brightness - a.brightness);
       
-      const top10Stars = matchedStars.sort((a, b) => b.brightness - a.brightness).slice(0, 10);
-      
-      if (top10Stars.length > 1) {
-          allImageStars.push({ imageId: entry.id, stars: top10Stars });
-          addLog(`[AI-CLIENT] Image ${entry.file.name}: Found ${top10Stars.length} high-confidence stars.`);
+      if (topStars.length > 1) {
+          allImageStars.push({ imageId: entry.id, stars: topStars });
+          addLog(`[AI-CLIENT] Image ${entry.file.name}: Found ${topStars.length} high-confidence stars.`);
       } else {
         addLog(`[AI-CLIENT] Image ${entry.file.name} has < 2 matched stars, excluding from pair search.`);
       }

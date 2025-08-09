@@ -2,6 +2,8 @@
 'use server';
 
 import type { Star } from './astro-align';
+import { detectStarsAI } from './ai-star-detection';
+import { detectStars } from './astro-align';
 
 export interface StarCharacteristics {
   avgBrightness: number;
@@ -21,7 +23,7 @@ export interface LearnedPattern {
 }
 
 export interface SimpleImageData {
-    data: number[];
+    data: number[] | Uint8ClampedArray;
     width: number;
     height: number;
 }
@@ -155,110 +157,138 @@ export async function extractCharacteristicsFromImage({
   return characteristics;
 }
 
+
+// --- Cross-Validation Star Matching ---
+
+function findMatchesByRatio(allDetectedStars: Star[], imageData: SimpleImageData, grayData: Uint8Array, learnedPatterns: LearnedPattern[], tolerance: number): Star[] {
+    const matchedStars: Star[] = [];
+    const getBrightness = (rgb: [number, number, number]) => 0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2];
+    
+    for (const star of allDetectedStars) {
+        const starChars = getStarCharacteristics(star, imageData, grayData);
+        if (!starChars) continue;
+        
+        for (const pattern of learnedPatterns) {
+            for (const learnedChar of pattern.characteristics) {
+                const starCenterBrightness = getBrightness(starChars.centerRGB);
+                const star3x3Brightness = getBrightness(starChars.patch3x3RGB);
+                
+                const learnedCenterBrightness = getBrightness(learnedChar.centerRGB);
+                const learned3x3Brightness = getBrightness(learnedChar.patch3x3RGB);
+                
+                if (learnedCenterBrightness === 0 || learned3x3Brightness === 0) continue;
+                
+                const starRatio = starCenterBrightness / (star3x3Brightness + 1e-6);
+                const learnedRatio = learnedCenterBrightness / (learned3x3Brightness + 1e-6);
+                
+                const ratioDiff = Math.abs(starRatio - learnedRatio) / learnedRatio;
+
+                if (ratioDiff < tolerance) {
+                    matchedStars.push(star);
+                    break;
+                }
+            }
+            if (matchedStars.some(s => s === star)) break;
+        }
+    }
+    return matchedStars;
+}
+
+function findMatchesByRelationship(allDetectedStars: Star[], imageData: SimpleImageData, grayData: Uint8Array, learnedPatterns: LearnedPattern[], tolerance: number): Star[] {
+    const matchedStars: Star[] = [];
+    const getBrightness = (rgb: [number, number, number]) => 0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2];
+    const rgbDistance = (c1: [number, number, number], c2: [number, number, number]) => Math.sqrt((c1[0] - c2[0])**2 + (c1[1] - c2[1])**2 + (c1[2] - c2[2])**2);
+    
+    for (const star of allDetectedStars) {
+        const starChars = getStarCharacteristics(star, imageData, grayData);
+        if (!starChars) continue;
+        
+        for (const pattern of learnedPatterns) {
+            for (const learnedChar of pattern.characteristics) {
+                // Brightness relationship
+                const starBrightnessDiff = getBrightness(starChars.centerRGB) - getBrightness(starChars.patch3x3RGB);
+                const learnedBrightnessDiff = getBrightness(learnedChar.centerRGB) - getBrightness(learnedChar.patch3x3RGB);
+                const brightnessRelationshipError = Math.abs(starBrightnessDiff - learnedBrightnessDiff) / (Math.abs(learnedBrightnessDiff) + 10);
+                
+                // Color relationship
+                const starColorDiff = rgbDistance(starChars.centerRGB, starChars.patch3x3RGB);
+                const learnedColorDiff = rgbDistance(learnedChar.centerRGB, learnedChar.patch3x3RGB);
+                const colorRelationshipError = Math.abs(starColorDiff - learnedColorDiff) / (learnedColorDiff + 10);
+                
+                if (brightnessRelationshipError < tolerance && colorRelationshipError < tolerance) {
+                    matchedStars.push(star);
+                    break; 
+                }
+            }
+            if (matchedStars.some(s => s === star)) break;
+        }
+    }
+    return matchedStars;
+}
+
+
 export async function findMatchingStars({
-  allDetectedStars,
   imageData,
   learnedPatterns,
 }: {
-  allDetectedStars: Star[],
   imageData: SimpleImageData,
   learnedPatterns: LearnedPattern[],
 }): Promise<{matchedStars: Star[], logs: string[]}> {
   const logs: string[] = [];
   try {
-    logs.push(`[findMatchingStars] Starting match process with ${allDetectedStars.length} detected stars and ${learnedPatterns.length} patterns.`);
+    logs.push(`Starting cross-validation match process with ${learnedPatterns.length} patterns.`);
     if (learnedPatterns.length === 0) return { matchedStars: [], logs };
     
     const grayData = toGrayscale(imageData);
     if (!grayData) {
-        logs.push("[findMatchingStars] Error: Failed to convert image to grayscale.");
+        logs.push("Error: Failed to convert image to grayscale.");
         return { matchedStars: [], logs };
     }
+    
+    const allDetectedForAI = detectStarsAI(imageData as ImageData, imageData.width, imageData.height, 50);
 
-    let matchedStars: Star[] = [];
-    let brightnessTolerance = 0.2; // Start with a strict 20%
-    let rgbTolerance = 0.15; // Start with a strict 15%
-    const MAX_BRIGHTNESS_TOLERANCE = 0.8;
-    const MAX_RGB_TOLERANCE = 0.7;
-    let attempts = 0;
+    let tolerance = 0.1;
+    let finalStars: Star[] = [];
 
-    while (matchedStars.length < 10 && attempts < 10) {
-      matchedStars = []; // Reset for each attempt
-      logs.push(`[AI-MATCH] Attempt #${attempts + 1}: Finding matches with Brightness Tolerance=${(brightnessTolerance*100).toFixed(0)}%, RGB Tolerance=${(rgbTolerance*100).toFixed(0)}%`);
+    while (finalStars.length < 10) {
+        logs.push(`Attempting cross-validation with tolerance ${tolerance.toFixed(2)}`);
 
-      for (const star of allDetectedStars) {
-          const starChars = getStarCharacteristics(star, imageData, grayData);
-          if (!starChars) continue;
-          
-          if (compareCharacteristics(starChars, learnedPatterns, brightnessTolerance, rgbTolerance)) {
-              matchedStars.push(star);
-          }
-      }
+        // Method 1: Standard non-AI detection
+        const standardStars = detectStars(imageData as ImageData, imageData.width, imageData.height, 60);
 
-      if (matchedStars.length < 10) {
-        brightnessTolerance = Math.min(MAX_BRIGHTNESS_TOLERANCE, brightnessTolerance * 1.5);
-        rgbTolerance = Math.min(MAX_RGB_TOLERANCE, rgbTolerance * 1.5);
-      }
-      attempts++;
+        // Method 2: AI Ratio-based matching
+        const ratioStars = findMatchesByRatio(allDetectedForAI, imageData, grayData, learnedPatterns, tolerance * 2);
+
+        // Method 3: AI Relationship-based matching (2-stage filter)
+        const relationshipStars = findMatchesByRelationship(allDetectedForAI, imageData, grayData, learnedPatterns, tolerance);
+
+        logs.push(`Found: Standard(${standardStars.length}), Ratio(${ratioStars.length}), Relationship(${relationshipStars.length})`);
+
+        // Find intersection of all three methods
+        const standardStarSet = new Set(standardStars.map(s => `${Math.round(s.x)},${Math.round(s.y)}`));
+        const ratioStarSet = new Set(ratioStars.map(s => `${Math.round(s.x)},${Math.round(s.y)}`));
+        
+        finalStars = relationshipStars.filter(s => {
+            const key = `${Math.round(s.x)},${Math.round(s.y)}`;
+            return standardStarSet.has(key) && ratioStarSet.has(key);
+        });
+
+        if (finalStars.length >= 10) {
+            logs.push(`Cross-validation successful. Found ${finalStars.length} stars common to all 3 methods.`);
+            break;
+        }
+
+        // Loosen tolerance for the next attempt
+        tolerance *= 1.5; 
+        logs.push(`Found ${finalStars.length} stars. Loosening tolerance and retrying.`);
     }
 
+    return { matchedStars: finalStars, logs };
 
-    logs.push(`[findMatchingStars] Found ${matchedStars.length} stars matching the patterns after ${attempts} attempt(s).`);
-    return { matchedStars, logs };
   } catch (e) {
     const errorMessage = e instanceof Error ? e.message : String(e);
-    logs.push(`[findMatchingStars] CRASH! ${errorMessage}`);
+    logs.push(`CRASH in findMatchingStars! ${errorMessage}`);
     console.error("Error in findMatchingStars:", e);
     throw new Error(`A critical error occurred in findMatchingStars: ${errorMessage}`);
   }
-}
-
-function compareCharacteristics(
-  starChars: StarCharacteristics,
-  learnedPatterns: LearnedPattern[],
-  brightnessTolerance: number,
-  rgbTolerance: number
-): boolean {
-  const getBrightness = (rgb: [number, number, number]) => 0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2];
-  const rgbDistance = (c1: [number, number, number], c2: [number, number, number]) => {
-      const total1 = c1[0] + c1[1] + c1[2] + 1e-6;
-      const total2 = c2[0] + c2[1] + c2[2] + 1e-6;
-      const r1 = c1[0] / total1, g1 = c1[1] / total1;
-      const r2 = c2[0] / total2, g2 = c2[1] / total2;
-      return Math.sqrt((r1 - r2) ** 2 + (g1 - g2) ** 2);
-  };
-
-  const starCenterBrightness = getBrightness(starChars.centerRGB);
-  const star3x3Brightness = getBrightness(starChars.patch3x3RGB);
-  const star5x5Brightness = getBrightness(starChars.patch5x5RGB);
-
-  for (const pattern of learnedPatterns) {
-    for (const learnedChar of pattern.characteristics) {
-      // --- Stage 1: Brightness Filtering ---
-      const learnedCenterBrightness = getBrightness(learnedChar.centerRGB);
-      const learned3x3Brightness = getBrightness(learnedChar.patch3x3RGB);
-      const learned5x5Brightness = getBrightness(learnedChar.patch5x5RGB);
-
-      const centerBrightDiff = Math.abs(starCenterBrightness - learnedCenterBrightness) / (learnedCenterBrightness + 1e-6);
-      const bright3x3Diff = Math.abs(star3x3Brightness - learned3x3Brightness) / (learned3x3Brightness + 1e-6);
-      const bright5x5Diff = Math.abs(star5x5Brightness - learned5x5Brightness) / (learned5x5Brightness + 1e-6);
-
-      if (centerBrightDiff > brightnessTolerance || bright3x3Diff > brightnessTolerance || bright5x5Diff > brightnessTolerance) {
-        continue; // Failed brightness test
-      }
-
-      // --- Stage 2: Color Filtering ---
-      const centerRgbDiff = rgbDistance(starChars.centerRGB, learnedChar.centerRGB);
-      const patch3RgbDiff = rgbDistance(starChars.patch3x3RGB, learnedChar.patch3x3RGB);
-      const patch5RgbDiff = rgbDistance(starChars.patch5x5RGB, learnedChar.patch5x5RGB);
-
-      if (centerRgbDiff > rgbTolerance || patch3RgbDiff > rgbTolerance || patch5RgbDiff > rgbTolerance) {
-          continue; // Failed color test
-      }
-      
-      // If both tests passed for any learned characteristic, it's a match.
-      return true;
-    }
-  }
-  return false;
 }
