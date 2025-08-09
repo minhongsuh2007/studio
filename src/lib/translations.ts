@@ -155,7 +155,7 @@ export const translations: Translations = {
     tutorialStep2Title: "Step 2: Choose Alignment Method",
     tutorialStep2Content: "On the left panel, select your 'Alignment Method'.\n\n- Standard (2-Star): This classic method uses the two brightest stars in your first (REF) image to align all others. It's fast and simple. For best results, you can click 'Select Stars' on the reference image to manually pick the two alignment stars.\n\n- AI Pattern: This powerful method uses a machine learning model to find the best stars for alignment. To use it, you must first teach the AI.",
     tutorialStep3Title: "Step 3: (AI Method) Teach the AI",
-    tutorialStep3Content: "To use the 'AI Pattern' method, you first need to create training data and train a model.\n1. On any analyzed image, click 'Select Stars'.\n2. In the main preview, click on at least 20-30 distinct, clear stars. You can do this across multiple images by confirming the selection for each.\n3. Click 'Confirm & Learn Pattern'. This saves the characteristics of your selected stars.\n4. In the 'Pattern Learning' card, check the patterns you want to use for training.\n5. Click 'Train AI Model'. This sends the data to the server to train a model, which is then sent back to your browser. Once trained, the model is ready.",
+    tutorialStep3Content: "To use the 'AI Pattern' method, you first need to create training data and train a model.\n1. On any analyzed image, click 'Select Stars'.\n2. In the main preview, click on at least 20-30 distinct, clear stars. You can do this across multiple images by confirming the selection for each.\n3. Click 'Confirm & Learn Pattern'. This saves the characteristics of your selected stars.\n4. In the 'Pattern Learning' card, check the patterns you want to use for training.\n5. Click 'Train AI Model'. This trains a model directly in your browser. Once trained, the model is ready and is automatically saved for future sessions.",
     tutorialStep4Title: "Step 4: Configure and Stack",
     tutorialStep4Content: "Below the alignment method, you can configure the 'Stacking Mode' (Average, Median, Sigma Clip) which determines how pixel values are combined. When you're ready, click the main 'Stack Images' button. The app will align each image and then combine them, showing progress.",
     tutorialStep5Title: "Step 5: Post-Process and Download",
@@ -312,11 +312,11 @@ export const translations: Translations = {
     tutorialStep2Title: "2단계: 정렬 방법 선택",
     tutorialStep2Content: "왼쪽 패널에서 '정렬 방법'을 선택합니다.\n\n- 표준 (2-Star): 이 고전적인 방법은 첫 번째(REF) 이미지에서 가장 밝은 두 별을 사용하여 다른 모든 이미지를 정렬합니다. 빠르고 간단합니다. 최상의 결과를 얻으려면 참조 이미지에서 '별 선택'을 클릭하여 두 개의 정렬 별을 수동으로 선택할 수 있습니다.\n\n- AI 패턴: 이 강력한 방법은 머신러닝 모델을 사용하여 정렬에 가장 적합한 별을 찾습니다. 이를 사용하려면 먼저 AI를 학습시켜야 합니다.",
     tutorialStep3Title: "3단계: (AI 방법) AI 학습시키기",
-    tutorialStep3Content: "'AI 패턴' 방법을 사용하려면 먼저 학습 데이터를 만들고 모델을 훈련해야 합니다.\n1. 분석된 이미지에서 '별 선택'을 클릭합니다.\n2. 메인 미리보기에서 최소 20-30개의 뚜렷하고 선명한 별을 클릭합니다. 각 이미지에 대해 선택을 확인하여 여러 이미지에 걸쳐 이 작업을 수행할 수 있습니다.\n3. '확인 및 패턴 학습'을 클릭합니다. 이렇게 하면 선택한 별의 특성이 저장됩니다.\n4. '패턴 학습' 카드에서 훈련에 사용할 패턴을 선택합니다.\n5. 'AI 모델 훈련'을 클릭합니다. 이렇게 하면 데이터가 서버로 전송되어 모델을 훈련한 다음 브라우저로 다시 전송됩니다. 훈련이 완료되면 모델을 사용할 준비가 된 것입니다.",
+    tutorialStep3Content: "'AI 패턴' 방법을 사용하려면 먼저 학습 데이터를 만들고 모델을 훈련해야 합니다.\n1. 분석된 이미지에서 '별 선택'을 클릭합니다.\n2. 메인 미리보기에서 최소 20-30개의 뚜렷하고 선명한 별을 클릭합니다. 각 이미지에 대해 선택을 확인하여 여러 이미지에 걸쳐 이 작업을 수행할 수 있습니다.\n3. '확인 및 패턴 학습'을 클릭합니다. 이렇게 하면 선택한 별의 특성이 저장됩니다.\n4. '패턴 학습' 카드에서 훈련에 사용할 패턴을 선택합니다.\n5. 'AI 모델 훈련'을 클릭합니다. 이렇게 하면 브라우저에서 직접 모델이 훈련됩니다. 훈련이 완료되면 모델을 사용할 준비가 된 것이며, 향후 세션을 위해 자동으로 저장됩니다.",
     tutorialStep4Title: "4단계: 설정 및 스태킹",
     tutorialStep4Content: "정렬 방법 아래에서 픽셀 값을 결합하는 방법을 결정하는 '스태킹 모드'(평균, 중앙값, 시그마 클립)를 구성할 수 있습니다. 준비가 되면 메인 '이미지 스태킹' 버튼을 클릭합니다. 앱이 각 이미지를 정렬한 다음 결합하며 진행 상황을 보여줍니다.",
     tutorialStep5Title: "5단계: 후처리 및 다운로드",
-    tutorialStep5Content: "스태킹이 완료되면 최종 이미지가 나타납니다. '이미지 확정 및 다운로드'를 클릭하여 후처리 편집기를 엽니다. 여기에서 밝기, 노출 및 채도를 조정하여 이미지를 향상시킬 수 있습니다. 만족스러우면 '이미지 다운로드' 버튼을 클릭하여 결과를 컴퓨터에 저장하십시오.",
+    tutorialStep5Content: "스태킹이 완료되면 최종 이미지가 나타납니다. '이미지 확정 및 다운로드'를 클릭하여 후처리 편집기를 엽니다. 여기에서 밝기, 노출 및 채도를 조정하여 이미지를 향상시킬 수 있습니다. 만족스러우면 '이미지 다운로드' 버튼을 클릭하여 결과를 컴퓨터에 저장하십시오。",
     
     exportPatternsButton: "학습 데이터 저장",
     importPatternsButton: "학습 데이터 불러오기",
@@ -469,7 +469,7 @@ export const translations: Translations = {
     tutorialStep2Title: "第二步：选择对齐方法",
     tutorialStep2Content: "在左侧面板上，选择您的“对齐方法”。\n\n- 标准（2星）：这种经典方法使用您的第一张（REF）图像中最亮的两颗星来对齐所有其他图像。它快速而简单。为获得最佳效果，您可以单击参考图像上的“选择星点”以手动选择两个对齐星点。\n\n- AI模式：这种强大的方法使用机器学习模型来找到最佳的对齐星点。要使用它，您必须首先教导AI。",
     tutorialStep3Title: "第三步：（AI方法）教导AI",
-    tutorialStep3Content: "要使用“AI模式”方法，您首先需要创建训练数据并训练模型。\n1. 在任何已分析的图像上，单击“选择星点”。\n2. 在主预览中，单击至少20-30个不同、清晰的星点。您可以通过确认为每个图像的选择来跨多个图像执行此操作。\n3. 单击“确认并学习模式”。这将保存您选择的星点的特征。\n4. 在“模式学习”卡中，选中您要用于训练的模式。\n5. 单击“训练AI模型”。这将数据发送到服务器以训练模型，然后将其发送回您的浏览器。训练后，模型即可使用。",
+    tutorialStep3Content: "要使用“AI模式”方法，您首先需要创建训练数据并训练模型。\n1. 在任何已分析的图像上，单击“选择星点”。\n2. 在主预览中，单击至少20-30个不同、清晰的星点。您可以通过确认为每个图像的选择来跨多个图像执行此操作。\n3. 单击“确认并学习模式”。这将保存您选择的星点的特征。\n4. 在“模式学习”卡中，选中您要用于训练的模式。\n5. 单击“训练AI模型”。这会在您的浏览器中直接训练一个模型。训练后，模型即可使用，并会自动保存以供将来会话使用。",
     tutorialStep4Title: "第四步：配置和叠加",
     tutorialStep4Content: "在对齐方法下方，您可以配置“叠加模式”（平均、中位数、西格玛裁剪），它决定了像素值的组合方式。准备好后，单击主“叠加图像”按钮。应用程序将对齐每个图像，然后将它们组合起来，并显示进度。",
     tutorialStep5Title: "第五步：后期处理和下载",
@@ -615,7 +615,7 @@ export const translations: Translations = {
     tutorialStep2Title: "ステップ2：アライメント方法を選択",
     tutorialStep2Content: "左側のパネルで、「アライメント方法」を選択します。\n\n- 標準（2つ星）：このクラシックな方法は、最初の（REF）画像の最も明るい2つの星を使用して他のすべての画像を整列させます。高速でシンプルです。最良の結果を得るには、参照画像で「星を選択」をクリックして2つのアライメント星を手動で選択できます。\n\n- AIパターン：この強力な方法は、機械学習モデルを使用してアライメントに最適な星を見つけます。これを使用するには、まずAIを教える必要があります。",
     tutorialStep3Title: "ステップ3：（AI方式）AIを教える",
-    tutorialStep3Content: "「AIパターン」方式を使用するには、まずトレーニングデータを作成し、モデルをトレーニングする必要があります。\n1. 分析済みの画像で「星を選択」をクリックします。\n2. メインプレビューで、少なくとも20〜30個の明確な星をクリックします。各画像の選択を確認することで、複数の画像にわたってこれを行うことができます。\n3. 「確認してパターンを学習」をクリックします。これにより、選択した星の特性が保存されます。\n4. 「パターン学習」カードで、トレーニングに使用するパターンにチェックを入れます。\n5. 「AIモデルをトレーニング」をクリックします。これにより、データがサーバーに送信されてモデルがトレーニングされ、ブラウザに返されます。トレーニングが完了すると、モデルを使用する準備が整います。",
+    tutorialStep3Content: "「AIパターン」方式を使用するには、まずトレーニングデータを作成し、モデルをトレーニングする必要があります。\n1. 分析済みの画像で「星を選択」をクリックします。\n2. メインプレビューで、少なくとも20〜30個の明確な星をクリックします。各画像の選択を確認することで、複数の画像にわたってこれを行うことができます。\n3. 「確認してパターンを学習」をクリックします。これにより、選択した星の特性が保存されます。\n4. 「パターン学習」カードで、トレーニングに使用するパターンにチェックを入れます。\n5. 「AIモデルをトレーニング」をクリックします。これにより、ブラウザで直接モデルがトレーニングされます。トレーニングが完了すると、モデルを使用する準備が整い、将来のセッションのために自動的に保存されます。",
     tutorialStep4Title: "ステップ4：設定とスタック",
     tutorialStep4Content: "アライメント方法の下で、ピクセル値の結合方法を決定する「スタッキングモード」（平均、中央値、シグマクリップ）を設定できます。準備ができたら、メインの「画像をスタック」ボタンをクリックします。アプリは各画像を整列させてから結合し、進行状況を表示します。",
     tutorialStep5Title: "ステップ5：後処理とダウンロード",
@@ -635,3 +635,5 @@ export const translations: Translations = {
 export const defaultLocale: Locale = 'en';
 
 export const getTranslations = (locale: Locale) => translations[locale] || translations[defaultLocale];
+
+    

@@ -48,6 +48,7 @@ type AlignmentMethod = 'standard' | 'ai';
 const MIN_VALID_DATA_URL_LENGTH = 100;
 const IS_LARGE_IMAGE_THRESHOLD_MP = 12;
 const MAX_DIMENSION_DOWNSCALED = 2048;
+const TF_MODEL_STORAGE_KEY = 'localstorage://astrostacker-model';
 
 export default function AstroStackerPage() {
   const { t } = useLanguage();
@@ -95,8 +96,27 @@ export default function AstroStackerPage() {
       if (storedPatterns) {
         setLearnedPatterns(JSON.parse(storedPatterns));
       }
+      
+      const loadModel = async () => {
+        addLog("[AI-CLIENT] Checking for a saved model in browser storage...");
+        try {
+            const loadedModel = await tf.loadLayersModel(TF_MODEL_STORAGE_KEY);
+            const storedNormalization = localStorage.getItem('astrostacker-model-normalization');
+            if (loadedModel && storedNormalization) {
+                setTrainedModel(loadedModel);
+                setModelNormalization(JSON.parse(storedNormalization));
+                addLog("[AI-CLIENT] Successfully loaded pre-trained model from storage.");
+            } else {
+                addLog("[AI-CLIENT] No pre-trained model found.");
+            }
+        } catch (e) {
+            addLog("[AI-CLIENT] No pre-trained model found in storage.");
+        }
+      };
+      loadModel();
+
     } catch (e) {
-      console.error("Failed to load learned patterns from localStorage", e);
+      console.error("Failed to load data from localStorage", e);
       addLog("[ERROR] Failed to load learned patterns from localStorage.");
     }
   }, []);
@@ -896,8 +916,13 @@ export default function AstroStackerPage() {
         
         setTrainedModel(model);
         setModelNormalization({ means, stds });
+        
+        // Save model to localStorage
+        await model.save(TF_MODEL_STORAGE_KEY);
+        localStorage.setItem('astrostacker-model-normalization', JSON.stringify({ means, stds }));
 
-        addLog(`[TRAIN] Client-side training successful! Accuracy: ${accuracy ? (accuracy * 100).toFixed(2) : 'N/A'}%. Model is ready.`);
+
+        addLog(`[TRAIN] Client-side training successful! Accuracy: ${accuracy ? (accuracy * 100).toFixed(2) : 'N/A'}%. Model is saved and ready.`);
         window.alert("AI Model trained successfully and is ready for alignment.");
 
       } catch (error) {
@@ -1035,7 +1060,7 @@ export default function AstroStackerPage() {
                      <Button onClick={handleTrainModel} disabled={isUiDisabled || learnedPatterns.filter(p => selectedPatternIDs.has(p.id)).length === 0} className="w-full mb-4">
                         {isTrainingModel ? <><Loader2 className="mr-2 h-4 w-4 animate-spin"/>{t('trainingModelButton')}</> : <><Cpu className="mr-2 h-4 w-4" />{t('trainModelButton')}</>}
                     </Button>
-                    {trainedModel && <Alert variant="default" className="mb-4"><AlertCircle className="h-4 w-4" /><AlertTitle>Model Trained</AlertTitle><AlertDescription>An AI model has been trained and is ready. The 'AI Pattern' stacking method will now use this model.</AlertDescription></Alert>}
+                    {trainedModel && <Alert variant="default" className="mb-4"><AlertCircle className="h-4 w-4" /><AlertTitle>Model Ready</AlertTitle><AlertDescription>An AI model is trained and ready. The 'AI Pattern' alignment method will now use this model.</AlertDescription></Alert>}
 
                     <h4 className="font-semibold mb-2">{t('allLearnedPatternsListTitle')}</h4>
                     {learnedPatterns.length === 0 ? (<p className="text-sm text-muted-foreground">{t('noPatternLearnedYetInfo')}</p>) : (
@@ -1086,3 +1111,5 @@ export default function AstroStackerPage() {
     </div>
   );
 }
+
+    
