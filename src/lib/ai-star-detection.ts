@@ -45,7 +45,8 @@ function isStarColorConsistent(star: Star, imageData: ImageData): boolean {
     const avgG = sumG / pixelCount;
     const avgB = sumB / pixelCount;
 
-    if (avgR + avgG + avgB < 15) { // If surroundings are very dark, it's likely a hot pixel
+    // Stricter check: if surroundings are very dark, it's likely a hot pixel
+    if (avgR + avgG + avgB < 25) { 
         return false;
     }
 
@@ -64,8 +65,8 @@ function isStarColorConsistent(star: Star, imageData: ImageData): boolean {
     const diffR = Math.abs(centerRatioR - avgRatioR);
     const diffG = Math.abs(centerRatioG - avgRatioG);
     
-    // Allow a small tolerance for color ratio differences (e.g., 15% deviation).
-    const COLOR_TOLERANCE = 0.15; 
+    // Stricter tolerance for color ratio differences (e.g., 12% deviation).
+    const COLOR_TOLERANCE = 0.12; 
     return diffR < COLOR_TOLERANCE && diffG < COLOR_TOLERANCE;
 }
 
