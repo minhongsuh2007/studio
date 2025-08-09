@@ -9,7 +9,26 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 export const fileToDataURL = async (file: File): Promise<string> => {
-  // Check if ImageMagick is ready
+  // Check if ImageMagick is ready, but only if it's needed for the file type
+  const isStandardWebFormat = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'].includes(file.type);
+
+  if (isStandardWebFormat) {
+    // Use the fast, native FileReader for standard formats
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        if (e.target?.result) {
+          resolve(e.target.result as string);
+        } else {
+          reject(new Error("FileReader failed for standard image format."));
+        }
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+  // For non-standard formats, wait for and use ImageMagick
   if (!window.ImageMagick) {
     return new Promise((resolve) => {
       // Wait for the custom event that signals WASM is ready
@@ -53,7 +72,7 @@ async function processFileWithImageMagick(file: File): Promise<string> {
 
     } catch (error) {
         console.error("Error processing file with ImageMagick:", error);
-        // Fallback to simple FileReader for basic types if Magick fails
+        // Fallback to simple FileReader for basic types if Magick fails (as a safety net)
         if (['image/jpeg', 'image/png', 'image/gif'].includes(file.type)) {
             return new Promise((resolve, reject) => {
                 const reader = new FileReader();
