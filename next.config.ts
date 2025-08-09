@@ -31,6 +31,7 @@ const nextConfig: NextConfig = {
         config.resolve.fallback = {
             ...config.resolve.fallback,
             fs: false, // This tells webpack to replace `fs` with an empty module on the client side.
+            '@tensorflow/tfjs-node': false, // Exclude tfjs-node from client-side bundle.
         };
     }
     return config;
