@@ -1,4 +1,5 @@
 
+
 // --- Types ---
 export type Point = { x: number; y: number };
 export type Star = Point & { brightness: number; size: number };
@@ -27,7 +28,7 @@ export function detectBrightBlobs(
   imageData: ImageData,
   width: number,
   height: number,
-  threshold: number = 200 // Default to 200 as per new logic
+  threshold: number = 200
 ): Star[] {
     const { data } = imageData;
     const visited = new Uint8Array(width * height);

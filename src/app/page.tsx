@@ -1,4 +1,5 @@
 
+
 "use client";
 
 import type React from 'react';
@@ -245,10 +246,24 @@ export default function AstroStackerPage() {
       ctx.drawImage(imgEl, 0, 0, canvas.width, canvas.height);
       
       const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const detectedStars = detectBrightBlobs(imageData, canvas.width, canvas.height);
+      
+      let detectedStars: Star[] = [];
+      let currentThreshold = 200;
+      const minThreshold = 150;
+  
+      addLog(`[ANALYZE] Initial detection at threshold ${currentThreshold}...`);
+      while (detectedStars.length < 10 && currentThreshold >= minThreshold) {
+        detectedStars = detectBrightBlobs(imageData, canvas.width, canvas.height, currentThreshold);
+        if (detectedStars.length < 10 && currentThreshold > minThreshold) {
+          addLog(`[ANALYZE] Found ${detectedStars.length} stars. Lowering threshold to ${currentThreshold - 5}.`);
+          currentThreshold -= 5;
+        } else {
+          break;
+        }
+      }
       
       finalUpdatedEntry = { ...finalUpdatedEntry, imageData, detectedStars, isAnalyzed: true };
-      addLog(`[ANALYZE SUCCESS] Found ${detectedStars.length} potential star candidates in ${entryToAnalyze.file.name}.`);
+      addLog(`[ANALYZE SUCCESS] Finalized with ${detectedStars.length} potential star candidates in ${entryToAnalyze.file.name} (Threshold: ${currentThreshold}).`);
   
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
