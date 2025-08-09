@@ -49,19 +49,21 @@ async function processFileWithImageMagick(file: File): Promise<string> {
         const buffer = await file.arrayBuffer();
         const name = file.name;
         const inPath = '/' + name;
-        const outPath = '/output.png';
+        const outPath = '/output.jpg';
 
         // Write the file to the virtual FS
         try { Module.FS_unlink(inPath); } catch (e) {}
         Module.FS_createDataFile('/', name, new Uint8Array(buffer), true, true);
         
-        // Execute the command: convert input.ext output.png
-        const args = ['convert', inPath, outPath];
+        // Execute the command: convert input.ext[0] output.jpg
+        // This attempts to extract the first frame (often the embedded preview)
+        // which is much faster than decoding the full RAW/TIFF.
+        const args = ['convert', `${inPath}[0]`, outPath];
         Module.callMain(args);
         
         // Read the result
         const outData = Module.FS_readFile(outPath);
-        const blob = new Blob([outData], { type: 'image/png' });
+        const blob = new Blob([outData], { type: 'image/jpeg' });
         
         return new Promise((resolve, reject) => {
             const reader = new FileReader();
