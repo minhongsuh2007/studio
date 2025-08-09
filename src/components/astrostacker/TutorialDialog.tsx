@@ -66,3 +66,5 @@ export function TutorialDialog({ isOpen, onClose }: TutorialDialogProps) {
     </Dialog>
   );
 }
+
+    
