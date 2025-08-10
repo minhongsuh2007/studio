@@ -3,7 +3,7 @@
 'use client';
 
 import type { Star, Transform } from '@/lib/astro-align';
-import { warpImage, stackImagesAverage, stackImagesMedian, stackImagesSigmaClip, type StackingMode } from '@/lib/astro-align';
+import { warpImage, stackImagesAverage, stackImagesMedian, stackImagesSigmaClip, stackImagesLaplacian, type StackingMode } from '@/lib/astro-align';
 
 // This type definition is duplicated from page.tsx to avoid circular dependencies.
 interface ImageQueueEntry {
@@ -183,6 +183,7 @@ export async function consensusAlignAndStack(
   
   const refImageId = Object.keys(targetPairs)[0];
   const refEntry = imageEntries.find(e => e.id === refImageId)!;
+  const { width, height } = refEntry.analysisDimensions;
 
   setProgress(0.4);
 
@@ -241,6 +242,9 @@ export async function consensusAlignAndStack(
         break;
     case 'sigma':
         stackedResult = stackImagesSigmaClip(alignedImageDatas);
+        break;
+    case 'laplacian':
+        stackedResult = stackImagesLaplacian(alignedImageDatas, width, height);
         break;
     case 'average':
     default:

@@ -3,7 +3,7 @@
 // --- Types ---
 export type Point = { x: number; y: number };
 export type Star = Point & { brightness: number; size: number };
-export type StackingMode = 'average' | 'median' | 'sigma';
+export type StackingMode = 'average' | 'median' | 'sigma' | 'laplacian';
 export interface ImageQueueEntry {
   id: string;
   imageData: ImageData | null;
@@ -376,6 +376,85 @@ export function stackImagesSigmaClip(images: (Uint8ClampedArray | null)[], sigma
     return result;
 }
 
+export function stackImagesLaplacian(
+    imagesData: (Uint8ClampedArray | null)[],
+    width: number,
+    height: number
+): Uint8ClampedArray {
+    const validImages = imagesData.filter((img): img is Uint8ClampedArray => img !== null);
+    if (validImages.length === 0) throw new Error("No valid images to stack");
+    const length = validImages[0].length;
+    const result = new Uint8ClampedArray(length);
+
+    // Pre-calculate grayscale and Laplacian maps for all images
+    const processedImages = validImages.map(data => {
+        const gray = new Uint8Array(width * height);
+        const laplacian = new Float32Array(width * height);
+        for (let i = 0; i < gray.length; i++) {
+            gray[i] = (data[i * 4] * 0.299 + data[i * 4 + 1] * 0.587 + data[i * 4 + 2] * 0.114);
+        }
+
+        // Apply Laplacian operator: [-1, -1, -1], [-1, 8, -1], [-1, -1, -1]
+        for (let y = 1; y < height - 1; y++) {
+            for (let x = 1; x < width - 1; x++) {
+                const i = y * width + x;
+                const p = gray[i] * 8 -
+                          (gray[i - 1] + gray[i + 1] +
+                           gray[i - width] + gray[i + width] +
+                           gray[i - width - 1] + gray[i - width + 1] +
+                           gray[i + width - 1] + gray[i + width + 1]);
+                laplacian[i] = Math.abs(p);
+            }
+        }
+        return { data, laplacian };
+    });
+
+    // For each pixel, find the source image with the highest Laplacian (sharpness) value
+    for (let i = 0; i < width * height; i++) {
+        let bestImageIndex = -1;
+        let maxLaplacian = -1;
+
+        for (let k = 0; k < processedImages.length; k++) {
+            // Check alpha channel to ensure pixel has data
+            if (processedImages[k].data[i * 4 + 3] > 128) {
+                const currentLaplacian = processedImages[k].laplacian[i];
+                if (currentLaplacian > maxLaplacian) {
+                    maxLaplacian = currentLaplacian;
+                    bestImageIndex = k;
+                }
+            }
+        }
+
+        const dstIdx = i * 4;
+        if (bestImageIndex !== -1) {
+            const bestImage = processedImages[bestImageIndex];
+            result[dstIdx] = bestImage.data[dstIdx];
+            result[dstIdx + 1] = bestImage.data[dstIdx + 1];
+            result[dstIdx + 2] = bestImage.data[dstIdx + 2];
+            result[dstIdx + 3] = 255;
+        } else {
+            // Fallback to average if no valid pixel found (e.g., all were transparent)
+            let r = 0, g = 0, b = 0, count = 0;
+            for(const img of validImages) {
+                if(img[dstIdx + 3] > 128) {
+                    r += img[dstIdx];
+                    g += img[dstIdx + 1];
+                    b += img[dstIdx + 2];
+                    count++;
+                }
+            }
+            if(count > 0) {
+                result[dstIdx] = r / count;
+                result[dstIdx + 1] = g / count;
+                result[dstIdx + 2] = b / count;
+                result[dstIdx + 3] = 255;
+            }
+        }
+    }
+
+    return result;
+}
+
 
 // --- MAIN ALIGNMENT & STACKING FUNCTION ---
 export async function alignAndStack(
@@ -441,6 +520,8 @@ export async function alignAndStack(
         return stackImagesMedian(alignedImageDatas);
     case 'sigma':
         return stackImagesSigmaClip(alignedImageDatas);
+    case 'laplacian':
+        return stackImagesLaplacian(alignedImageDatas, width, height);
     case 'average':
     default:
         return stackImagesAverage(alignedImageDatas);
