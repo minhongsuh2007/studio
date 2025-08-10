@@ -1,5 +1,11 @@
 
+
 'use client';
+
+// This file is deprecated as of the latest changes.
+// The AI alignment logic has been reverted to use the standard 2-star alignment for reliability.
+// This file is kept to avoid breaking potential imports but is no longer actively used in the stacking pipeline.
+
 import type { Star } from './astro-align';
 import * as tf from '@tensorflow/tfjs';
 

@@ -683,20 +683,21 @@ export default function AstroStackerPage() {
       setProgressPercent(20);
 
       let stackedImageData;
-      if (alignmentMethod === 'ai' && trainedModel && modelNormalization) {
-        addLog(`Using TFJS model for AI alignment.`);
-        stackedImageData = await aiClientAlignAndStack(
-            calibratedLightFrames, 
-            { model: trainedModel, normalization: modelNormalization },
-            stackingMode, 
-            addLog, 
-            (p) => setProgressPercent(20 + p * 80) // Alignment/Stacking is remaining 80%
-        );
 
-      } else {
+      // Revert AI to use standard alignment as a fallback
+      // if (alignmentMethod === 'ai' && trainedModel && modelNormalization) {
+      //   addLog(`Using TFJS model for AI alignment.`);
+      //   stackedImageData = await aiClientAlignAndStack(
+      //       calibratedLightFrames, 
+      //       { model: trainedModel, normalization: modelNormalization },
+      //       stackingMode, 
+      //       addLog, 
+      //       (p) => setProgressPercent(20 + p * 80) // Alignment/Stacking is remaining 80%
+      //   );
+      // } else {
         const imageDatas = calibratedLightFrames.map(entry => entry.imageData).filter((d): d is ImageData => d !== null);
         if (imageDatas.length !== allImageStarData.length) throw new Error("Some images have not been analyzed or loaded correctly.");
-        // Standard Alignment
+        
         const refImageForStandard = calibratedLightFrames[0];
         const refStarsForStandard = (manualSelectImageId === refImageForStandard.id && manualSelectedStars.length > 1) 
             ? manualSelectedStars 
@@ -706,7 +707,7 @@ export default function AstroStackerPage() {
           throw new Error("Standard alignment requires at least 2 stars in the reference image. Please use Manual Select or ensure auto-detection finds stars.");
         }
         stackedImageData = await alignAndStack(calibratedLightFrames, refStarsForStandard, stackingMode, (p) => setProgressPercent(20 + p * 80));
-      }
+      // }
 
       const { width, height } = allImageStarData[0].analysisDimensions;
       const canvas = document.createElement('canvas');
@@ -1326,4 +1327,3 @@ export default function AstroStackerPage() {
     
 
     
-
