@@ -365,7 +365,7 @@ export async function aiClientAlignAndStack(
       let matchedStars: Star[] = [];
       let logs: string[] = [];
 
-      while (matchedStars.length < 10 && probabilityThreshold >= 0.3) {
+      while (matchedStars.length < 10 && probabilityThreshold >= 0.1) {
         const initialCandidates = detectBrightBlobs(entry.imageData, width, height);
         const result = await findMatchingStars({
             imageData: { data: Array.from(entry.imageData.data), width, height },
