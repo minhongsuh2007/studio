@@ -1,5 +1,4 @@
 
-
 "use client";
 
 import type React from 'react';
@@ -10,6 +9,7 @@ import { fileToDataURL } from '@/lib/utils';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { alignAndStack, detectBrightBlobs, type Star, type StackingMode } from '@/lib/astro-align';
 import { consensusAlignAndStack } from '@/lib/consensus-align';
+import { planetaryAlignAndStack } from '@/lib/planetary-align';
 import { extractCharacteristicsFromImage, findMatchingStars, type LearnedPattern, type SimpleImageData, type StarCharacteristics, predictSingle, buildModel } from '@/lib/ai-star-matcher';
 import type { ModelWeightData } from '@/lib/genkit-types';
 import { AppHeader } from '@/components/astrostacker/AppHeader';
@@ -19,7 +19,7 @@ import { ImagePreview } from '@/components/astrostacker/ImagePreview';
 import { ImagePostProcessEditor } from '@/components/astrostacker/ImagePostProcessEditor';
 import { TutorialDialog } from '@/components/astrostacker/TutorialDialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Star as StarIcon, ListChecks, CheckCircle, RefreshCcw, Edit3, Loader2, Orbit, Trash2, Wand2, ShieldOff, Layers, Baseline, X, AlertTriangle, BrainCircuit, TestTube2, Eraser, Download, Upload, Cpu, AlertCircle, Moon, Sun, Sparkles, UserCheck, Zap, Diamond } from 'lucide-react';
+import { Star as StarIcon, ListChecks, CheckCircle, RefreshCcw, Edit3, Loader2, Orbit, Trash2, Wand2, ShieldOff, Layers, Baseline, X, AlertTriangle, BrainCircuit, TestTube2, Eraser, Download, Upload, Cpu, AlertCircle, Moon, Sun, Sparkles, UserCheck, Zap, Diamond, Globe } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
@@ -58,7 +58,7 @@ interface CalibrationFrameEntry {
 
 type PreviewFitMode = 'contain' | 'cover';
 type OutputFormat = 'png' | 'jpeg';
-type AlignmentMethod = 'standard' | 'consensus';
+type AlignmentMethod = 'standard' | 'consensus' | 'planetary';
 type StackingQuality = 'standard' | 'high';
 
 const MIN_VALID_DATA_URL_LENGTH = 100;
@@ -722,7 +722,14 @@ export default function AstroStackerPage() {
       let stackedImageData;
       const progressUpdate = (p: number) => setProgressPercent(20 + p * 80);
 
-      if (alignmentMethod === 'consensus') {
+      if (alignmentMethod === 'planetary') {
+        stackedImageData = await planetaryAlignAndStack(
+            calibratedLightFrames,
+            stackingMode,
+            addLog,
+            progressUpdate
+        );
+      } else if (alignmentMethod === 'consensus') {
           stackedImageData = await consensusAlignAndStack(
               calibratedLightFrames,
               stackingMode,
@@ -1250,9 +1257,10 @@ export default function AstroStackerPage() {
                 )}
                  <div className="space-y-4 pt-4">
                     <div className="space-y-2"><Label className="text-base font-semibold text-foreground">Alignment Method</Label>
-                      <RadioGroup value={alignmentMethod} onValueChange={(v) => setAlignmentMethod(v as AlignmentMethod)} className="flex space-x-2" disabled={isUiDisabled}>
-                        <div className="flex items-center space-x-1"><RadioGroupItem value="standard" id="align-standard" /><Label htmlFor="align-standard">Standard (2-Star)</Label></div>
-                        <div className="flex items-center space-x-1"><RadioGroupItem value="consensus" id="align-consensus" /><Label htmlFor="align-consensus">Consensus (Multi-Star)</Label></div>
+                      <RadioGroup value={alignmentMethod} onValueChange={(v) => setAlignmentMethod(v as AlignmentMethod)} className="grid grid-cols-2 gap-x-2 gap-y-2" disabled={isUiDisabled}>
+                        <div className="flex items-center space-x-1"><RadioGroupItem value="standard" id="align-standard" /><Label htmlFor="align-standard" className="flex items-center gap-1"><StarIcon className="h-4 w-4"/>Standard (Deep Sky)</Label></div>
+                        <div className="flex items-center space-x-1"><RadioGroupItem value="consensus" id="align-consensus" /><Label htmlFor="align-consensus" className="flex items-center gap-1"><Sparkles className="h-4 w-4"/>Consensus (Deep Sky)</Label></div>
+                        <div className="flex items-center space-x-1"><RadioGroupItem value="planetary" id="align-planetary" /><Label htmlFor="align-planetary" className="flex items-center gap-1"><Globe className="h-4 w-4"/>Planetary (Surface)</Label></div>
                       </RadioGroup>
                     </div>
                      <div className="space-y-2"><Label className="text-base font-semibold text-foreground">Stacking Quality</Label>
