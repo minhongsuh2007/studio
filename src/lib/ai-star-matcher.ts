@@ -227,7 +227,7 @@ export async function findMatchingStars({
         for (const { char, star } of allCharacteristics) {
             const features = featuresFromCharacteristics(char!);
             const probability = predictSingle(model, normalization.means, normalization.stds, features);
-            if (probability > 0.6) { // Confidence threshold
+            if (probability > 0.5) { // Confidence threshold, lowered from 0.6
                 matchedStars.push(star);
             }
         }
