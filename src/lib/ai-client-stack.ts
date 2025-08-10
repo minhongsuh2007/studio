@@ -360,21 +360,36 @@ export async function aiClientAlignAndStack(
       if (!entry.imageData) continue;
       
       const { width, height } = entry.analysisDimensions;
-      const initialCandidates = detectBrightBlobs(entry.imageData, width, height);
+      
+      let probabilityThreshold = 0.8;
+      let matchedStars: Star[] = [];
+      let logs: string[] = [];
 
-      const { matchedStars, logs } = await findMatchingStars({
-          imageData: { data: Array.from(entry.imageData.data), width, height },
-          candidates: initialCandidates,
-          model: modelPackage.model,
-          normalization: modelPackage.normalization,
-      });
+      while (matchedStars.length < 10 && probabilityThreshold >= 0.3) {
+        const initialCandidates = detectBrightBlobs(entry.imageData, width, height);
+        const result = await findMatchingStars({
+            imageData: { data: Array.from(entry.imageData.data), width, height },
+            candidates: initialCandidates,
+            model: modelPackage.model,
+            normalization: modelPackage.normalization,
+            probabilityThreshold: probabilityThreshold
+        });
+        matchedStars = result.matchedStars;
+        logs = result.logs;
+        
+        if (matchedStars.length < 10) {
+            addLog(`[AI-MATCH] Found ${matchedStars.length} stars for ${entry.file.name} at ${probabilityThreshold.toFixed(2)} threshold. Retrying with lower threshold...`);
+            probabilityThreshold -= 0.1;
+        }
+      }
+      
       logs.forEach(logMsg => addLog(`[AI-MATCH] ${entry.file.name}: ${logMsg}`));
 
       const topStars = matchedStars.sort((a, b) => b.brightness - a.brightness);
       
       if (topStars.length > 1) {
           allImageStars.push({ imageId: entry.id, stars: topStars });
-          addLog(`[AI-CLIENT] Image ${entry.file.name}: Found ${topStars.length} high-confidence stars.`);
+          addLog(`[AI-CLIENT] Image ${entry.file.name}: Finalized with ${topStars.length} high-confidence stars (Threshold: ${probabilityThreshold.toFixed(2)}).`);
       } else {
         addLog(`[AI-CLIENT] Image ${entry.file.name} has < 2 matched stars, excluding from pair search.`);
       }

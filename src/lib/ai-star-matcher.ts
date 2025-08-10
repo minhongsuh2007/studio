@@ -202,11 +202,13 @@ export async function findMatchingStars({
   candidates,
   model,
   normalization,
+  probabilityThreshold = 0.5,
 }: {
   imageData: SimpleImageData,
   candidates: Star[],
   model: tf.LayersModel,
   normalization: { means: number[], stds: number[] },
+  probabilityThreshold?: number,
 }): Promise<{matchedStars: Star[], logs: string[]}> {
     const logs: string[] = [];
     try {
@@ -227,12 +229,12 @@ export async function findMatchingStars({
         for (const { char, star } of allCharacteristics) {
             const features = featuresFromCharacteristics(char!);
             const probability = predictSingle(model, normalization.means, normalization.stds, features);
-            if (probability > 0.5) { // Confidence threshold, lowered from 0.6
+            if (probability > probabilityThreshold) {
                 matchedStars.push(star);
             }
         }
 
-        logs.push(`Model classified ${matchedStars.length} candidates as stars.`);
+        logs.push(`Model classified ${matchedStars.length} candidates as stars with >${(probabilityThreshold*100).toFixed(0)}% confidence.`);
 
         matchedStars.sort((a, b) => b.brightness - a.brightness);
         return { matchedStars, logs };
