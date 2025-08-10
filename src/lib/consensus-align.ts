@@ -195,8 +195,11 @@ export async function consensusAlignAndStack(
     const entry = imageEntries[i];
     const progress = 0.4 + (0.5 * (i + 1) / imageEntries.length);
     
-    if (!imageIds.includes(entry.id) || !entry.imageData) {
-        addLog(`[CONSENSUS] Discarding ${entry.file.name}: does not contain the global star pair.`);
+    // Ensure the image is part of the consensus set and has valid data
+    if (!imageIds.includes(entry.id) || !entry.imageData || !entry.imageData.data) {
+        if (imageIds.includes(entry.id)) {
+             addLog(`[CONSENSUS] Discarding ${entry.file.name}: does not have valid image data despite being in consensus set.`);
+        }
         alignedImageDatas.push(null);
         setProgress(progress);
         continue;
