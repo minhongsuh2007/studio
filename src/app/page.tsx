@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button';
 import { fileToDataURL } from '@/lib/utils';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { alignAndStack, detectBrightBlobs, type Star, type StackingMode } from '@/lib/astro-align';
-import { aiClientAlignAndStack } from '@/lib/ai-client-stack';
+import { consensusAlignAndStack } from '@/lib/consensus-align';
 import { extractCharacteristicsFromImage, findMatchingStars, type LearnedPattern, type SimpleImageData, type StarCharacteristics, predictSingle, buildModel } from '@/lib/ai-star-matcher';
 import type { ModelWeightData } from '@/lib/genkit-types';
 import { AppHeader } from '@/components/astrostacker/AppHeader';
@@ -19,7 +19,7 @@ import { ImagePreview } from '@/components/astrostacker/ImagePreview';
 import { ImagePostProcessEditor } from '@/components/astrostacker/ImagePostProcessEditor';
 import { TutorialDialog } from '@/components/astrostacker/TutorialDialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Star as StarIcon, ListChecks, CheckCircle, RefreshCcw, Edit3, Loader2, Orbit, Trash2, Wand2, ShieldOff, Layers, Baseline, X, AlertTriangle, BrainCircuit, TestTube2, Eraser, Download, Upload, Cpu, AlertCircle, Moon, Sun, Sparkles } from 'lucide-react';
+import { Star as StarIcon, ListChecks, CheckCircle, RefreshCcw, Edit3, Loader2, Orbit, Trash2, Wand2, ShieldOff, Layers, Baseline, X, AlertTriangle, BrainCircuit, TestTube2, Eraser, Download, Upload, Cpu, AlertCircle, Moon, Sun, Sparkles, UserCheck } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
@@ -55,7 +55,7 @@ interface CalibrationFrameEntry {
 
 type PreviewFitMode = 'contain' | 'cover';
 type OutputFormat = 'png' | 'jpeg';
-type AlignmentMethod = 'standard' | 'ai';
+type AlignmentMethod = 'standard' | 'consensus';
 
 const MIN_VALID_DATA_URL_LENGTH = 100;
 const IS_LARGE_IMAGE_THRESHOLD_MP = 12;
@@ -638,11 +638,7 @@ export default function AstroStackerPage() {
       window.alert("Please wait for all images to be analyzed before stacking.");
       return;
     }
-    if (alignmentMethod === 'ai' && !trainedModel) {
-        window.alert("AI Alignment is selected, but the model hasn't been trained. Please add star patterns and click 'Train AI Model'.");
-        return;
-    }
-  
+    
     setIsProcessingStack(true);
     setProgressPercent(0);
     setStackedImage(null);
@@ -683,21 +679,16 @@ export default function AstroStackerPage() {
       setProgressPercent(20);
 
       let stackedImageData;
+      const progressUpdate = (p: number) => setProgressPercent(20 + p * 80);
 
-      // Revert AI to use standard alignment as a fallback
-      // if (alignmentMethod === 'ai' && trainedModel && modelNormalization) {
-      //   addLog(`Using TFJS model for AI alignment.`);
-      //   stackedImageData = await aiClientAlignAndStack(
-      //       calibratedLightFrames, 
-      //       { model: trainedModel, normalization: modelNormalization },
-      //       stackingMode, 
-      //       addLog, 
-      //       (p) => setProgressPercent(20 + p * 80) // Alignment/Stacking is remaining 80%
-      //   );
-      // } else {
-        const imageDatas = calibratedLightFrames.map(entry => entry.imageData).filter((d): d is ImageData => d !== null);
-        if (imageDatas.length !== allImageStarData.length) throw new Error("Some images have not been analyzed or loaded correctly.");
-        
+      if (alignmentMethod === 'consensus') {
+          stackedImageData = await consensusAlignAndStack(
+              calibratedLightFrames,
+              stackingMode,
+              addLog,
+              progressUpdate
+          );
+      } else {
         const refImageForStandard = calibratedLightFrames[0];
         const refStarsForStandard = (manualSelectImageId === refImageForStandard.id && manualSelectedStars.length > 1) 
             ? manualSelectedStars 
@@ -706,8 +697,8 @@ export default function AstroStackerPage() {
         if (refStarsForStandard.length < 2) {
           throw new Error("Standard alignment requires at least 2 stars in the reference image. Please use Manual Select or ensure auto-detection finds stars.");
         }
-        stackedImageData = await alignAndStack(calibratedLightFrames, refStarsForStandard, stackingMode, (p) => setProgressPercent(20 + p * 80));
-      // }
+        stackedImageData = await alignAndStack(calibratedLightFrames, refStarsForStandard, stackingMode, progressUpdate);
+      }
 
       const { width, height } = allImageStarData[0].analysisDimensions;
       const canvas = document.createElement('canvas');
@@ -1220,7 +1211,7 @@ export default function AstroStackerPage() {
                     <div className="space-y-2"><Label className="text-base font-semibold text-foreground">Alignment Method</Label>
                       <RadioGroup value={alignmentMethod} onValueChange={(v) => setAlignmentMethod(v as AlignmentMethod)} className="flex space-x-2" disabled={isUiDisabled}>
                         <div className="flex items-center space-x-1"><RadioGroupItem value="standard" id="align-standard" /><Label htmlFor="align-standard">Standard (2-Star)</Label></div>
-                        <div className="flex items-center space-x-1"><RadioGroupItem value="ai" id="align-ai" /><Label htmlFor="align-ai">AI Pattern</Label></div>
+                        <div className="flex items-center space-x-1"><RadioGroupItem value="consensus" id="align-consensus" /><Label htmlFor="align-consensus">Consensus (Multi-Star)</Label></div>
                       </RadioGroup>
                     </div>
                     <div className="space-y-2"><Label className="text-base font-semibold text-foreground">{t('stackingMode')}</Label>
@@ -1272,7 +1263,7 @@ export default function AstroStackerPage() {
                      <Button onClick={handleTrainModel} disabled={isUiDisabled || learnedPatterns.filter(p => selectedPatternIDs.has(p.id)).length === 0} className="w-full mb-4">
                         {isTrainingModel ? <><Loader2 className="mr-2 h-4 w-4 animate-spin"/>{t('trainingModelButton')}</> : <><Cpu className="mr-2 h-4 w-4" />{t('trainModelButton')}</>}
                     </Button>
-                    {trainedModel && <Alert variant="default" className="mb-4"><AlertCircle className="h-4 w-4" /><AlertTitle>Model Ready</AlertTitle><AlertDescription>An AI model is trained and ready. The 'AI Pattern' alignment method will now use this model.</AlertDescription></Alert>}
+                    {trainedModel && <Alert variant="default" className="mb-4"><AlertCircle className="h-4 w-4" /><AlertTitle>Model Ready</AlertTitle><AlertDescription>An AI model is trained and ready. The 'Consensus' alignment method can be enhanced by this for better star recognition in future updates.</AlertDescription></Alert>}
 
                     <h4 className="font-semibold mb-2">{t('allLearnedPatternsListTitle')}</h4>
                     {learnedPatterns.length === 0 ? (<p className="text-sm text-muted-foreground">{t('noPatternLearnedYetInfo')}</p>) : (
@@ -1323,7 +1314,3 @@ export default function AstroStackerPage() {
     </div>
   );
 }
-
-    
-
-    

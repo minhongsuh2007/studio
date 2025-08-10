@@ -193,7 +193,7 @@ function getTransformFromTwoStars(refStars: Star[], targetStars: Star[]): Transf
  * Warps an image using a similarity transform (translation, rotation, scale).
  * Uses bilinear interpolation for smoother results.
  */
-function warpImage(
+export function warpImage(
     srcData: Uint8ClampedArray,
     srcWidth: number,
     srcHeight: number,
@@ -268,7 +268,7 @@ function warpImage(
 
 // --- STACKING IMPLEMENTATIONS ---
 
-function stackImagesAverage(images: (Uint8ClampedArray | null)[]): Uint8ClampedArray {
+export function stackImagesAverage(images: (Uint8ClampedArray | null)[]): Uint8ClampedArray {
     const validImages = images.filter((img): img is Uint8ClampedArray => img !== null);
     if (validImages.length === 0) throw new Error("No valid images to stack");
     const length = validImages[0].length;
@@ -300,7 +300,7 @@ function stackImagesAverage(images: (Uint8ClampedArray | null)[]): Uint8ClampedA
     return result;
 }
 
-function stackImagesMedian(images: (Uint8ClampedArray | null)[]): Uint8ClampedArray {
+export function stackImagesMedian(images: (Uint8ClampedArray | null)[]): Uint8ClampedArray {
     const validImages = images.filter((img): img is Uint8ClampedArray => img !== null);
     if (validImages.length === 0) throw new Error("No valid images to stack");
     const length = validImages[0].length;
@@ -329,7 +329,7 @@ function stackImagesMedian(images: (Uint8ClampedArray | null)[]): Uint8ClampedAr
     return result;
 }
 
-function stackImagesSigmaClip(images: (Uint8ClampedArray | null)[], sigma = 2.0): Uint8ClampedArray {
+export function stackImagesSigmaClip(images: (Uint8ClampedArray | null)[], sigma = 2.0): Uint8ClampedArray {
     const validImages = images.filter((img): img is Uint8ClampedArray => img !== null);
     if (validImages.length === 0) throw new Error("No valid images to stack");
     const length = validImages[0].length;
