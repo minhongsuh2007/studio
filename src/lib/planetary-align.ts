@@ -12,6 +12,8 @@ interface ImageQueueEntry {
   analysisDimensions: { width: number; height: number; };
 };
 
+const FFT_SIZE = 512; // Use a fixed size for FFT to control performance
+
 function toGrayscale(imageData: ImageData): number[][] {
     const { width, height, data } = imageData;
     const gray = Array.from({ length: height }, () => new Array(width).fill(0));
@@ -41,9 +43,34 @@ function calculateSharpness(grayData: number[][]): number {
     return sharpness / (width * height);
 }
 
+// Downsamples a grayscale image using simple nearest neighbor, for performance.
+function downsampleGrayscale(grayData: number[][], targetWidth: number, targetHeight: number): number[][] {
+    const originalHeight = grayData.length;
+    const originalWidth = grayData[0].length;
+    const downsampled = Array.from({ length: targetHeight }, () => new Array(targetWidth).fill(0));
+    const x_ratio = originalWidth / targetWidth;
+    const y_ratio = originalHeight / targetHeight;
+
+    for (let y = 0; y < targetHeight; y++) {
+        for (let x = 0; x < targetWidth; x++) {
+            const px = Math.floor(x * x_ratio);
+            const py = Math.floor(y * y_ratio);
+            downsampled[y][x] = grayData[py][px];
+        }
+    }
+    return downsampled;
+}
+
 function phaseCorrelate(ref: number[][], target: number[][]): { dx: number, dy: number } {
-    const refFft = fft(ref);
-    const targetFft = fft(target);
+    const originalWidth = ref[0].length;
+    const originalHeight = ref.length;
+
+    // Downsample for FFT
+    const refSmall = downsampleGrayscale(ref, FFT_SIZE, FFT_SIZE);
+    const targetSmall = downsampleGrayscale(target, FFT_SIZE, FFT_SIZE);
+
+    const refFft = fft(refSmall);
+    const targetFft = fft(targetSmall);
 
     const R = refFft.map((row, y) => row.map((val, x) => {
         const targetVal = targetFft[y][x];
@@ -73,12 +100,16 @@ function phaseCorrelate(ref: number[][], target: number[][]): { dx: number, dy: 
             }
         });
     });
+    
+    const height = FFT_SIZE;
+    const width = FFT_SIZE;
 
-    const height = ref.length;
-    const width = ref[0].length;
+    const small_dx = peakX > width / 2 ? peakX - width : peakX;
+    const small_dy = peakY > height / 2 ? peakY - height : peakY;
 
-    const dx = peakX > width / 2 ? peakX - width : peakX;
-    const dy = peakY > height / 2 ? peakY - height : peakY;
+    // Scale the offset back to the original resolution
+    const dx = small_dx * (originalWidth / width);
+    const dy = small_dy * (originalHeight / height);
 
     return { dx, dy };
 }
