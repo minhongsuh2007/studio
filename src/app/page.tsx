@@ -75,6 +75,7 @@ export default function AstroStackerPage() {
   const [stackingMode, setStackingMode] = useState<StackingMode>('average');
   const [alignmentMethod, setAlignmentMethod] = useState<AlignmentMethod>('standard');
   const [stackingQuality, setStackingQuality] = useState<StackingQuality>('standard');
+  const [planetaryStackingQuality, setPlanetaryStackingQuality] = useState<number>(50);
   const [previewFitMode, setPreviewFitMode] = useState<PreviewFitMode>('contain');
   const [outputFormat, setOutputFormat] = useState<OutputFormat>('png');
   const [jpegQuality, setJpegQuality] = useState<number>(92);
@@ -727,7 +728,8 @@ export default function AstroStackerPage() {
             calibratedLightFrames,
             stackingMode,
             addLog,
-            progressUpdate
+            progressUpdate,
+            planetaryStackingQuality
         );
       } else if (alignmentMethod === 'consensus') {
           stackedImageData = await consensusAlignAndStack(
@@ -1262,6 +1264,12 @@ export default function AstroStackerPage() {
                         <div className="flex items-center space-x-1"><RadioGroupItem value="consensus" id="align-consensus" /><Label htmlFor="align-consensus" className="flex items-center gap-1"><Sparkles className="h-4 w-4"/>Consensus (Deep Sky)</Label></div>
                         <div className="flex items-center space-x-1"><RadioGroupItem value="planetary" id="align-planetary" /><Label htmlFor="align-planetary" className="flex items-center gap-1"><Globe className="h-4 w-4"/>Planetary (Surface)</Label></div>
                       </RadioGroup>
+                       {alignmentMethod === 'planetary' && (
+                        <div className="space-y-2 pl-2 pt-2 border-l-2 border-accent/50 ml-2">
+                            <Label htmlFor="planetaryQualitySlider">Stack Top {planetaryStackingQuality}% of Frames</Label>
+                            <Slider id="planetaryQualitySlider" min={1} max={100} step={1} value={[planetaryStackingQuality]} onValueChange={(v) => setPlanetaryStackingQuality(v[0])} disabled={isUiDisabled} />
+                        </div>
+                      )}
                     </div>
                      <div className="space-y-2"><Label className="text-base font-semibold text-foreground">Stacking Quality</Label>
                       <RadioGroup value={stackingQuality} onValueChange={(v) => setStackingQuality(v as StackingQuality)} className="flex space-x-2" disabled={isUiDisabled}>

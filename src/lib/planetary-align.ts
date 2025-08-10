@@ -1,18 +1,20 @@
 
 'use client';
 
-import { fft, ifft } from 'mathjs';
 import type { StackingMode } from '@/lib/astro-align';
 import { stackImagesAverage, stackImagesMedian, stackImagesSigmaClip, stackImagesLaplacian } from '@/lib/astro-align';
+import { fft, ifft } from 'mathjs';
+
 
 // This type definition is duplicated from page.tsx to avoid circular dependencies.
 interface ImageQueueEntry {
   id: string;
+  file: File;
   imageData: ImageData | null;
   analysisDimensions: { width: number; height: number; };
 };
 
-const FFT_SIZE = 512; // Use a fixed size for FFT to control performance
+const FFT_SIZE = 256; // Smaller FFT size for faster processing
 
 function toGrayscale(imageData: ImageData): number[][] {
     const { width, height, data } = imageData;
@@ -26,21 +28,27 @@ function toGrayscale(imageData: ImageData): number[][] {
     return gray;
 }
 
+
+// A faster, more targeted sharpness calculation focusing on a central region.
 function calculateSharpness(grayData: number[][]): number {
     let sharpness = 0;
-    const width = grayData[0].length;
     const height = grayData.length;
+    const width = grayData[0].length;
+    
+    // Analyze a central portion of the image to save time
+    const startY = Math.floor(height / 4);
+    const endY = Math.floor(height * 3 / 4);
+    const startX = Math.floor(width / 4);
+    const endX = Math.floor(width * 3 / 4);
 
-    for (let y = 1; y < height - 1; y++) {
-        for (let x = 1; x < width - 1; x++) {
-            const p = grayData[y][x] * 8 - 
-                      (grayData[y-1][x-1] + grayData[y-1][x] + grayData[y-1][x+1] +
-                       grayData[y][x-1]   + grayData[y][x+1]   +
-                       grayData[y+1][x-1] + grayData[y+1][x] + grayData[y+1][x+1]);
+    for (let y = startY; y < endY; y++) {
+        for (let x = startX; x < endX; x++) {
+            const p = grayData[y][x] * 4 - 
+                      (grayData[y-1][x] + grayData[y+1][x] + grayData[y][x-1] + grayData[y][x+1]);
             sharpness += p * p;
         }
     }
-    return sharpness / (width * height);
+    return sharpness / ((endX - startX) * (endY - startY));
 }
 
 // Downsamples a grayscale image using simple nearest neighbor, for performance.
@@ -140,7 +148,8 @@ export async function planetaryAlignAndStack(
   imageEntries: ImageQueueEntry[],
   mode: StackingMode,
   addLog: (message: string) => void,
-  setProgress: (progress: number) => void
+  setProgress: (progress: number) => void,
+  qualityPercent: number,
 ): Promise<Uint8ClampedArray> {
   addLog("[PLANETARY] Starting surface-feature alignment and stacking.");
   if (imageEntries.length < 2) {
@@ -153,33 +162,36 @@ export async function planetaryAlignAndStack(
   }
 
   // 1. Convert all to grayscale and find the sharpest reference image
-  addLog("[PLANETARY] Calculating sharpness of all frames to find the best reference...");
+  addLog(`[PLANETARY] Calculating sharpness of all ${validEntries.length} frames to find the best...`);
   const processedEntries = validEntries.map((entry, index) => {
     const grayData = toGrayscale(entry.imageData!);
     const sharpness = calculateSharpness(grayData);
-    setProgress(0.2 * ((index + 1) / validEntries.length));
+    setProgress(0.3 * ((index + 1) / validEntries.length));
     return { entry, grayData, sharpness };
   }).sort((a, b) => b.sharpness - a.sharpness);
 
-  const ref = processedEntries[0];
-  addLog(`[PLANETARY] Reference frame selected based on sharpness: ${ref.entry.id}`);
-  setProgress(0.25);
+  const numToStack = Math.max(2, Math.floor(processedEntries.length * (qualityPercent / 100)));
+  const bestEntries = processedEntries.slice(0, numToStack);
+
+  const ref = bestEntries[0];
+  addLog(`[PLANETARY] Reference frame selected. Stacking top ${numToStack} frames (${qualityPercent}%).`);
+  setProgress(0.4);
 
 
   // 2. Align all other images to the reference
   const alignedImageDatas: (Uint8ClampedArray | null)[] = [ref.entry.imageData!.data];
   
-  for (let i = 1; i < processedEntries.length; i++) {
-    const target = processedEntries[i];
-    addLog(`[PLANETARY] Aligning ${target.entry.id} to reference...`);
+  for (let i = 1; i < bestEntries.length; i++) {
+    const target = bestEntries[i];
+    addLog(`[PLANETARY] Aligning ${target.entry.file.name} to reference...`);
     
     const { dx, dy } = phaseCorrelate(ref.grayData, target.grayData);
-    addLog(`[PLANETARY] Detected offset for ${target.entry.id}: dx=${dx.toFixed(2)}, dy=${dy.toFixed(2)}`);
+    addLog(`[PLANETARY] Detected offset for ${target.entry.file.name}: dx=${dx.toFixed(2)}, dy=${dy.toFixed(2)}`);
 
     const { width, height } = target.entry.analysisDimensions;
     const warpedData = warpImageSimple(target.entry.imageData!.data, width, height, dx, dy);
     alignedImageDatas.push(warpedData);
-    setProgress(0.25 + (0.65 * (i / (processedEntries.length -1) )));
+    setProgress(0.4 + (0.5 * (i / (bestEntries.length -1) )));
   }
 
   // 3. Stack the aligned images
