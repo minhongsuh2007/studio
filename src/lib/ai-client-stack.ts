@@ -360,32 +360,37 @@ export async function aiClientAlignAndStack(
       
       const { width, height } = entry.analysisDimensions;
       
-      // Step 1.A: Generate candidates by finding bright blobs.
-      // This is fast and gives us a list of potential stars.
+      let finalStars: Star[] = [];
+      let currentProbThreshold = 0.8;
+      
       const initialCandidates = detectBrightBlobs(entry.imageData, width, height);
-      addLog(`[AI-CANDIDATES] ${entry.file.name}: Found ${initialCandidates.length} bright blob candidates.`);
 
-      if (initialCandidates.length === 0) {
-        addLog(`[AI-CLIENT] Image ${entry.file.name} has 0 candidates, excluding from pair search.`);
-        continue;
+      while(finalStars.length < 10 && currentProbThreshold >= 0.1) {
+          addLog(`[AI-MATCH] ${entry.file.name}: Verifying ${initialCandidates.length} candidates with threshold ${currentProbThreshold.toFixed(2)}...`);
+          
+          const { matchedStars, logs } = await findMatchingStars({
+              imageData: { data: Array.from(entry.imageData.data), width, height },
+              candidates: initialCandidates,
+              model: modelPackage.model,
+              normalization: modelPackage.normalization,
+              probabilityThreshold: currentProbThreshold
+          });
+
+          logs.forEach(logMsg => addLog(`[AI-MATCH] ${entry.file.name}: ${logMsg}`));
+
+          finalStars = matchedStars;
+          if (finalStars.length < 10) {
+              currentProbThreshold -= 0.1;
+          } else {
+              break;
+          }
       }
 
-      // Step 1.B: Run AI verification on only the candidates.
-      const { matchedStars, logs } = await findMatchingStars({
-        imageData: { data: Array.from(entry.imageData.data), width, height },
-        candidates: initialCandidates, // Pass candidates to the AI
-        model: modelPackage.model,
-        normalization: modelPackage.normalization,
-        probabilityThreshold: 0.5 // Start with a reasonable threshold
-      });
-      
-      logs.forEach(logMsg => addLog(`[AI-MATCH] ${entry.file.name}: ${logMsg}`));
-
-      const topStars = matchedStars.sort((a, b) => b.brightness - a.brightness);
+      const topStars = finalStars.sort((a, b) => b.brightness - a.brightness);
       
       if (topStars.length > 1) {
           allImageStars.push({ imageId: entry.id, stars: topStars });
-          addLog(`[AI-CLIENT] Image ${entry.file.name}: Finalized with ${topStars.length} AI-verified stars.`);
+          addLog(`[AI-CLIENT] Image ${entry.file.name}: Finalized with ${topStars.length} AI-verified stars (Threshold: ${currentProbThreshold.toFixed(2)}).`);
       } else {
         addLog(`[AI-CLIENT] Image ${entry.file.name} has < 2 AI-verified stars, excluding from pair search.`);
       }
