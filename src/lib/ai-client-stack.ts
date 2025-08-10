@@ -1,4 +1,3 @@
-
 // @ts-nocheck
 'use client';
 
@@ -355,33 +354,30 @@ export async function aiClientAlignAndStack(
   
   // 1. Find candidate stars in ALL images first using the TFJS model
   const allImageStars: { imageId: string; stars: Star[] }[] = [];
-  addLog("[AI-CLIENT] Step 1: Identifying candidate stars in all images using TFJS model...");
+  addLog("[AI-CLIENT] Step 1: Generating candidates and verifying with AI model...");
   for (const entry of imageEntries) {
       if (!entry.imageData) continue;
       
       const { width, height } = entry.analysisDimensions;
       
-      let probabilityThreshold = 0.8;
-      let matchedStars: Star[] = [];
-      let logs: string[] = [];
+      // Step 1.A: Generate candidates by finding bright blobs.
+      // This is fast and gives us a list of potential stars.
+      const initialCandidates = detectBrightBlobs(entry.imageData, width, height);
+      addLog(`[AI-CANDIDATES] ${entry.file.name}: Found ${initialCandidates.length} bright blob candidates.`);
 
-      while (matchedStars.length < 10 && probabilityThreshold >= 0.1) {
-        const initialCandidates = detectBrightBlobs(entry.imageData, width, height);
-        const result = await findMatchingStars({
-            imageData: { data: Array.from(entry.imageData.data), width, height },
-            candidates: initialCandidates,
-            model: modelPackage.model,
-            normalization: modelPackage.normalization,
-            probabilityThreshold: probabilityThreshold
-        });
-        matchedStars = result.matchedStars;
-        logs = result.logs;
-        
-        if (matchedStars.length < 10) {
-            addLog(`[AI-MATCH] Found ${matchedStars.length} stars for ${entry.file.name} at ${probabilityThreshold.toFixed(2)} threshold. Retrying with lower threshold...`);
-            probabilityThreshold -= 0.1;
-        }
+      if (initialCandidates.length === 0) {
+        addLog(`[AI-CLIENT] Image ${entry.file.name} has 0 candidates, excluding from pair search.`);
+        continue;
       }
+
+      // Step 1.B: Run AI verification on only the candidates.
+      const { matchedStars, logs } = await findMatchingStars({
+        imageData: { data: Array.from(entry.imageData.data), width, height },
+        candidates: initialCandidates, // Pass candidates to the AI
+        model: modelPackage.model,
+        normalization: modelPackage.normalization,
+        probabilityThreshold: 0.5 // Start with a reasonable threshold
+      });
       
       logs.forEach(logMsg => addLog(`[AI-MATCH] ${entry.file.name}: ${logMsg}`));
 
@@ -389,9 +385,9 @@ export async function aiClientAlignAndStack(
       
       if (topStars.length > 1) {
           allImageStars.push({ imageId: entry.id, stars: topStars });
-          addLog(`[AI-CLIENT] Image ${entry.file.name}: Finalized with ${topStars.length} high-confidence stars (Threshold: ${probabilityThreshold.toFixed(2)}).`);
+          addLog(`[AI-CLIENT] Image ${entry.file.name}: Finalized with ${topStars.length} AI-verified stars.`);
       } else {
-        addLog(`[AI-CLIENT] Image ${entry.file.name} has < 2 matched stars, excluding from pair search.`);
+        addLog(`[AI-CLIENT] Image ${entry.file.name} has < 2 AI-verified stars, excluding from pair search.`);
       }
       setProgress(0.25 * ((imageEntries.indexOf(entry) + 1) / imageEntries.length)); // 25% of progress for this stage
   }
@@ -474,5 +470,3 @@ export async function aiClientAlignAndStack(
   addLog("[AI-CLIENT] Stacking complete.");
   return stackedResult;
 }
-
-    

@@ -217,7 +217,7 @@ export async function findMatchingStars({
             return { matchedStars: [], logs };
         }
 
-        logs.push(`Received ${candidates.length} initial candidates. Filtering with AI model...`);
+        logs.push(`Received ${candidates.length} candidates to verify with AI.`);
 
         // 1. Extract features for all candidates
         const allCharacteristics = (await extractCharacteristicsFromImage({ stars: candidates, imageData }))
@@ -234,7 +234,7 @@ export async function findMatchingStars({
             }
         }
 
-        logs.push(`Model classified ${matchedStars.length} candidates as stars with >${(probabilityThreshold*100).toFixed(0)}% confidence.`);
+        logs.push(`AI classified ${matchedStars.length} candidates as stars with >${(probabilityThreshold*100).toFixed(0)}% confidence.`);
 
         matchedStars.sort((a, b) => b.brightness - a.brightness);
         return { matchedStars, logs };
@@ -246,5 +246,3 @@ export async function findMatchingStars({
         throw new Error(`A critical error occurred in findMatchingStars: ${errorMessage}`);
     }
 }
-
-    
