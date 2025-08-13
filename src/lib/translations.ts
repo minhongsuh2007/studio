@@ -18,7 +18,7 @@ export const translations: Translations = {
     uploadAndConfigure: 'Upload & Configure Images',
     cardDescription: "Add your light frames (PNG, JPG, TIFF, FITS, etc.). The app will attempt to convert any file format. Images are aligned using star patterns. For best results with the 'Standard' method, manually select reference stars on the first image.",
     creditsLine1: 'AstroStacker © {year}',
-    creditsLine2Part1: 'Created by Min Hong Seo (암흑광자) with invaluable help from 천관사, Saturn, 구구, Flec, Latte, 얼음세상, 뉴비, 오르트, 지민, 모닥별, 배추빙수, 응애, Kangwoo, and many others.',
+    creditsLine2Part1: 'Created by Min Hong Seo (암흑광자) with invaluable help from 천관사, Saturn, 구구, Flec, Latte, 얼음세상, 뉴비, 오르트, 지민, 모닥별, 배추빙수, 응애, Kangwoo, Won Taeho, and many others.',
     switchToEnglish: 'EN',
     switchToKorean: 'KO',
     switchToChinese: 'ZH',
@@ -175,7 +175,7 @@ export const translations: Translations = {
     uploadAndConfigure: '이미지 업로드 및 설정',
     cardDescription: "라이트 프레임(PNG, JPG, TIFF, FITS 등)을 추가하세요. 앱이 모든 파일 형식 변환을 시도합니다. 이미지는 별 패턴을 사용하여 정렬됩니다. '표준' 방식으로 최상의 결과를 얻으려면 첫 번째 이미지에서 참조 별을 수동으로 선택하세요.",
     creditsLine1: '아스트로스태커 © {year}',
-    creditsLine2Part1: '천관사님, 새턴님, 구구님, Flec님, 라떼님, 얼음세상님, 늅님, 오르트님, 지민님, 모닥별님, 배추빙수님, 응애님, Kangwoo님 그리고 다른 여러 분들의 도움으로 서민홍(암흑광자) 에 의해 제작되었습니다.',
+    creditsLine2Part1: '천관사님, 새턴님, 구구님, Flec님, 라떼님, 얼음세상님, 늅님, 오르트님, 지민님, 모닥별님, 배추빙수님, 응애님, Kangwoo님, 원태호님 그리고 다른 여러 분들의 도움으로 서민홍(암흑광자) 에 의해 제작되었습니다.',
     switchToEnglish: '영',
     switchToKorean: '한',
     switchToChinese: '중',
@@ -183,7 +183,7 @@ export const translations: Translations = {
     stackImagesButton: '이미지 스태킹 ({count}개)',
     stackingButtonInProgress: '스태킹 중...',
     finalizeAndDownload: '이미지 확정 및 다운로드',
-    imageQueueCount: '이미지 대기열 ({count}개)',
+    imageQueueCount: '이미지 대기열 ({count})',
     stackingMode: '스태킹 모드',
     previewFit: '미리보기 맞춤',
     fitContain: '포함',
@@ -310,7 +310,7 @@ export const translations: Translations = {
     tutorialStep1Title: "1단계: 이미지 업로드",
     tutorialStep1Content: "'여기에 이미지 끌어다 놓기'를 클릭하거나 천체 사진 파일(JPG, PNG 등 일반 형식 및 TIF, FITS 등 다양한 RAW 형식 지원)을 상자로 끌어다 놓습니다. ImageMagick 덕분에 다양한 형식이 지원됩니다. 업로드 후 앱은 각 이미지를 자동으로 분석하여 별을 감지합니다.",
     tutorialStep2Title: "2단계: 정렬 방법 선택",
-    tutorialStep2Content: "왼쪽 패널에서 '정렬 방법'을 선택합니다.\n\n- 표준 (2-Star): 이 고전적인 방법은 첫 번째(REF) 이미지에서 가장 밝은 두 별을 사용하여 다른 모든 이미지를 정렬합니다. 빠르고 간단합니다. 최상의 결과를 얻으려면 참조 이미지에서 '별 선택'을 클릭하여 두 개의 정렬 별을 수동으로 선택할 수 있습니다.\n\n- AI 패턴: 이 강력한 방법은 머신러닝 모델을 사용하여 정렬에 가장 적합한 별을 찾습니다. 이를 사용하려면 먼저 AI를 학습시켜야 합니다.",
+    tutorialStep2Content: "왼쪽 패널에서 '정렬 방법'을 선택합니다.\n\n- 표준 (2-Star): 이 고전적인 방법은 첫 번째(REF) 이미지에서 가장 밝은 두 별을 사용하여 다른 모든 이미지를 정렬합니다. 빠르고 간단합니다. 최상의 결과를 얻으려면 참조 이미지에서 '별 선택'을 클릭하여 두 개의 정렬 별을 수동으로 선택할 수 있습니다。\n\n- AI 패턴: 이 강력한 방법은 머신러닝 모델을 사용하여 정렬에 가장 적합한 별을 찾습니다. 이를 사용하려면 먼저 AI를 학습시켜야 합니다.",
     tutorialStep3Title: "3단계: (AI 방법) AI 학습시키기",
     tutorialStep3Content: "'AI 패턴' 방법을 사용하려면 먼저 학습 데이터를 만들고 모델을 훈련해야 합니다.\n1. 분석된 이미지에서 '별 선택'을 클릭합니다.\n2. 메인 미리보기에서 최소 20-30개의 뚜렷하고 선명한 별을 클릭합니다. 각 이미지에 대해 선택을 확인하여 여러 이미지에 걸쳐 이 작업을 수행할 수 있습니다.\n3. '확인 및 패턴 학습'을 클릭합니다. 이렇게 하면 선택한 별의 특성이 저장됩니다.\n4. '패턴 학습' 카드에서 훈련에 사용할 패턴을 선택합니다.\n5. 'AI 모델 훈련'을 클릭합니다. 이렇게 하면 브라우저에서 직접 모델이 훈련됩니다. 훈련이 완료되면 모델을 사용할 준비가 된 것이며, 향후 세션을 위해 자동으로 저장됩니다.",
     tutorialStep4Title: "4단계: 설정 및 스태킹",
@@ -332,7 +332,7 @@ export const translations: Translations = {
     uploadAndConfigure: '上传和配置图像',
     cardDescription: "添加您的亮场（PNG、JPG、TIFF、FITS等）。应用程序将尝试转换任何文件格式。图像使用星点模式对齐。为使用“标准”方法获得最佳效果，请在第一张图像上手动选择参考星点。",
     creditsLine1: '天文图像叠加器 © {year}',
-    creditsLine2Part1: '由 Min Hong Seo (암흑광자) 在 천관사, Saturn, 구구, Flec, Latte, 얼음세상, 뉴비, 오르트, 지민, 모닥별, 배추빙수, 응애, Kangwoo 及许多其他人的宝贵帮助下创建。',
+    creditsLine2Part1: '由 Min Hong Seo (암흑광자) 在 천관사, Saturn, 구구, Flec, Latte, 얼음세상, 뉴비, 오르트, 지민, 모닥별, 배추빙수, 응애, Kangwoo, Won Taeho 及许多其他人的宝贵帮助下创建。',
     switchToEnglish: '英',
     switchToKorean: '韩',
     switchToChinese: '中',
@@ -488,7 +488,7 @@ export const translations: Translations = {
     uploadAndConfigure: '画像のアップロードと設定',
     cardDescription: 'ライトフレーム（PNG、JPG、TIFF、FITSなど）を追加します。アプリはあらゆるファイル形式の変換を試みます。画像は星のパターンを使用して整列されます。「標準」方式で最良の結果を得るには、最初の画像で参照星を手動で選択してください。',
     creditsLine1: 'アストロスタッカー © {year}',
-    creditsLine2Part1: 'Min Hong Seo (암흑광자) によって作成され、천관사, Saturn, 구구, Flec, Latte, 얼음세상, 뉴비, 오르트, 지민, 모닥별, 배추빙수, 응애, Kangwoo、その他多くの貴重な助けを借りました。',
+    creditsLine2Part1: 'Min Hong Seo (암흑광자) によって作成され、천관사, Saturn, 구구, Flec, Latte, 얼음세상, 뉴비, 오르트, 지민, 모닥별, 배추빙수, 응애, Kangwoo, Won Taeho、その他多くの貴重な助けを借りました。',
     switchToEnglish: 'EN',
     switchToKorean: 'KO',
     switchToChinese: 'ZH',
@@ -635,5 +635,3 @@ export const translations: Translations = {
 export const defaultLocale: Locale = 'en';
 
 export const getTranslations = (locale: Locale) => translations[locale] || translations[defaultLocale];
-
-    
