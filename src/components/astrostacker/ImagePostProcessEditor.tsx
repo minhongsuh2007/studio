@@ -137,6 +137,7 @@ export function ImagePostProcessEditor({
                 onCanvasClick={() => {}} // Read-only
                 analysisWidth={0} // Will be determined by image
                 analysisHeight={0}
+                isReadOnly={true}
             />
           </div>
           

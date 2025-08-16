@@ -12,6 +12,7 @@ interface StarAnnotationCanvasProps {
   onCanvasClick: (x: number, y: number) => void;
   analysisWidth: number;
   analysisHeight: number;
+  isReadOnly?: boolean;
 }
 
 export function StarAnnotationCanvas({
@@ -21,6 +22,7 @@ export function StarAnnotationCanvas({
   onCanvasClick,
   analysisWidth,
   analysisHeight,
+  isReadOnly = false,
 }: StarAnnotationCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   
@@ -32,8 +34,8 @@ export function StarAnnotationCanvas({
 
     const img = new Image();
     img.onload = () => {
-      canvas.width = analysisWidth;
-      canvas.height = analysisHeight;
+      canvas.width = analysisWidth > 0 ? analysisWidth : img.naturalWidth;
+      canvas.height = analysisHeight > 0 ? analysisHeight : img.naturalHeight;
 
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
@@ -64,6 +66,7 @@ export function StarAnnotationCanvas({
   }, [draw]);
 
   const handleClick = (event: React.MouseEvent<HTMLCanvasElement>) => {
+    if (isReadOnly) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
@@ -80,11 +83,14 @@ export function StarAnnotationCanvas({
       <canvas
         ref={canvasRef}
         onClick={handleClick}
-        style={{ cursor: 'crosshair', maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
+        style={{ 
+            cursor: isReadOnly ? 'grab' : 'crosshair', 
+            maxWidth: '100%', 
+            maxHeight: '100%', 
+            objectFit: 'contain' 
+        }}
         data-ai-hint="interactive stars"
       />
     </div>
   );
 }
-
-    
