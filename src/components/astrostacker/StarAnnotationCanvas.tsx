@@ -79,15 +79,14 @@ export function StarAnnotationCanvas({
   };
 
   return (
-    <div className="w-full h-full flex items-center justify-center bg-black border rounded-md shadow-lg">
+    <div className="w-full h-full overflow-auto bg-black border rounded-md shadow-lg flex items-start justify-start">
       <canvas
         ref={canvasRef}
         onClick={handleClick}
         style={{ 
-            cursor: isReadOnly ? 'grab' : 'crosshair', 
-            maxWidth: '100%', 
-            maxHeight: '100%', 
-            objectFit: 'contain' 
+            cursor: isReadOnly ? 'grab' : 'crosshair',
+            maxWidth: 'none',
+            maxHeight: 'none',
         }}
         data-ai-hint="interactive stars"
       />
