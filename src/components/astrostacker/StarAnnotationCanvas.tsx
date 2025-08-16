@@ -85,8 +85,9 @@ export function StarAnnotationCanvas({
         onClick={handleClick}
         style={{ 
             cursor: isReadOnly ? 'grab' : 'crosshair',
-            maxWidth: 'none',
-            maxHeight: 'none',
+            width: '100%',
+            height: '100%',
+            objectFit: 'contain'
         }}
         data-ai-hint="interactive stars"
       />
