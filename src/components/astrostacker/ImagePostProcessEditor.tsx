@@ -124,21 +124,23 @@ export function ImagePostProcessEditor({
         </DialogHeader>
         
         <div className="flex-grow grid grid-cols-1 md:grid-cols-3 gap-6 overflow-hidden min-h-0">
-          <div className="md:col-span-2 min-h-0 relative border rounded-md">
-            {isAdjusting && (
-              <div className="absolute inset-0 bg-background/50 flex items-center justify-center z-20 rounded-md">
-                <Loader2 className="h-12 w-12 animate-spin text-accent" />
-              </div>
-            )}
-            <StarAnnotationCanvas
-                imageUrl={editedImageUrl!}
-                allStars={starsForRemoval}
-                manualStars={[]} // Not used for selection here, just display
-                onCanvasClick={() => {}} // Read-only
-                analysisWidth={0} // Will be determined by image
-                analysisHeight={0}
-                isReadOnly={true}
-            />
+          <div className="md:col-span-2 flex flex-col min-h-0">
+            <div className="flex-grow min-h-0 relative">
+                {isAdjusting && (
+                <div className="absolute inset-0 bg-background/50 flex items-center justify-center z-20 rounded-md">
+                    <Loader2 className="h-12 w-12 animate-spin text-accent" />
+                </div>
+                )}
+                <StarAnnotationCanvas
+                    imageUrl={editedImageUrl!}
+                    allStars={starsForRemoval}
+                    manualStars={[]}
+                    onCanvasClick={() => {}}
+                    analysisWidth={0}
+                    analysisHeight={0}
+                    isReadOnly={true}
+                />
+            </div>
           </div>
           
           <div className="md:col-span-1 flex flex-col">
