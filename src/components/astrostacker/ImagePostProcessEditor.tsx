@@ -124,7 +124,7 @@ export function ImagePostProcessEditor({
         </DialogHeader>
         
         <div className="flex-grow grid grid-cols-1 md:grid-cols-3 gap-6 overflow-hidden min-h-0">
-          <div className="md:col-span-2 flex flex-col min-h-0 relative">
+          <div className="md:col-span-2 min-h-0 relative overflow-auto border rounded-md">
             {isAdjusting && (
               <div className="absolute inset-0 bg-background/50 flex items-center justify-center z-20 rounded-md">
                 <Loader2 className="h-12 w-12 animate-spin text-accent" />
