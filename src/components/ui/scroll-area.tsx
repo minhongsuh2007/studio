@@ -13,10 +13,10 @@ const ScrollArea = React.forwardRef<
     {...props}
   >
     <div className="h-full w-full">{children}</div>
-    {/* ScrollBar component is now for visual representation if needed, but native scroll is used */}
+    <ScrollBar />
   </div>
-));
-ScrollArea.displayName = "ScrollArea";
+))
+ScrollArea.displayName = "ScrollArea"
 
 const ScrollBar = React.forwardRef<
   HTMLDivElement,
@@ -25,21 +25,14 @@ const ScrollBar = React.forwardRef<
   <div
     ref={ref}
     className={cn(
-      "flex touch-none select-none transition-colors",
-      // These classes are for styling a custom scrollbar, but we use native.
-      // They can be adapted if a custom scrollbar is re-introduced.
-      // For now, they won't do much.
-      orientation === "vertical" &&
-        "h-full w-2.5 border-l border-l-transparent p-[1px]",
-      orientation === "horizontal" &&
-        "h-2.5 flex-col border-t border-t-transparent p-[1px]",
+      "flex touch-none select-none",
+      orientation === "vertical" && "h-full w-2.5 border-l border-l-transparent p-[1px]",
+      orientation === "horizontal" && "h-2.5 w-full border-t border-t-transparent p-[1px]",
       className
     )}
     {...props}
-  >
-    {/* Thumb would go here for custom scrollbar */}
-  </div>
-));
-ScrollBar.displayName = "ScrollBar";
+  />
+))
+ScrollBar.displayName = "ScrollBar"
 
-export { ScrollArea, ScrollBar };
+export { ScrollArea, ScrollBar }
