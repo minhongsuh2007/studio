@@ -7,9 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
 import { Label } from '@/components/ui/label';
-import { ImagePreview } from './ImagePreview';
-import { DownloadButton } from './DownloadButton';
-import { Loader2, RotateCcw } from 'lucide-react';
+import { Download, Loader2, RotateCcw } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recharts';
 import { StarAnnotationCanvas } from './StarAnnotationCanvas';
@@ -139,7 +137,6 @@ export function ImagePostProcessEditor({
                 onCanvasClick={() => {}} // Read-only
                 analysisWidth={0} // Will be determined by image
                 analysisHeight={0}
-                isReadOnly={true}
             />
           </div>
           
@@ -205,8 +202,9 @@ export function ImagePostProcessEditor({
                 <Button onClick={onResetAdjustments} variant="outline" className="w-full">
                   <RotateCcw className="mr-2 h-4 w-4" /> Reset All Adjustments
                 </Button>
-                 <Button onClick={handleDownloadFinal} className="w-full bg-accent hover:bg-accent/90 text-accent-foreground">
-                   <DownloadButton imageUrl={null} isProcessing={isAdjusting} />
+                 <Button onClick={handleDownloadFinal} className="w-full bg-accent hover:bg-accent/90 text-accent-foreground" disabled={isAdjusting}>
+                   <Download className="mr-2 h-4 w-4" />
+                   Download Final Image
                  </Button>
             </div>
           </div>
@@ -218,9 +216,4 @@ export function ImagePostProcessEditor({
       </DialogContent>
     </Dialog>
   );
-}
-
-// Dummy DownloadButton component that will be triggered by our custom button
-function DownloadButton({ imageUrl, isProcessing }: { imageUrl: string | null; isProcessing: boolean }) {
-  return <>Download Final Image</>;
 }
