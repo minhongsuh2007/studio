@@ -32,6 +32,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import NextImage from 'next/image';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { createMasterFrame, applyCalibration } from '@/lib/image-calibration';
+import { applyPostProcessing, calculateHistogram, detectStarsForRemoval } from '@/lib/post-process';
 
 interface ImageQueueEntry {
   id: string;
@@ -89,9 +90,15 @@ export default function AstroStackerPage() {
   const [showPostProcessEditor, setShowPostProcessEditor] = useState(false);
   const [imageForPostProcessing, setImageForPostProcessing] = useState<string | null>(null);
   const [editedPreviewUrl, setEditedPreviewUrl] = useState<string | null>(null);
+  
+  // --- Post-Processing State ---
   const [brightness, setBrightness] = useState(100);
   const [exposure, setExposure] = useState(0);
   const [saturation, setSaturation] = useState(100);
+  const [blackPoint, setBlackPoint] = useState(0);
+  const [midtones, setMidtones] = useState(0.5);
+  const [whitePoint, setWhitePoint] = useState(255);
+  const [starRemovalStrength, setStarRemovalStrength] = useState(0);
   const [isApplyingAdjustments, setIsApplyingAdjustments] = useState(false);
   const [isTutorialOpen, setIsTutorialOpen] = useState(false);
 
@@ -174,65 +181,18 @@ export default function AstroStackerPage() {
     }
   }, [logs]);
 
-  const applyImageAdjustmentsToDataURL = async (
-    baseDataUrl: string,
-    brightness: number,
-    exposure: number,
-    saturation: number,
-    outputFormat: 'png' | 'jpeg' = 'png',
-    jpegQuality = 0.92
-  ): Promise<string> => {
-    if (!baseDataUrl) return baseDataUrl;
-  
-    return new Promise((resolve, reject) => {
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        canvas.width = img.naturalWidth;
-        canvas.height = img.naturalHeight;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
-          reject(new Error("Could not get canvas context for image adjustments."));
-          return;
-        }
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = 'high';
-        ctx.drawImage(img, 0, 0);
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const data = imageData.data;
-        const bFactor = brightness / 100;
-        const eFactor = Math.pow(2, exposure / 100);
-        for (let i = 0; i < data.length; i += 4) {
-          let r = data[i], g = data[i+1], b = data[i+2];
-          r = Math.min(255, Math.max(0, r * eFactor * bFactor));
-          g = Math.min(255, Math.max(0, g * eFactor * bFactor));
-          b = Math.min(255, Math.max(0, b * eFactor * bFactor));
-  
-          if (saturation !== 100) {
-            const sFactor = saturation / 100;
-            const gray = 0.299 * r + 0.587 * g + 0.114 * b;
-            r = Math.min(255, Math.max(0, gray + sFactor * (r - gray)));
-            g = Math.min(255, Math.max(0, gray + sFactor * (g - gray)));
-            b = Math.min(255, Math.max(0, gray + sFactor * (b - gray)));
-          }
-  
-          data[i] = r; data[i + 1] = g; data[i + 2] = b;
-        }
-        ctx.putImageData(imageData, 0, 0);
-        resolve(canvas.toDataURL(outputFormat === 'jpeg' ? 'image/jpeg' : 'image/png', outputFormat === 'jpeg' ? jpegQuality : undefined));
-      };
-      img.onerror = (err) => reject(new Error("Failed to load image for adjustments."));
-      img.src = baseDataUrl;
-    });
-  };
-
   useEffect(() => {
     if (!imageForPostProcessing || !showPostProcessEditor) return;
     const applyAdjustments = async () => {
       setIsApplyingAdjustments(true);
       try {
-        const adjustedUrl = await applyImageAdjustmentsToDataURL(
-          imageForPostProcessing, brightness, exposure, saturation, outputFormat, jpegQuality / 100
+        const adjustedUrl = await applyPostProcessing(
+          imageForPostProcessing,
+          { brightness, exposure, saturation },
+          { blackPoint, midtones, whitePoint },
+          { strength: starRemovalStrength, apply: false },
+          outputFormat,
+          jpegQuality / 100
         );
         setEditedPreviewUrl(adjustedUrl);
       } catch (error) {
@@ -242,9 +202,13 @@ export default function AstroStackerPage() {
         setIsApplyingAdjustments(false);
       }
     };
-    const debounceTimeout = setTimeout(applyAdjustments, 300);
+    const debounceTimeout = setTimeout(applyAdjustments, 200);
     return () => clearTimeout(debounceTimeout);
-  }, [imageForPostProcessing, brightness, exposure, saturation, showPostProcessEditor, outputFormat, jpegQuality]);
+  }, [
+    imageForPostProcessing, brightness, exposure, saturation, 
+    blackPoint, midtones, whitePoint, starRemovalStrength,
+    showPostProcessEditor, outputFormat, jpegQuality
+  ]);
 
   const analyzeImageForStars = async (entryToAnalyze: ImageQueueEntry): Promise<ImageQueueEntry> => {
     setAllImageStarData(prevData =>
@@ -765,7 +729,7 @@ export default function AstroStackerPage() {
       setImageForPostProcessing(resultDataUrl);
       setEditedPreviewUrl(resultDataUrl);
   
-      setBrightness(100); setExposure(0); setSaturation(100);
+      handleResetAdjustments();
       setShowPostProcessEditor(true);
       addLog(`Stacking Complete: Successfully stacked ${calibratedLightFrames.length} images.`);
   
@@ -783,14 +747,17 @@ export default function AstroStackerPage() {
 
   const handleOpenPostProcessEditor = () => {
     if (stackedImage) {
-      setImageForPostProcessing(stackedImage); setEditedPreviewUrl(stackedImage); 
-      setBrightness(100); setExposure(0); setSaturation(100); setShowPostProcessEditor(true);
+      setImageForPostProcessing(stackedImage); 
+      setEditedPreviewUrl(stackedImage); 
+      handleResetAdjustments();
+      setShowPostProcessEditor(true);
     }
   };
 
   const handleResetAdjustments = () => {
     setBrightness(100); setExposure(0); setSaturation(100);
-    if (imageForPostProcessing) setEditedPreviewUrl(imageForPostProcessing);
+    setBlackPoint(0); setMidtones(0.5); setWhitePoint(255);
+    setStarRemovalStrength(0);
   };
   
   const handleTestFileAdded = async (files: File[]) => {
@@ -1369,10 +1336,31 @@ export default function AstroStackerPage() {
       </footer>
       <TutorialDialog isOpen={isTutorialOpen} onClose={() => setIsTutorialOpen(false)} />
       {showPostProcessEditor && imageForPostProcessing && (
-        <ImagePostProcessEditor isOpen={showPostProcessEditor} onClose={() => setShowPostProcessEditor(false)} baseImageUrl={imageForPostProcessing} editedImageUrl={editedPreviewUrl}
-          brightness={brightness} setBrightness={setBrightness} exposure={exposure} setExposure={setExposure}
-          saturation={saturation} setSaturation={setSaturation} onResetAdjustments={handleResetAdjustments}
-          isAdjusting={isApplyingAdjustments} outputFormat={outputFormat} jpegQuality={jpegQuality}
+        <ImagePostProcessEditor
+          isOpen={showPostProcessEditor}
+          onClose={() => setShowPostProcessEditor(false)}
+          baseImageUrl={imageForPostProcessing}
+          editedImageUrl={editedPreviewUrl}
+          isAdjusting={isApplyingAdjustments}
+          outputFormat={outputFormat}
+          jpegQuality={jpegQuality}
+          onResetAdjustments={handleResetAdjustments}
+          basicSettings={{ brightness, exposure, saturation }}
+          onBasicSettingsChange={({ brightness, exposure, saturation }) => {
+            setBrightness(brightness);
+            setExposure(exposure);
+            setSaturation(saturation);
+          }}
+          histogramSettings={{ blackPoint, midtones, whitePoint }}
+          onHistogramSettingsChange={({ blackPoint, midtones, whitePoint }) => {
+            setBlackPoint(blackPoint);
+            setMidtones(midtones);
+            setWhitePoint(whitePoint);
+          }}
+          starRemovalSettings={{ strength: starRemovalStrength }}
+          onStarRemovalSettingsChange={({ strength }) => {
+            setStarRemovalStrength(strength);
+          }}
         />
       )}
     </div>
