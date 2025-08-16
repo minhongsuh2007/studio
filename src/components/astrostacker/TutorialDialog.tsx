@@ -45,7 +45,7 @@ export function TutorialDialog({ isOpen, onClose }: TutorialDialogProps) {
         <DialogHeader>
           <DialogTitle>{t('tutorialTitle')}</DialogTitle>
         </DialogHeader>
-        <ScrollArea className="flex-grow pr-6">
+        <ScrollArea className="flex-grow pr-6 min-h-0">
           <Accordion type="single" collapsible defaultValue="1" className="w-full">
             {tutorialSteps.map(step => (
               <AccordionItem value={step.id} key={step.id}>
