@@ -123,7 +123,7 @@ export function ImagePostProcessEditor({
           </DialogDescription>
         </DialogHeader>
         
-        <div className="flex-grow grid grid-cols-1 md:grid-cols-3 gap-6 overflow-hidden min-h-0">
+        <div className="flex-grow grid grid-cols-1 md:grid-cols-3 gap-6 overflow-y-auto min-h-0 pr-2">
           <div className="md:col-span-2 flex flex-col min-h-0">
             <div className="flex-grow min-h-0 relative">
                 {isAdjusting && (

@@ -45,7 +45,7 @@ export function TutorialDialog({ isOpen, onClose }: TutorialDialogProps) {
         <DialogHeader>
           <DialogTitle>{t('tutorialTitle')}</DialogTitle>
         </DialogHeader>
-        <div className="flex-grow overflow-y-auto pr-2">
+        <ScrollArea className="flex-grow pr-6">
           <Accordion type="single" collapsible defaultValue="1" className="w-full">
             {tutorialSteps.map(step => (
               <AccordionItem value={step.id} key={step.id}>
@@ -56,7 +56,7 @@ export function TutorialDialog({ isOpen, onClose }: TutorialDialogProps) {
               </AccordionItem>
             ))}
           </Accordion>
-        </div>
+        </ScrollArea>
         <DialogFooter className="mt-4 pt-4 border-t flex-shrink-0">
           <DialogClose asChild>
             <Button variant="outline" onClick={onClose}>Close</Button>
@@ -66,5 +66,3 @@ export function TutorialDialog({ isOpen, onClose }: TutorialDialogProps) {
     </Dialog>
   );
 }
-
-    
