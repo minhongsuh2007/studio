@@ -132,6 +132,7 @@ export default function AstroStackerPage() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [hasCameraPermission, setHasCameraPermission] = useState<boolean | null>(null);
   const [isLiveStacking, setIsLiveStacking] = useState(false);
+  const isCapturing = useRef(false);
   const [liveStackingParams, setLiveStackingParams] = useState({ exposure: 1, iso: 800, count: 10 });
   const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedVideoDevice, setSelectedVideoDevice] = useState<string>('');
@@ -226,7 +227,6 @@ export default function AstroStackerPage() {
   }, []);
   
   useEffect(() => {
-    // This effect triggers stacking *after* the live stacking capture session is complete.
     if (!isLiveStacking && appMode === 'live' && allImageStarData.length >= 2) {
       const allAnalyzed = allImageStarData.every(img => img.isAnalyzed);
       if (allAnalyzed) {
@@ -1155,18 +1155,9 @@ export default function AstroStackerPage() {
     return new ImageData(averagedData, canvas.width, canvas.height);
 };
 
-  const handleStartLiveStacking = async () => {
-    if (!videoRef.current || isLiveStacking) return;
-  
-    addLog(`라이브 스태킹 시작: 노출 ${liveStackingParams.exposure}s, ${liveStackingParams.count}장`);
-    setIsLiveStacking(true);
-    setAllImageStarData([]);
-    setStackedImage(null);
-  
-    const capturedFrames: ImageQueueEntry[] = [];
-
+  const captureLoop = async () => {
     for (let i = 0; i < liveStackingParams.count; i++) {
-        if (!isLiveStacking) {
+        if (!isCapturing.current) {
             addLog("라이브 스태킹이 사용자에 의해 중지되었습니다.");
             break;
         }
@@ -1194,14 +1185,29 @@ export default function AstroStackerPage() {
         const newEntry = await createImageQueueEntryFromFile(file);
         if (newEntry) {
             setAllImageStarData(prev => [...prev, newEntry]);
+            // Analysis is started immediately after adding
             analyzeImageForStars(newEntry);
         }
     }
-  
+    // After the loop finishes or is broken, stop the session
     handleStopLiveStacking();
+  }
+
+  const handleStartLiveStacking = async () => {
+    if (!videoRef.current || isLiveStacking) return;
+  
+    addLog(`라이브 스태킹 시작: 노출 ${liveStackingParams.exposure}s, ${liveStackingParams.count}장`);
+    setIsLiveStacking(true);
+    isCapturing.current = true;
+    setAllImageStarData([]);
+    setStackedImage(null);
+  
+    // Start the capture loop
+    captureLoop();
   };
   
   const handleStopLiveStacking = useCallback(() => {
+    isCapturing.current = false;
     setIsLiveStacking(false);
     setProgressPercent(0);
     addLog("라이브 캡처 세션이 종료되었습니다. 분석이 완료되면 최종 스태킹이 시작됩니다.");
@@ -1644,3 +1650,5 @@ export default function AstroStackerPage() {
     </div>
   );
 }
+
+    
