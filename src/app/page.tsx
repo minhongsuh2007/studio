@@ -1117,43 +1117,69 @@ export default function AstroStackerPage() {
   };
 
   const captureSimulatedExposure = async (durationSeconds: number): Promise<ImageData | null> => {
-    if (!videoRef.current || !videoRef.current.srcObject) return null;
-    
-    const video = videoRef.current;
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    if (!ctx) return null;
+      if (!videoRef.current || !videoRef.current.srcObject) return null;
+      
+      const video = videoRef.current;
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      if (!ctx) return null;
 
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
 
-    const accumulatedData = new Float32Array(canvas.width * canvas.height * 4);
-    let frameCount = 0;
-    const startTime = performance.now();
+      if (canvas.width === 0 || canvas.height === 0) {
+          addLog("[Live Capture Error] Video dimensions are zero. Cannot capture.");
+          return null;
+      }
 
-    while (performance.now() - startTime < durationSeconds * 1000) {
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        for (let i = 0; i < frame.data.length; i++) {
-            accumulatedData[i] += frame.data[i];
-        }
-        frameCount++;
-        await new Promise(requestAnimationFrame);
-    }
+      const accumulatedData = new Float32Array(canvas.width * canvas.height * 4);
+      const startTime = performance.now();
+      let frameCount = 0;
 
-    if (frameCount === 0) {
-        addLog("[Live Capture] No frames captured for exposure simulation.");
-        return null;
-    }
+      while (performance.now() - startTime < durationSeconds * 1000) {
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          for (let i = 0; i < frame.data.length; i++) {
+              accumulatedData[i] += frame.data[i];
+          }
+          frameCount++;
+          await new Promise(requestAnimationFrame);
+      }
 
-    const averagedData = new Uint8ClampedArray(accumulatedData.length);
-    for (let i = 0; i < accumulatedData.length; i++) {
-        averagedData[i] = accumulatedData[i] / frameCount;
-    }
+      if (frameCount === 0) {
+          addLog("[Live Capture] No frames captured for exposure simulation.");
+          return null;
+      }
 
-    addLog(`[Live Capture] Simulated exposure: averaged ${frameCount} frames.`);
-    return new ImageData(averagedData, canvas.width, canvas.height);
-};
+      // Instead of averaging, normalize the accumulated values for a long-exposure effect
+      const normalizedData = new Uint8ClampedArray(accumulatedData.length);
+      let maxVal = 0;
+      for (let i = 0; i < accumulatedData.length; i+=4) {
+          maxVal = Math.max(maxVal, accumulatedData[i], accumulatedData[i+1], accumulatedData[i+2]);
+      }
+
+      if (maxVal > 0) {
+          const scale = 255 / maxVal;
+          for (let i = 0; i < accumulatedData.length; i+=4) {
+              normalizedData[i] = accumulatedData[i] * scale;
+              normalizedData[i+1] = accumulatedData[i+1] * scale;
+              normalizedData[i+2] = accumulatedData[i+2] * scale;
+              normalizedData[i+3] = 255; // Full alpha
+          }
+      } else {
+          // If the image is completely black, just return a black image.
+          // This avoids division by zero.
+          for (let i = 0; i < accumulatedData.length; i+=4) {
+             normalizedData[i] = 0;
+             normalizedData[i+1] = 0;
+             normalizedData[i+2] = 0;
+             normalizedData[i+3] = 255;
+          }
+      }
+
+      addLog(`[Live Capture] Simulated exposure: accumulated ${frameCount} frames and normalized.`);
+      return new ImageData(normalizedData, canvas.width, canvas.height);
+  };
 
   const captureLoop = async () => {
     for (let i = 0; i < liveStackingParams.count; i++) {
@@ -1650,5 +1676,3 @@ export default function AstroStackerPage() {
     </div>
   );
 }
-
-    
