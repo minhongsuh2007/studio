@@ -133,7 +133,7 @@ export default function AstroStackerPage() {
   const [hasCameraPermission, setHasCameraPermission] = useState<boolean | null>(null);
   const [isLiveStacking, setIsLiveStacking] = useState(false);
   const isCapturing = useRef(false);
-  const [liveStackingParams, setLiveStackingParams] = useState({ exposure: 1, iso: 800, count: 10 });
+  const [liveStackingParams, setLiveStackingParams] = useState({ iso: 800, count: 10 });
   const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedVideoDevice, setSelectedVideoDevice] = useState<string>('');
 
@@ -1117,7 +1117,7 @@ export default function AstroStackerPage() {
       }
   };
 
-  const captureSimulatedExposure = async (durationSeconds: number): Promise<ImageData | null> => {
+  const captureFrame = async (): Promise<ImageData | null> => {
       if (!videoRef.current || !videoRef.current.srcObject) return null;
       
       const video = videoRef.current;
@@ -1133,36 +1133,8 @@ export default function AstroStackerPage() {
           return null;
       }
 
-      const accumulatedData = new Float32Array(canvas.width * canvas.height * 4);
-      const startTime = performance.now();
-      let frameCount = 0;
-
-      while (performance.now() - startTime < durationSeconds * 1000) {
-          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-          const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
-          for (let i = 0; i < frame.data.length; i++) {
-              accumulatedData[i] += frame.data[i];
-          }
-          frameCount++;
-          await new Promise(requestAnimationFrame);
-      }
-
-      if (frameCount === 0) {
-          addLog("[Live Capture] No frames captured for exposure simulation.");
-          return null;
-      }
-      
-      const clampedData = new Uint8ClampedArray(accumulatedData.length);
-      for (let i = 0; i < accumulatedData.length; i += 4) {
-          clampedData[i] = Math.min(255, accumulatedData[i]);
-          clampedData[i+1] = Math.min(255, accumulatedData[i+1]);
-          clampedData[i+2] = Math.min(255, accumulatedData[i+2]);
-          clampedData[i+3] = 255; // Full alpha
-      }
-
-
-      addLog(`[Live Capture] Simulated exposure: accumulated ${frameCount} frames.`);
-      return new ImageData(clampedData, canvas.width, canvas.height);
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      return ctx.getImageData(0, 0, canvas.width, canvas.height);
   };
 
   const captureLoop = async () => {
@@ -1172,21 +1144,21 @@ export default function AstroStackerPage() {
             break;
         }
 
-        addLog(`[Live Capture] Capturing image ${i + 1}/${liveStackingParams.count}...`);
+        addLog(`[Live Capture] Capturing frame ${i + 1}/${liveStackingParams.count}...`);
         setProgressPercent(((i + 1) / liveStackingParams.count) * 100);
 
-        const exposedImageData = await captureSimulatedExposure(liveStackingParams.exposure);
-        if (!exposedImageData) {
-            addLog(`[Live Capture Error] Failed to capture image ${i + 1}.`);
+        const capturedImageData = await captureFrame();
+        if (!capturedImageData) {
+            addLog(`[Live Capture Error] Failed to capture frame ${i + 1}.`);
             continue;
         }
 
         const canvas = document.createElement('canvas');
-        canvas.width = exposedImageData.width;
-        canvas.height = exposedImageData.height;
+        canvas.width = capturedImageData.width;
+        canvas.height = capturedImageData.height;
         const ctx = canvas.getContext('2d');
         if (!ctx) continue;
-        ctx.putImageData(exposedImageData, 0, 0);
+        ctx.putImageData(capturedImageData, 0, 0);
 
         const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
         const blob = await (await fetch(dataUrl)).blob();
@@ -1206,7 +1178,7 @@ export default function AstroStackerPage() {
   const handleStartLiveStacking = async () => {
     if (!videoRef.current || isLiveStacking) return;
   
-    addLog(`라이브 스태킹 시작: 노출 ${liveStackingParams.exposure}s, ${liveStackingParams.count}장`);
+    addLog(`라이브 스태킹 시작: ISO ${liveStackingParams.iso}, ${liveStackingParams.count} 프레임`);
     setIsLiveStacking(true);
     isCapturing.current = true;
     setAllImageStarData([]);
@@ -1468,7 +1440,7 @@ export default function AstroStackerPage() {
                     <Card className="shadow-lg">
                         <CardHeader>
                             <CardTitle className="flex items-center text-xl font-headline"><Camera className="mr-2 h-5 w-5 text-accent" />라이브 스태킹 설정</CardTitle>
-                            <CardDescription>어포컬 촬영을 위한 라이브 스태킹 모드입니다. 카메라, 노출, ISO를 설정하고 시작하세요.</CardDescription>
+                            <CardDescription>어포컬 촬영을 위한 라이브 스태킹 모드입니다. 카메라, 프레임 수, ISO를 설정하고 시작하세요.</CardDescription>
                         </CardHeader>
                         <CardContent className="space-y-4">
                             <div className="space-y-2">
@@ -1485,10 +1457,6 @@ export default function AstroStackerPage() {
                                         ))}
                                     </SelectContent>
                                 </Select>
-                            </div>
-                            <div className="space-y-2">
-                                <Label htmlFor="exposure-time">노출 시간 (초)</Label>
-                                <Input id="exposure-time" type="number" value={liveStackingParams.exposure} onChange={(e) => setLiveStackingParams(p => ({...p, exposure: Number(e.target.value)}))} min={1} disabled={isUiDisabled} />
                             </div>
                             <div className="space-y-2">
                                 <Label htmlFor="iso">ISO</Label>
@@ -1662,5 +1630,3 @@ export default function AstroStackerPage() {
     </div>
   );
 }
-
-    
