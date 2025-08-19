@@ -146,7 +146,10 @@ export default function AstroStackerPage() {
 
     try {
         const constraints: MediaStreamConstraints = {
-            video: deviceId ? { deviceId: { exact: deviceId } } : { facingMode: 'environment' }
+            video: { 
+                ...(deviceId ? { deviceId: { exact: deviceId } } : { facingMode: 'environment' }),
+                // advanced constraints can be added here if needed in the future
+            }
         };
         const stream = await navigator.mediaDevices.getUserMedia(constraints);
         setHasCameraPermission(true);
@@ -154,7 +157,28 @@ export default function AstroStackerPage() {
         if (videoRef.current) {
             videoRef.current.srcObject = stream;
         }
-        const currentDevice = stream.getVideoTracks()[0].getSettings().deviceId;
+
+        const videoTrack = stream.getVideoTracks()[0];
+        const capabilities = videoTrack.getCapabilities();
+
+        // @ts-ignore - 'iso' is a valid but not universally typed capability
+        if (capabilities.iso) {
+            try {
+                await videoTrack.applyConstraints({
+                    // @ts-ignore
+                    advanced: [{ iso: liveStackingParams.iso }]
+                });
+                addLog(`[CAMERA] ISO set to ${liveStackingParams.iso}`);
+            } catch(e) {
+                console.error(`Failed to set ISO:`, e);
+                addLog(`[CAMERA-WARN] Failed to set ISO to ${liveStackingParams.iso}. Camera may not support this value.`);
+            }
+        } else {
+            addLog("[CAMERA-WARN] Camera does not support ISO control.");
+        }
+
+
+        const currentDevice = videoTrack.getSettings().deviceId;
         if (currentDevice) {
             setSelectedVideoDevice(currentDevice);
         }
@@ -164,15 +188,17 @@ export default function AstroStackerPage() {
         setHasCameraPermission(false);
         addLog("[오류] 카메라 권한이 거부되었습니다. 브라우저 설정에서 권한을 허용해주세요.");
     }
-  }, []);
+  }, [liveStackingParams.iso]);
 
   const getVideoDevices = useCallback(async () => {
     try {
+        // Request permission first to ensure we get labels
         await navigator.mediaDevices.getUserMedia({ video: true });
         const devices = await navigator.mediaDevices.enumerateDevices();
         const videoInputs = devices.filter(device => device.kind === 'videoinput');
         setVideoDevices(videoInputs);
         if (videoInputs.length > 0 && !selectedVideoDevice) {
+            // Prefer back-facing camera
             const rearCamera = videoInputs.find(d => d.label.toLowerCase().includes('back')) || videoInputs[0];
             setSelectedVideoDevice(rearCamera.deviceId);
         }
@@ -190,11 +216,34 @@ export default function AstroStackerPage() {
   }, [appMode, getVideoDevices]);
 
   useEffect(() => {
-    if (appMode === 'live' && selectedVideoDevice && (!videoRef.current || !videoRef.current.srcObject)) {
+    if (appMode === 'live' && selectedVideoDevice) {
         getCameraStream(selectedVideoDevice);
     }
-  }, [appMode, selectedVideoDevice, getCameraStream]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appMode, selectedVideoDevice]);
   
+  // This effect applies ISO changes to the current stream
+  useEffect(() => {
+      if (appMode === 'live' && videoRef.current && videoRef.current.srcObject) {
+          const stream = videoRef.current.srcObject as MediaStream;
+          const track = stream.getVideoTracks()[0];
+          if (track) {
+              const capabilities = track.getCapabilities();
+              // @ts-ignore
+              if (capabilities.iso) {
+                track.applyConstraints({
+                    // @ts-ignore
+                    advanced: [{ iso: liveStackingParams.iso }]
+                }).then(() => {
+                    addLog(`[CAMERA] ISO updated to ${liveStackingParams.iso}`);
+                }).catch(e => {
+                    addLog(`[CAMERA-WARN] Could not update ISO to ${liveStackingParams.iso}.`);
+                });
+              }
+          }
+      }
+  }, [liveStackingParams.iso, appMode]);
+
   useEffect(() => {
     try {
       const storedPatterns = localStorage.getItem('astrostacker-learned-patterns');
@@ -1637,5 +1686,7 @@ export default function AstroStackerPage() {
     </div>
   );
 }
+
+    
 
     
