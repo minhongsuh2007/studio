@@ -150,123 +150,101 @@ export default function AstroStackerPage() {
 
   // Effect for initializing and managing the camera stream in live mode
   useEffect(() => {
-    let stream: MediaStream | null = null;
-  
-    const stopStream = () => {
-      if (stream) {
-        stream.getTracks().forEach(track => track.stop());
-        stream = null;
-        if (videoRef.current) {
-          videoRef.current.srcObject = null;
+    if (appMode !== 'live') {
+        // Stop camera if we switch away from live mode
+        if (videoRef.current && videoRef.current.srcObject) {
+            (videoRef.current.srcObject as MediaStream).getTracks().forEach(track => track.stop());
+            videoRef.current.srcObject = null;
         }
-      }
-    };
-  
-    const getCameraStream = async (deviceId?: string) => {
-      stopStream(); // Stop any existing stream before starting a new one
-  
-      try {
-        const constraints: MediaStreamConstraints = {
-          video: {
-            ...(deviceId ? { deviceId: { exact: deviceId } } : { facingMode: 'environment' }),
-          },
-        };
-        stream = await navigator.mediaDevices.getUserMedia(constraints);
-        setHasCameraPermission(true);
-  
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-        }
-  
-        const videoTrack = stream.getVideoTracks()[0];
-        const capabilities = videoTrack.getCapabilities();
-        // @ts-ignore
-        if (capabilities.iso) {
-          try {
-            await videoTrack.applyConstraints({
-              // @ts-ignore
-              advanced: [{ iso: liveStackingParams.iso }]
-            });
-            addLog(`[CAMERA] ISO set to ${liveStackingParams.iso}`);
-          } catch (e) {
-            console.error(`Failed to set ISO:`, e);
-            addLog(`[CAMERA-WARN] Failed to set ISO to ${liveStackingParams.iso}. Camera may not support this value.`);
-          }
-        } else {
-          addLog("[CAMERA-WARN] Camera does not support ISO control.");
-        }
-  
-        addLog(`카메라 스트림을 성공적으로 시작했습니다: ${videoTrack.label}`);
-  
-      } catch (error) {
-        console.error('카메라 접근 오류:', error);
-        setHasCameraPermission(false);
-        addLog("[오류] 카메라 권한이 거부되었습니다. 브라우저 설정에서 권한을 허용해주세요.");
-      }
-    };
-  
-    if (appMode === 'live') {
-      const initializeCamera = async () => {
-        try {
-          // First, get permission to enumerate devices
-          await navigator.mediaDevices.getUserMedia({ video: true });
-          const devices = await navigator.mediaDevices.enumerateDevices();
-          const videoInputs = devices.filter(device => device.kind === 'videoinput');
-          setVideoDevices(videoInputs);
-  
-          let deviceToUse = selectedVideoDevice;
-          if (!deviceToUse && videoInputs.length > 0) {
-            const rearCamera = videoInputs.find(d => d.label.toLowerCase().includes('back')) || videoInputs[0];
-            deviceToUse = rearCamera.deviceId;
-            setSelectedVideoDevice(deviceToUse);
-          }
-          
-          if (deviceToUse) {
-            getCameraStream(deviceToUse);
-          } else if (videoInputs.length > 0) {
-            getCameraStream(videoInputs[0].deviceId);
-          } else {
-            setHasCameraPermission(false);
-            addLog("[오류] 사용 가능한 비디오 장치가 없습니다.");
-          }
-        } catch (error) {
-          console.error('비디오 장치 목록을 가져오는 데 실패했습니다:', error);
-          addLog("[오류] 비디오 장치 목록을 가져오거나 권한을 얻는 데 실패했습니다.");
-          setHasCameraPermission(false);
-        }
-      };
-      
-      initializeCamera();
+        return;
     }
-  
-    return () => {
-      stopStream(); // Cleanup on unmount or when appMode changes
+
+    let stream: MediaStream | null = null;
+    const initializeCamera = async () => {
+        try {
+            // Stop any existing stream
+            if (videoRef.current && videoRef.current.srcObject) {
+                (videoRef.current.srcObject as MediaStream).getTracks().forEach(track => track.stop());
+            }
+
+            // Get device list if not already fetched
+            if (videoDevices.length === 0) {
+                await navigator.mediaDevices.getUserMedia({ video: true }); // Request permission to get device list
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const videoInputs = devices.filter(d => d.kind === 'videoinput');
+                setVideoDevices(videoInputs);
+                
+                // Auto-select rear camera or first camera
+                if (videoInputs.length > 0) {
+                    const rearCamera = videoInputs.find(d => d.label.toLowerCase().includes('back')) || videoInputs[0];
+                    setSelectedVideoDevice(rearCamera.deviceId);
+                    return; // Let the re-render with new selectedVideoDevice trigger the stream
+                }
+            }
+
+            if (!selectedVideoDevice && videoDevices.length > 0) {
+                // If there's no selection yet but we have devices, select one.
+                const rearCamera = videoDevices.find(d => d.label.toLowerCase().includes('back')) || videoDevices[0];
+                setSelectedVideoDevice(rearCamera.deviceId);
+                return; 
+            }
+            
+            if (!selectedVideoDevice) {
+                addLog("[오류] 사용 가능한 비디오 장치가 없습니다.");
+                setHasCameraPermission(false);
+                return;
+            }
+            
+            const constraints: MediaStreamConstraints = { video: { deviceId: { exact: selectedVideoDevice } } };
+            stream = await navigator.mediaDevices.getUserMedia(constraints);
+            
+            if (videoRef.current) {
+                videoRef.current.srcObject = stream;
+            }
+            setHasCameraPermission(true);
+            addLog(`카메라 스트림을 성공적으로 시작했습니다.`);
+            
+        } catch (error) {
+            console.error('카메라 접근 오류:', error);
+            setHasCameraPermission(false);
+            addLog("[오류] 카메라 권한이 거부되었습니다. 브라우저 설정에서 권한을 허용해주세요.");
+        }
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    
+    initializeCamera();
+
+    return () => {
+        if (stream) {
+            stream.getTracks().forEach(track => track.stop());
+        }
+    };
   }, [appMode, selectedVideoDevice]);
 
 
-  // Effect to handle ISO changes
+  // Effect to handle ISO changes. This is now separate.
   useEffect(() => {
     if (appMode === 'live' && videoRef.current && videoRef.current.srcObject) {
-      const stream = videoRef.current.srcObject as MediaStream;
-      const track = stream.getVideoTracks()[0];
-      if (track) {
-        const capabilities = track.getCapabilities();
-        // @ts-ignore
-        if (capabilities.iso) {
-          track.applyConstraints({
+        const stream = videoRef.current.srcObject as MediaStream;
+        const track = stream.getVideoTracks()[0];
+        if (track && track.getCapabilities) {
+            const capabilities = track.getCapabilities();
             // @ts-ignore
-            advanced: [{ iso: liveStackingParams.iso }]
-          }).then(() => {
-            addLog(`[CAMERA] ISO updated to ${liveStackingParams.iso}`);
-          }).catch(e => {
-            addLog(`[CAMERA-WARN] Could not update ISO to ${liveStackingParams.iso}.`);
-          });
+            if (capabilities.iso) {
+                track.applyConstraints({
+                    // @ts-ignore
+                    advanced: [{ iso: liveStackingParams.iso }]
+                }).then(() => {
+                    addLog(`[CAMERA] ISO updated to ${liveStackingParams.iso}`);
+                }).catch(e => {
+                    console.error("Failed to set ISO:", e);
+                    addLog(`[CAMERA-WARN] Could not update ISO to ${liveStackingParams.iso}.`);
+                });
+            } else {
+                 addLog("[CAMERA-WARN] Camera does not support ISO control.");
+            }
         }
-      }
     }
-  }, [liveStackingParams.iso, appMode, addLog]);
+  }, [liveStackingParams.iso, appMode, addLog, videoRef.current?.srcObject]);
 
   useEffect(() => {
     try {
@@ -1696,5 +1674,3 @@ export default function AstroStackerPage() {
     </div>
   );
 }
-
-    
