@@ -180,6 +180,7 @@ export default function AstroStackerPage() {
         }
     } catch (error) {
         console.error('비디오 장치 목록을 가져오는 데 실패했습니다:', error);
+        addLog("[오류] 비디오 장치 목록을 가져오는 데 실패했습니다.");
         setHasCameraPermission(false);
     }
   }, [selectedVideoDevice]);
@@ -191,7 +192,8 @@ export default function AstroStackerPage() {
   }, [appMode, getVideoDevices]);
 
   useEffect(() => {
-    if (appMode === 'live' && selectedVideoDevice) {
+    // This effect ensures a camera stream starts as soon as a device is selected or automatically found.
+    if (appMode === 'live' && selectedVideoDevice && (!videoRef.current || !videoRef.current.srcObject)) {
         getCameraStream(selectedVideoDevice);
     }
   }, [appMode, selectedVideoDevice, getCameraStream]);
@@ -681,11 +683,12 @@ export default function AstroStackerPage() {
 
 
   const handleStackAllImages = async () => {
-    if (allImageStarData.length < 2) {
+    const imagesToStack = allImageStarData;
+    if (imagesToStack.length < 2) {
       window.alert("Please upload at least two images.");
       return;
     }
-    if (allImageStarData.some(img => img.isAnalyzing)) {
+    if (imagesToStack.some(img => img.isAnalyzing)) {
       window.alert("Please wait for all images to be analyzed before stacking.");
       return;
     }
@@ -694,7 +697,7 @@ export default function AstroStackerPage() {
     setProgressPercent(0);
     setStackedImage(null);
     setShowPostProcessEditor(false);
-    addLog(`[STACK START] Method: ${alignmentMethod}. Quality: ${stackingQuality}. Stacking ${allImageStarData.length} images. Mode: ${stackingMode}.`);
+    addLog(`[STACK START] Method: ${alignmentMethod}. Quality: ${stackingQuality}. Stacking ${imagesToStack.length} images. Mode: ${stackingMode}.`);
   
     try {
       // --- CALIBRATION ---
@@ -721,7 +724,7 @@ export default function AstroStackerPage() {
 
       addLog("[CALIBRATION] Applying calibration to light frames...");
       
-      const lightFramesToProcess = [...allImageStarData];
+      const lightFramesToProcess = [...imagesToStack];
       let stackingDimensions = lightFramesToProcess[0].analysisDimensions;
 
       // If high quality, reload image data from original URLs
@@ -1132,7 +1135,50 @@ export default function AstroStackerPage() {
       }
   };
 
-  const handleStartLiveStacking = useCallback(() => {
+  /**
+   * Captures frames from the video stream for a given duration
+   * and averages them to simulate a long exposure.
+   */
+  const captureSimulatedExposure = async (durationSeconds: number): Promise<ImageData | null> => {
+    if (!videoRef.current || !videoRef.current.srcObject) return null;
+    
+    const video = videoRef.current;
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return null;
+
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+
+    const accumulatedData = new Float32Array(canvas.width * canvas.height * 4);
+    let frameCount = 0;
+    const startTime = performance.now();
+
+    while (performance.now() - startTime < durationSeconds * 1000) {
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        for (let i = 0; i < frame.data.length; i++) {
+            accumulatedData[i] += frame.data[i];
+        }
+        frameCount++;
+        await new Promise(requestAnimationFrame); // Wait for the next frame
+    }
+
+    if (frameCount === 0) {
+        addLog("[Live Capture] No frames captured for exposure simulation.");
+        return null;
+    }
+
+    const averagedData = new Uint8ClampedArray(accumulatedData.length);
+    for (let i = 0; i < accumulatedData.length; i++) {
+        averagedData[i] = accumulatedData[i] / frameCount;
+    }
+
+    addLog(`[Live Capture] Simulated exposure: averaged ${frameCount} frames.`);
+    return new ImageData(averagedData, canvas.width, canvas.height);
+};
+
+  const handleStartLiveStacking = useCallback(async () => {
     if (!videoRef.current || isLiveStacking) return;
   
     addLog(`라이브 스태킹 시작: 노출 ${liveStackingParams.exposure}s, ISO ${liveStackingParams.iso}, ${liveStackingParams.count}장`);
@@ -1142,49 +1188,50 @@ export default function AstroStackerPage() {
     setStackedImage(null);
   
     let capturesLeft = liveStackingParams.count;
-    const captureAndProcess = async () => {
-      if (capturesLeft <= 0 || !videoRef.current) {
-        handleStopLiveStacking();
-        return;
-      }
   
-      const video = videoRef.current;
-      const canvas = document.createElement('canvas');
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) {
-        addLog("[오류] 캡처를 위한 캔버스 컨텍스트를 생성할 수 없습니다.");
-        handleStopLiveStacking();
-        return;
-      }
-  
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
-      const blob = await (await fetch(dataUrl)).blob();
-      const file = new File([blob], `capture-${liveStackingParams.count - capturesLeft + 1}.jpg`, { type: 'image/jpeg' });
-  
-      setCapturedImages(prev => [...prev, dataUrl]);
-      
-      const newEntry = await createImageQueueEntryFromFile(file);
-      if (newEntry) {
-        setAllImageStarData(prev => [...prev, newEntry]);
-        const analyzedEntry = await analyzeImageForStars(newEntry);
-        
-        // After each analysis, re-stack all available images
-        const currentImages = [...allImageStarData, analyzedEntry];
-        if (currentImages.length >= 2) {
-          addLog(`${currentImages.length}번째 이미지 스태킹 중...`);
-          await handleStackAllImages(); // This function will now use the state `allImageStarData`
+    for (let i = 0; i < liveStackingParams.count; i++) {
+        if (!isLiveStacking) break; // Allow stopping mid-process
+
+        addLog(`[Live Capture] Capturing image ${i + 1}/${liveStackingParams.count}...`);
+        setProgressPercent(((i + 1) / liveStackingParams.count) * 100);
+
+        const exposedImageData = await captureSimulatedExposure(liveStackingParams.exposure);
+        if (!exposedImageData) {
+            addLog(`[Live Capture Error] Failed to capture image ${i + 1}.`);
+            continue;
         }
-      }
-  
-      capturesLeft--;
-      setProgressPercent((liveStackingParams.count - capturesLeft) / liveStackingParams.count * 100);
-    };
-  
-    captureIntervalRef.current = setInterval(captureAndProcess, liveStackingParams.exposure * 1000);
-    captureAndProcess(); // Initial capture
+
+        const canvas = document.createElement('canvas');
+        canvas.width = exposedImageData.width;
+        canvas.height = exposedImageData.height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) continue;
+        ctx.putImageData(exposedImageData, 0, 0);
+
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
+        const blob = await (await fetch(dataUrl)).blob();
+        const file = new File([blob], `capture-${i + 1}.jpg`, { type: 'image/jpeg' });
+    
+        setCapturedImages(prev => [...prev, dataUrl]);
+        
+        const newEntry = await createImageQueueEntryFromFile(file);
+        if (newEntry) {
+            const analyzedEntry = await analyzeImageForStars(newEntry);
+            setAllImageStarData(prev => [...prev, analyzedEntry]);
+            
+            // After each analysis, re-stack all available images
+            if (allImageStarData.length + 1 >= 2) {
+                addLog(`${allImageStarData.length + 1}번째 이미지 스태킹 중...`);
+                // Use a temporary state for handleStackAllImages to get the latest image
+                setAllImageStarData(currentQueue => {
+                    handleStackAllImages();
+                    return currentQueue;
+                });
+            }
+        }
+    }
+
+    handleStopLiveStacking();
   
   }, [isLiveStacking, liveStackingParams, allImageStarData]);
   
@@ -1634,4 +1681,6 @@ export default function AstroStackerPage() {
   );
 }
  
+    
+
     
