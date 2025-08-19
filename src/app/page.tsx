@@ -35,6 +35,8 @@ import { createMasterFrame, applyCalibration } from '@/lib/image-calibration';
 import { applyPostProcessing, calculateHistogram, detectStarsForRemoval } from '@/lib/post-process';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+
 
 interface ImageQueueEntry {
   id: string;
@@ -133,29 +135,66 @@ export default function AstroStackerPage() {
   const [liveStackingParams, setLiveStackingParams] = useState({ exposure: 1, iso: 800, count: 10 });
   const [capturedImages, setCapturedImages] = useState<string[]>([]);
   const captureIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([]);
+  const [selectedVideoDevice, setSelectedVideoDevice] = useState<string>('');
 
+
+  const getCameraStream = useCallback(async (deviceId?: string) => {
+    // Stop any existing stream
+    if (videoRef.current && videoRef.current.srcObject) {
+        const stream = videoRef.current.srcObject as MediaStream;
+        stream.getTracks().forEach(track => track.stop());
+    }
+
+    try {
+        const constraints: MediaStreamConstraints = {
+            video: deviceId ? { deviceId: { exact: deviceId } } : { facingMode: 'environment' }
+        };
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        setHasCameraPermission(true);
+
+        if (videoRef.current) {
+            videoRef.current.srcObject = stream;
+        }
+        const currentDevice = stream.getVideoTracks()[0].getSettings().deviceId;
+        if (currentDevice) {
+            setSelectedVideoDevice(currentDevice);
+        }
+        addLog("카메라 스트림을 성공적으로 시작했습니다.");
+    } catch (error) {
+        console.error('카메라 접근 오류:', error);
+        setHasCameraPermission(false);
+        addLog("[오류] 카메라 권한이 거부되었습니다. 브라우저 설정에서 권한을 허용해주세요.");
+    }
+  }, []);
+
+  const getVideoDevices = useCallback(async () => {
+    try {
+        await navigator.mediaDevices.getUserMedia({ video: true }); // Request permission first
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoInputs = devices.filter(device => device.kind === 'videoinput');
+        setVideoDevices(videoInputs);
+        if (videoInputs.length > 0 && !selectedVideoDevice) {
+            const rearCamera = videoInputs.find(d => d.label.toLowerCase().includes('back')) || videoInputs[0];
+            setSelectedVideoDevice(rearCamera.deviceId);
+        }
+    } catch (error) {
+        console.error('비디오 장치 목록을 가져오는 데 실패했습니다:', error);
+        setHasCameraPermission(false);
+    }
+  }, [selectedVideoDevice]);
 
   useEffect(() => {
-    if (appMode === 'live' && hasCameraPermission === null) {
-      const getCameraPermission = async () => {
-        try {
-          // Request rear camera
-          const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-          setHasCameraPermission(true);
-  
-          if (videoRef.current) {
-            videoRef.current.srcObject = stream;
-          }
-          addLog("카메라 권한을 성공적으로 얻었습니다.");
-        } catch (error) {
-          console.error('카메라 접근 오류:', error);
-          setHasCameraPermission(false);
-          addLog("[오류] 카메라 권한이 거부되었습니다. 브라우저 설정에서 권한을 허용해주세요.");
-        }
-      };
-      getCameraPermission();
+    if (appMode === 'live') {
+      getVideoDevices();
     }
-  }, [appMode, hasCameraPermission]);
+  }, [appMode, getVideoDevices]);
+
+  useEffect(() => {
+    if (appMode === 'live' && selectedVideoDevice) {
+        getCameraStream(selectedVideoDevice);
+    }
+  }, [appMode, selectedVideoDevice, getCameraStream]);
   
   useEffect(() => {
     try {
@@ -1188,7 +1227,7 @@ export default function AstroStackerPage() {
     <div className="flex flex-col min-h-screen bg-background">
       <AppHeader onTutorialClick={() => setIsTutorialOpen(true)} />
       <main className="flex-grow container mx-auto py-6 px-2 sm:px-4 md:px-6">
-      <Tabs value={appMode} onValueChange={(value) => setAppMode(value as AppMode)} className="w-full">
+      <Tabs defaultValue="upload" value={appMode} onValueChange={(value) => setAppMode(value as AppMode)} className="w-full">
           <TabsList className="grid w-full grid-cols-2">
             <TabsTrigger value="upload" disabled={isUiDisabled}><Upload className="mr-2 h-4 w-4"/>파일 업로드</TabsTrigger>
             <TabsTrigger value="live" disabled={isUiDisabled}><Camera className="mr-2 h-4 w-4"/>라이브 스태킹</TabsTrigger>
@@ -1406,6 +1445,21 @@ export default function AstroStackerPage() {
                         </CardHeader>
                         <CardContent className="space-y-4">
                             <div className="space-y-2">
+                                <Label htmlFor="camera-select">카메라 선택</Label>
+                                <Select onValueChange={setSelectedVideoDevice} value={selectedVideoDevice} disabled={isUiDisabled}>
+                                    <SelectTrigger id="camera-select">
+                                        <SelectValue placeholder="카메라를 선택하세요..." />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {videoDevices.map(device => (
+                                            <SelectItem key={device.deviceId} value={device.deviceId}>
+                                                {device.label || `카메라 ${videoDevices.indexOf(device) + 1}`}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                            <div className="space-y-2">
                                 <Label htmlFor="exposure-time">노출 시간 (초)</Label>
                                 <Input id="exposure-time" type="number" value={liveStackingParams.exposure} onChange={(e) => setLiveStackingParams(p => ({...p, exposure: Number(e.target.value)}))} min={1} disabled={isUiDisabled} />
                             </div>
@@ -1579,5 +1633,5 @@ export default function AstroStackerPage() {
     </div>
   );
 }
-
+ 
     

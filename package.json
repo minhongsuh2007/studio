@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@radix-ui/react-select": "2.1.1",
     "@tensorflow/tfjs": "^4.20.0",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.1",
