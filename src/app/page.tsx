@@ -1503,29 +1503,36 @@ export default function AstroStackerPage() {
                     )}
                 </div>
                 <div className="w-full lg:w-3/5 xl:w-2/3 flex flex-col space-y-6">
-                    <Card className="flex-grow flex items-center justify-center shadow-lg bg-black">
-                        <CardContent className="w-full h-full p-2">
-                            {hasCameraPermission === false ? (
-                                <Alert variant="destructive">
-                                    <AlertCircle className="h-4 w-4" />
-                                    <AlertTitle>카메라 접근 실패</AlertTitle>
-                                    <AlertDescription>
-                                        카메라 권한이 필요합니다. 브라우저 설정에서 이 앱의 카메라 접근을 허용해주세요.
-                                    </AlertDescription>
-                                </Alert>
-                            ) : (
-                                <div className="relative w-full h-full">
-                                    <video ref={videoRef} className="w-full h-full object-contain rounded-md" autoPlay muted playsInline />
-                                    {isLiveStacking && (
-                                        <div className="absolute top-2 right-2 bg-red-600 text-white px-3 py-1 rounded-full text-sm font-bold animate-pulse flex items-center gap-2">
-                                            <Video className="h-4 w-4"/> REC
-                                        </div>
-                                    )}
-                                </div>
-                            )}
-                        </CardContent>
-                    </Card>
-                     <ImagePreview imageUrl={showPostProcessEditor ? editedPreviewUrl : stackedImage} fitMode={previewFitMode} />
+                    {imageForAnnotation ? (
+                       <div className="flex-grow">
+                        <StarAnnotationCanvas imageUrl={imageForAnnotation.analysisPreviewUrl} allStars={canvasStars} manualStars={manualSelectedStars} onCanvasClick={handleStarAnnotationClick} analysisWidth={imageForAnnotation.analysisDimensions.width} analysisHeight={imageForAnnotation.analysisDimensions.height} />
+                       </div>
+                    ) : stackedImage ? (
+                        <ImagePreview imageUrl={showPostProcessEditor ? editedPreviewUrl : stackedImage} fitMode={previewFitMode} />
+                    ) : (
+                        <Card className="flex-grow flex items-center justify-center shadow-lg bg-black">
+                            <CardContent className="w-full h-full p-2">
+                                {hasCameraPermission === false ? (
+                                    <Alert variant="destructive">
+                                        <AlertCircle className="h-4 w-4" />
+                                        <AlertTitle>카메라 접근 실패</AlertTitle>
+                                        <AlertDescription>
+                                            카메라 권한이 필요합니다. 브라우저 설정에서 이 앱의 카메라 접근을 허용해주세요.
+                                        </AlertDescription>
+                                    </Alert>
+                                ) : (
+                                    <div className="relative w-full h-full">
+                                        <video ref={videoRef} className="w-full h-full object-contain rounded-md" autoPlay muted playsInline />
+                                        {isLiveStacking && (
+                                            <div className="absolute top-2 right-2 bg-red-600 text-white px-3 py-1 rounded-full text-sm font-bold animate-pulse flex items-center gap-2">
+                                                <Video className="h-4 w-4"/> REC
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </CardContent>
+                        </Card>
+                    )}
                 </div>
             </div>
           </TabsContent>
@@ -1630,3 +1637,5 @@ export default function AstroStackerPage() {
     </div>
   );
 }
+
+    
