@@ -148,105 +148,124 @@ export default function AstroStackerPage() {
     });
   }, []);
 
-  const getCameraStream = useCallback(async (deviceId?: string) => {
-    if (videoRef.current && videoRef.current.srcObject) {
-        const stream = videoRef.current.srcObject as MediaStream;
+  // Effect for initializing and managing the camera stream in live mode
+  useEffect(() => {
+    let stream: MediaStream | null = null;
+  
+    const stopStream = () => {
+      if (stream) {
         stream.getTracks().forEach(track => track.stop());
-    }
-
-    try {
-        const constraints: MediaStreamConstraints = {
-            video: { 
-                ...(deviceId ? { deviceId: { exact: deviceId } } : { facingMode: 'environment' }),
-            }
-        };
-        const stream = await navigator.mediaDevices.getUserMedia(constraints);
-        setHasCameraPermission(true);
-
+        stream = null;
         if (videoRef.current) {
-            videoRef.current.srcObject = stream;
+          videoRef.current.srcObject = null;
         }
-
+      }
+    };
+  
+    const getCameraStream = async (deviceId?: string) => {
+      stopStream(); // Stop any existing stream before starting a new one
+  
+      try {
+        const constraints: MediaStreamConstraints = {
+          video: {
+            ...(deviceId ? { deviceId: { exact: deviceId } } : { facingMode: 'environment' }),
+          },
+        };
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+        setHasCameraPermission(true);
+  
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+        }
+  
         const videoTrack = stream.getVideoTracks()[0];
         const capabilities = videoTrack.getCapabilities();
-
-        // @ts-ignore - 'iso' is a valid but not universally typed capability
+        // @ts-ignore
         if (capabilities.iso) {
-            try {
-                await videoTrack.applyConstraints({
-                    // @ts-ignore
-                    advanced: [{ iso: liveStackingParams.iso }]
-                });
-                addLog(`[CAMERA] ISO set to ${liveStackingParams.iso}`);
-            } catch(e) {
-                console.error(`Failed to set ISO:`, e);
-                addLog(`[CAMERA-WARN] Failed to set ISO to ${liveStackingParams.iso}. Camera may not support this value.`);
-            }
+          try {
+            await videoTrack.applyConstraints({
+              // @ts-ignore
+              advanced: [{ iso: liveStackingParams.iso }]
+            });
+            addLog(`[CAMERA] ISO set to ${liveStackingParams.iso}`);
+          } catch (e) {
+            console.error(`Failed to set ISO:`, e);
+            addLog(`[CAMERA-WARN] Failed to set ISO to ${liveStackingParams.iso}. Camera may not support this value.`);
+          }
         } else {
-            addLog("[CAMERA-WARN] Camera does not support ISO control.");
+          addLog("[CAMERA-WARN] Camera does not support ISO control.");
         }
-
-
-        const currentDevice = videoTrack.getSettings().deviceId;
-        if (currentDevice) {
-            setSelectedVideoDevice(currentDevice);
-        }
-        addLog("카메라 스트림을 성공적으로 시작했습니다.");
-    } catch (error) {
+  
+        addLog(`카메라 스트림을 성공적으로 시작했습니다: ${videoTrack.label}`);
+  
+      } catch (error) {
         console.error('카메라 접근 오류:', error);
         setHasCameraPermission(false);
         addLog("[오류] 카메라 권한이 거부되었습니다. 브라우저 설정에서 권한을 허용해주세요.");
-    }
-  }, [liveStackingParams.iso, addLog]);
-
-  const getVideoDevices = useCallback(async () => {
-    try {
-        await navigator.mediaDevices.getUserMedia({ video: true });
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const videoInputs = devices.filter(device => device.kind === 'videoinput');
-        setVideoDevices(videoInputs);
-        if (videoInputs.length > 0 && !selectedVideoDevice) {
-            const rearCamera = videoInputs.find(d => d.label.toLowerCase().includes('back')) || videoInputs[0];
-            setSelectedVideoDevice(rearCamera.deviceId);
-        }
-    } catch (error) {
-        console.error('비디오 장치 목록을 가져오는 데 실패했습니다:', error);
-        addLog("[오류] 비디오 장치 목록을 가져오는 데 실패했습니다.");
-        setHasCameraPermission(false);
-    }
-  }, [selectedVideoDevice, addLog]);
-
-  useEffect(() => {
-    if (appMode === 'live') {
-      getVideoDevices();
-    }
-  }, [appMode, getVideoDevices]);
-
-  useEffect(() => {
-    if (appMode === 'live' && selectedVideoDevice) {
-        getCameraStream(selectedVideoDevice);
-    }
-  }, [appMode, selectedVideoDevice, getCameraStream]);
-  
-  useEffect(() => {
-      if (appMode === 'live' && videoRef.current && videoRef.current.srcObject) {
-          const stream = videoRef.current.srcObject as MediaStream;
-          const track = stream.getVideoTracks()[0];
-          if (track) {
-              const capabilities = track.getCapabilities();
-              // @ts-ignore
-              if (capabilities.iso) {
-                track.applyConstraints({
-                    // @ts-ignore
-                    advanced: [{ iso: liveStackingParams.iso }]
-                }).then(() => {
-                    addLog(`[CAMERA] ISO updated to ${liveStackingParams.iso}`);
-                }).catch(e => {
-                    addLog(`[CAMERA-WARN] Could not update ISO to ${liveStackingParams.iso}.`);
-                });
-              }
-          }
       }
+    };
+  
+    if (appMode === 'live') {
+      const initializeCamera = async () => {
+        try {
+          // First, get permission to enumerate devices
+          await navigator.mediaDevices.getUserMedia({ video: true });
+          const devices = await navigator.mediaDevices.enumerateDevices();
+          const videoInputs = devices.filter(device => device.kind === 'videoinput');
+          setVideoDevices(videoInputs);
+  
+          let deviceToUse = selectedVideoDevice;
+          if (!deviceToUse && videoInputs.length > 0) {
+            const rearCamera = videoInputs.find(d => d.label.toLowerCase().includes('back')) || videoInputs[0];
+            deviceToUse = rearCamera.deviceId;
+            setSelectedVideoDevice(deviceToUse);
+          }
+          
+          if (deviceToUse) {
+            getCameraStream(deviceToUse);
+          } else if (videoInputs.length > 0) {
+            getCameraStream(videoInputs[0].deviceId);
+          } else {
+            setHasCameraPermission(false);
+            addLog("[오류] 사용 가능한 비디오 장치가 없습니다.");
+          }
+        } catch (error) {
+          console.error('비디오 장치 목록을 가져오는 데 실패했습니다:', error);
+          addLog("[오류] 비디오 장치 목록을 가져오거나 권한을 얻는 데 실패했습니다.");
+          setHasCameraPermission(false);
+        }
+      };
+      
+      initializeCamera();
+    }
+  
+    return () => {
+      stopStream(); // Cleanup on unmount or when appMode changes
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appMode, selectedVideoDevice]);
+
+
+  // Effect to handle ISO changes
+  useEffect(() => {
+    if (appMode === 'live' && videoRef.current && videoRef.current.srcObject) {
+      const stream = videoRef.current.srcObject as MediaStream;
+      const track = stream.getVideoTracks()[0];
+      if (track) {
+        const capabilities = track.getCapabilities();
+        // @ts-ignore
+        if (capabilities.iso) {
+          track.applyConstraints({
+            // @ts-ignore
+            advanced: [{ iso: liveStackingParams.iso }]
+          }).then(() => {
+            addLog(`[CAMERA] ISO updated to ${liveStackingParams.iso}`);
+          }).catch(e => {
+            addLog(`[CAMERA-WARN] Could not update ISO to ${liveStackingParams.iso}.`);
+          });
+        }
+      }
+    }
   }, [liveStackingParams.iso, appMode, addLog]);
 
   useEffect(() => {
@@ -1235,7 +1254,7 @@ export default function AstroStackerPage() {
     }
     setIsLiveStacking(false);
     setProgressPercent(0);
-  }, [addLog]);
+  }, []);
 
   async function createImageQueueEntryFromFile(file: File): Promise<ImageQueueEntry | null> {
     try {
@@ -1677,3 +1696,5 @@ export default function AstroStackerPage() {
     </div>
   );
 }
+
+    
