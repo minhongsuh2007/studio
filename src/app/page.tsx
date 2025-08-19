@@ -137,6 +137,16 @@ export default function AstroStackerPage() {
   const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedVideoDevice, setSelectedVideoDevice] = useState<string>('');
 
+  const addLog = useCallback((message: string) => {
+    setLogs(prevLogs => {
+      const newLog = {
+        id: logIdCounter.current++,
+        timestamp: new Date().toLocaleTimeString(),
+        message
+      };
+      return [newLog, ...prevLogs].slice(0, 150);
+    });
+  }, []);
 
   const getCameraStream = useCallback(async (deviceId?: string) => {
     if (videoRef.current && videoRef.current.srcObject) {
@@ -148,7 +158,6 @@ export default function AstroStackerPage() {
         const constraints: MediaStreamConstraints = {
             video: { 
                 ...(deviceId ? { deviceId: { exact: deviceId } } : { facingMode: 'environment' }),
-                // advanced constraints can be added here if needed in the future
             }
         };
         const stream = await navigator.mediaDevices.getUserMedia(constraints);
@@ -188,17 +197,15 @@ export default function AstroStackerPage() {
         setHasCameraPermission(false);
         addLog("[오류] 카메라 권한이 거부되었습니다. 브라우저 설정에서 권한을 허용해주세요.");
     }
-  }, [liveStackingParams.iso]);
+  }, [liveStackingParams.iso, addLog]);
 
   const getVideoDevices = useCallback(async () => {
     try {
-        // Request permission first to ensure we get labels
         await navigator.mediaDevices.getUserMedia({ video: true });
         const devices = await navigator.mediaDevices.enumerateDevices();
         const videoInputs = devices.filter(device => device.kind === 'videoinput');
         setVideoDevices(videoInputs);
         if (videoInputs.length > 0 && !selectedVideoDevice) {
-            // Prefer back-facing camera
             const rearCamera = videoInputs.find(d => d.label.toLowerCase().includes('back')) || videoInputs[0];
             setSelectedVideoDevice(rearCamera.deviceId);
         }
@@ -207,7 +214,7 @@ export default function AstroStackerPage() {
         addLog("[오류] 비디오 장치 목록을 가져오는 데 실패했습니다.");
         setHasCameraPermission(false);
     }
-  }, [selectedVideoDevice]);
+  }, [selectedVideoDevice, addLog]);
 
   useEffect(() => {
     if (appMode === 'live') {
@@ -219,10 +226,8 @@ export default function AstroStackerPage() {
     if (appMode === 'live' && selectedVideoDevice) {
         getCameraStream(selectedVideoDevice);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [appMode, selectedVideoDevice]);
+  }, [appMode, selectedVideoDevice, getCameraStream]);
   
-  // This effect applies ISO changes to the current stream
   useEffect(() => {
       if (appMode === 'live' && videoRef.current && videoRef.current.srcObject) {
           const stream = videoRef.current.srcObject as MediaStream;
@@ -242,7 +247,7 @@ export default function AstroStackerPage() {
               }
           }
       }
-  }, [liveStackingParams.iso, appMode]);
+  }, [liveStackingParams.iso, appMode, addLog]);
 
   useEffect(() => {
     try {
@@ -273,7 +278,7 @@ export default function AstroStackerPage() {
       console.error("Failed to load data from localStorage", e);
       addLog("[ERROR] Failed to load learned patterns from localStorage.");
     }
-  }, []);
+  }, [addLog]);
   
   useEffect(() => {
     if (!isLiveStacking && appMode === 'live' && allImageStarData.length >= 2) {
@@ -295,17 +300,6 @@ export default function AstroStackerPage() {
     }
   };
 
-
-  const addLog = useCallback((message: string) => {
-    setLogs(prevLogs => {
-      const newLog = {
-        id: logIdCounter.current++,
-        timestamp: new Date().toLocaleTimeString(),
-        message
-      };
-      return [newLog, ...prevLogs].slice(0, 150);
-    });
-  }, []);
 
   useEffect(() => {
     if (logContainerRef.current) {
@@ -1198,7 +1192,7 @@ export default function AstroStackerPage() {
 
         const capturedImageData = await captureFrame();
         if (!capturedImageData) {
-            addLog(`[Live Capture Error] Failed to capture frame ${i + 1}.`);
+            addLog(`[Live Capture Error] Failed to capture frame ${i + 1}. Skipping.`);
             continue;
         }
 
@@ -1216,11 +1210,9 @@ export default function AstroStackerPage() {
         const newEntry = await createImageQueueEntryFromFile(file);
         if (newEntry) {
             setAllImageStarData(prev => [...prev, newEntry]);
-            // Analysis is started immediately after adding
             analyzeImageForStars(newEntry);
         }
     }
-    // After the loop finishes or is broken, stop the session
     handleStopLiveStacking();
   }
 
@@ -1233,7 +1225,6 @@ export default function AstroStackerPage() {
     setAllImageStarData([]);
     setStackedImage(null);
   
-    // Start the capture loop
     captureLoop();
   };
   
@@ -1244,7 +1235,7 @@ export default function AstroStackerPage() {
     }
     setIsLiveStacking(false);
     setProgressPercent(0);
-  }, []);
+  }, [addLog]);
 
   async function createImageQueueEntryFromFile(file: File): Promise<ImageQueueEntry | null> {
     try {
@@ -1686,7 +1677,3 @@ export default function AstroStackerPage() {
     </div>
   );
 }
-
-    
-
-    
