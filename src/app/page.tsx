@@ -133,14 +133,11 @@ export default function AstroStackerPage() {
   const [hasCameraPermission, setHasCameraPermission] = useState<boolean | null>(null);
   const [isLiveStacking, setIsLiveStacking] = useState(false);
   const [liveStackingParams, setLiveStackingParams] = useState({ exposure: 1, iso: 800, count: 10 });
-  const [capturedImages, setCapturedImages] = useState<string[]>([]);
-  const captureIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedVideoDevice, setSelectedVideoDevice] = useState<string>('');
 
 
   const getCameraStream = useCallback(async (deviceId?: string) => {
-    // Stop any existing stream
     if (videoRef.current && videoRef.current.srcObject) {
         const stream = videoRef.current.srcObject as MediaStream;
         stream.getTracks().forEach(track => track.stop());
@@ -170,7 +167,7 @@ export default function AstroStackerPage() {
 
   const getVideoDevices = useCallback(async () => {
     try {
-        await navigator.mediaDevices.getUserMedia({ video: true }); // Request permission first
+        await navigator.mediaDevices.getUserMedia({ video: true });
         const devices = await navigator.mediaDevices.enumerateDevices();
         const videoInputs = devices.filter(device => device.kind === 'videoinput');
         setVideoDevices(videoInputs);
@@ -192,7 +189,6 @@ export default function AstroStackerPage() {
   }, [appMode, getVideoDevices]);
 
   useEffect(() => {
-    // This effect ensures a camera stream starts as soon as a device is selected or automatically found.
     if (appMode === 'live' && selectedVideoDevice && (!videoRef.current || !videoRef.current.srcObject)) {
         getCameraStream(selectedVideoDevice);
     }
@@ -228,6 +224,17 @@ export default function AstroStackerPage() {
       addLog("[ERROR] Failed to load learned patterns from localStorage.");
     }
   }, []);
+  
+  useEffect(() => {
+    // This effect triggers stacking *after* the live stacking capture session is complete.
+    if (!isLiveStacking && appMode === 'live' && allImageStarData.length >= 2) {
+      const allAnalyzed = allImageStarData.every(img => img.isAnalyzed);
+      if (allAnalyzed) {
+        addLog("[Live Stacking] All captured frames analyzed. Starting final stack.");
+        handleStackAllImages();
+      }
+    }
+  }, [isLiveStacking, appMode, allImageStarData]);
 
   const saveLearnedPatterns = (patterns: LearnedPattern[]) => {
     try {
@@ -483,7 +490,6 @@ export default function AstroStackerPage() {
     }
     
     setManualSelectImageId(imageId);
-    // Initialize manual selection with auto-detected stars for this image.
     setManualSelectedStars(imageToSelect.detectedStars);
     setCanvasStars(imageToSelect.detectedStars);
   };
@@ -497,14 +503,13 @@ export default function AstroStackerPage() {
       const { data, width, height } = imageData;
       const getBrightness = (idx: number) => 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
   
-      // 1. Find the brightest point within the search radius
+      let maxBrightness = -1;
+      let peakX = -1, peakY = -1;
+  
       const startX = Math.max(0, Math.round(clickX - searchRadius));
       const endX = Math.min(width, Math.round(clickX + searchRadius));
       const startY = Math.max(0, Math.round(clickY - searchRadius));
       const endY = Math.min(height, Math.round(clickY + searchRadius));
-  
-      let maxBrightness = -1;
-      let peakX = -1, peakY = -1;
   
       for (let y = startY; y < endY; y++) {
           for (let x = startX; x < endX; x++) {
@@ -521,10 +526,9 @@ export default function AstroStackerPage() {
           }
       }
   
-      if (peakX === -1) return null; // No point found
+      if (peakX === -1) return null;
   
-      // 2. Perform a flood fill (BFS) from the peak to find the whole star blob
-      const threshold = maxBrightness * 0.5; // Pixels must be at least 50% of peak brightness
+      const threshold = maxBrightness * 0.5;
       const queue: [number, number][] = [[peakX, peakY]];
       const visited = new Set<string>();
       const blobPixels: {x: number, y: number, brightness: number}[] = [];
@@ -539,7 +543,6 @@ export default function AstroStackerPage() {
   
           blobPixels.push({ x: cx, y: cy, brightness: cBrightness });
   
-          // Check neighbors
           for(let dy = -1; dy <= 1; dy++) {
               for (let dx = -1; dx <= 1; dx++) {
                   if (dx === 0 && dy === 0) continue;
@@ -548,7 +551,6 @@ export default function AstroStackerPage() {
                   const nKey = `${nx},${ny}`;
                   if (nx >= 0 && nx < width && ny >= 0 && ny < height && !visited.has(nKey)) {
                       visited.add(nKey);
-                      // Add to queue if brightness is above a slightly more lenient threshold, to ensure we get the whole blob
                       const nIdx = (ny * width + nx) * 4;
                       if(getBrightness(nIdx) > threshold * 0.8) {
                           queue.push([nx, ny]);
@@ -558,7 +560,6 @@ export default function AstroStackerPage() {
           }
       }
   
-      // 3. Calculate the center of mass of the blob
       if (blobPixels.length === 0) return null;
   
       let weightedX = 0;
@@ -590,18 +591,15 @@ export default function AstroStackerPage() {
     const imageEntry = allImageStarData.find(img => img.id === manualSelectImageId);
     if (!imageEntry || !imageEntry.imageData) return;
 
-    // Check if clicking on an existing star to remove it
     const existingStarIndex = manualSelectedStars.findIndex(star => Math.sqrt(Math.pow(star.x - x, 2) + Math.pow(star.y - y, 2)) < manualSelectRadius);
   
     if (existingStarIndex !== -1) {
       setManualSelectedStars(prev => prev.filter((_, index) => index !== existingStarIndex));
     } else {
-      // Find the precise center of the clicked star
       const centeredStar = findNearbyStarCenter(imageEntry.imageData, x, y);
       if (centeredStar) {
         setManualSelectedStars(prev => [...prev, centeredStar]);
       } else {
-        // Fallback to adding at the exact click position if no bright spot is found
         setManualSelectedStars(prev => [...prev, { x, y, brightness: 0, size: 0 }]);
       }
     }
@@ -610,8 +608,8 @@ export default function AstroStackerPage() {
   const handleWipeAllStars = () => {
     const imageToUpdate = allImageStarData.find(img => img.id === manualSelectImageId);
     if (imageToUpdate) {
-        setManualSelectedStars([]); // Clear only manual selections
-        setCanvasStars(imageToUpdate.detectedStars); // Keep the auto-detected stars for visual reference
+        setManualSelectedStars([]);
+        setCanvasStars(imageToUpdate.detectedStars);
         addLog("Manual star selections for this image have been cleared.");
     }
   };
@@ -638,7 +636,6 @@ export default function AstroStackerPage() {
       let updatedPatterns;
 
       if (existingPatternIndex !== -1) {
-        // Update existing aggregated pattern
         const existingPattern = prev[existingPatternIndex];
         const updatedCharacteristics = [...existingPattern.characteristics, ...newCharacteristics];
         const updatedSourceIds = new Set([...existingPattern.sourceImageIds, imageToLearnFrom.id]);
@@ -654,7 +651,6 @@ export default function AstroStackerPage() {
         addLog(`Star Pattern Updated: ${newCharacteristics.length} new star characteristics from ${imageToLearnFrom.file.name} added to your aggregated pattern.`);
 
       } else {
-        // Create new aggregated pattern
         const newPattern: LearnedPattern = {
           id: patternId,
           timestamp: Date.now(),
@@ -683,13 +679,9 @@ export default function AstroStackerPage() {
 
 
   const handleStackAllImages = async () => {
-    const imagesToStack = allImageStarData;
+    const imagesToStack = allImageStarData.filter(img => img.isAnalyzed && img.imageData);
     if (imagesToStack.length < 2) {
-      window.alert("Please upload at least two images.");
-      return;
-    }
-    if (imagesToStack.some(img => img.isAnalyzing)) {
-      window.alert("Please wait for all images to be analyzed before stacking.");
+      window.alert("Please upload and analyze at least two images.");
       return;
     }
     
@@ -700,7 +692,6 @@ export default function AstroStackerPage() {
     addLog(`[STACK START] Method: ${alignmentMethod}. Quality: ${stackingQuality}. Stacking ${imagesToStack.length} images. Mode: ${stackingMode}.`);
   
     try {
-      // --- CALIBRATION ---
       let masterBias: ImageData | null = null;
       if (useBias && biasFrames.length > 0) {
         masterBias = await createMasterFrame(biasFrames.map(f => f.imageData), 'average', addLog, 'BIAS');
@@ -727,7 +718,6 @@ export default function AstroStackerPage() {
       const lightFramesToProcess = [...imagesToStack];
       let stackingDimensions = lightFramesToProcess[0].analysisDimensions;
 
-      // If high quality, reload image data from original URLs
       if (stackingQuality === 'high') {
           addLog("[QUALITY] High quality selected. Loading original resolution images...");
           stackingDimensions = lightFramesToProcess[0].originalDimensions;
@@ -744,7 +734,6 @@ export default function AstroStackerPage() {
             if(!ctx) continue;
             ctx.drawImage(img, 0, 0);
             entry.imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-            // Also update analysis dimensions for stacking functions to use correct size
             entry.analysisDimensions = { width: canvas.width, height: canvas.height };
           }
           addLog("[QUALITY] Original resolution images loaded.");
@@ -881,7 +870,6 @@ export default function AstroStackerPage() {
     setIsAnalyzingTestImage(true);
     addLog(`Running model test on ${testImage.file.name}`);
     
-    // This timeout is just to allow the UI to update to the "loading" state before a potentially long-running operation.
     setTimeout(async () => {
         const {data, width, height} = testImage.imageData!;
         const initialCandidates = detectBrightBlobs(testImage.imageData!, width, height);
@@ -963,7 +951,6 @@ export default function AstroStackerPage() {
             
             const importedPatterns: LearnedPattern[] = JSON.parse(content);
 
-            // Basic validation
             if (!Array.isArray(importedPatterns) || importedPatterns.some(p => !p.id || !p.characteristics)) {
                 throw new Error("Invalid pattern file format.");
             }
@@ -975,14 +962,12 @@ export default function AstroStackerPage() {
 
                 for (const imported of importedPatterns) {
                     if (newPatternsMap.has(imported.id)) {
-                        // Accumulate characteristics if pattern exists
                         const existingPattern = newPatternsMap.get(imported.id)!;
                         existingPattern.characteristics.push(...imported.characteristics);
                         existingPattern.sourceImageIds = Array.from(new Set([...existingPattern.sourceImageIds, ...imported.sourceImageIds]));
                         existingPattern.timestamp = Date.now();
                         updatedCount++;
                     } else {
-                        // Add new pattern
                         newPatternsMap.set(imported.id, imported);
                         newCount++;
                     }
@@ -1008,8 +993,6 @@ export default function AstroStackerPage() {
     reader.readAsText(file);
   };
   
-
-  // --- Client-Side Model Training Logic ---
 
   type Sample = {
     features: number[];
@@ -1102,7 +1085,6 @@ export default function AstroStackerPage() {
       try {
         const starSamples: Sample[] = starCharacteristics.map(c => ({ features: featuresFromCharacteristics(c), label: 1 }));
         
-        // Generate artificial noise samples for negative examples
         const noiseSamples: Sample[] = [];
         const numNoiseSamples = Math.max(starSamples.length, 20);
         const numFeatures = starSamples[0].features.length;
@@ -1118,7 +1100,6 @@ export default function AstroStackerPage() {
         setTrainedModel(model);
         setModelNormalization({ means, stds });
         
-        // Save model to localStorage
         await model.save(TF_MODEL_STORAGE_KEY);
         localStorage.setItem('astrostacker-model-normalization', JSON.stringify({ means, stds }));
 
@@ -1135,10 +1116,6 @@ export default function AstroStackerPage() {
       }
   };
 
-  /**
-   * Captures frames from the video stream for a given duration
-   * and averages them to simulate a long exposure.
-   */
   const captureSimulatedExposure = async (durationSeconds: number): Promise<ImageData | null> => {
     if (!videoRef.current || !videoRef.current.srcObject) return null;
     
@@ -1161,7 +1138,7 @@ export default function AstroStackerPage() {
             accumulatedData[i] += frame.data[i];
         }
         frameCount++;
-        await new Promise(requestAnimationFrame); // Wait for the next frame
+        await new Promise(requestAnimationFrame);
     }
 
     if (frameCount === 0) {
@@ -1178,19 +1155,21 @@ export default function AstroStackerPage() {
     return new ImageData(averagedData, canvas.width, canvas.height);
 };
 
-  const handleStartLiveStacking = useCallback(async () => {
+  const handleStartLiveStacking = async () => {
     if (!videoRef.current || isLiveStacking) return;
   
-    addLog(`라이브 스태킹 시작: 노출 ${liveStackingParams.exposure}s, ISO ${liveStackingParams.iso}, ${liveStackingParams.count}장`);
+    addLog(`라이브 스태킹 시작: 노출 ${liveStackingParams.exposure}s, ${liveStackingParams.count}장`);
     setIsLiveStacking(true);
-    setCapturedImages([]);
     setAllImageStarData([]);
     setStackedImage(null);
   
-    let capturesLeft = liveStackingParams.count;
-  
+    const capturedFrames: ImageQueueEntry[] = [];
+
     for (let i = 0; i < liveStackingParams.count; i++) {
-        if (!isLiveStacking) break; // Allow stopping mid-process
+        if (!isLiveStacking) {
+            addLog("라이브 스태킹이 사용자에 의해 중지되었습니다.");
+            break;
+        }
 
         addLog(`[Live Capture] Capturing image ${i + 1}/${liveStackingParams.count}...`);
         setProgressPercent(((i + 1) / liveStackingParams.count) * 100);
@@ -1211,38 +1190,21 @@ export default function AstroStackerPage() {
         const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
         const blob = await (await fetch(dataUrl)).blob();
         const file = new File([blob], `capture-${i + 1}.jpg`, { type: 'image/jpeg' });
-    
-        setCapturedImages(prev => [...prev, dataUrl]);
         
         const newEntry = await createImageQueueEntryFromFile(file);
         if (newEntry) {
-            const analyzedEntry = await analyzeImageForStars(newEntry);
-            setAllImageStarData(prev => [...prev, analyzedEntry]);
-            
-            // After each analysis, re-stack all available images
-            if (allImageStarData.length + 1 >= 2) {
-                addLog(`${allImageStarData.length + 1}번째 이미지 스태킹 중...`);
-                // Use a temporary state for handleStackAllImages to get the latest image
-                setAllImageStarData(currentQueue => {
-                    handleStackAllImages();
-                    return currentQueue;
-                });
-            }
+            setAllImageStarData(prev => [...prev, newEntry]);
+            analyzeImageForStars(newEntry);
         }
     }
-
-    handleStopLiveStacking();
   
-  }, [isLiveStacking, liveStackingParams, allImageStarData]);
+    handleStopLiveStacking();
+  };
   
   const handleStopLiveStacking = useCallback(() => {
-    if (captureIntervalRef.current) {
-      clearInterval(captureIntervalRef.current);
-      captureIntervalRef.current = null;
-    }
     setIsLiveStacking(false);
     setProgressPercent(0);
-    addLog("라이브 스태킹이 중지되었습니다.");
+    addLog("라이브 캡처 세션이 종료되었습니다. 분석이 완료되면 최종 스태킹이 시작됩니다.");
   }, []);
 
   async function createImageQueueEntryFromFile(file: File): Promise<ImageQueueEntry | null> {
@@ -1535,21 +1497,23 @@ export default function AstroStackerPage() {
                             )}
                         </CardContent>
                     </Card>
-                    {capturedImages.length > 0 && (
-                        <Card>
-                            <CardHeader>
-                                <CardTitle>촬영된 원본 사진 ({capturedImages.length})</CardTitle>
-                            </CardHeader>
-                            <CardContent>
-                                <ScrollArea className="h-60">
-                                    <div className="grid grid-cols-2 gap-2">
-                                        {capturedImages.map((src, index) => (
-                                            <NextImage key={index} src={src} alt={`Capture ${index + 1}`} width={150} height={100} className="rounded-md object-cover" />
-                                        ))}
-                                    </div>
-                                </ScrollArea>
-                            </CardContent>
-                        </Card>
+                    {appMode === 'live' && allImageStarData.length > 0 && (
+                      <>
+                        <h3 className="text-lg font-semibold mt-4 text-foreground">촬영된 원본 사진 ({allImageStarData.length})</h3>
+                        <ScrollArea className="h-60 border rounded-md p-2 bg-background/30">
+                          <div className="grid grid-cols-1 gap-3">
+                            {allImageStarData.map((entry, index) => (
+                              <ImageQueueItem
+                                key={entry.id} id={entry.id} index={index} file={entry.file} previewUrl={entry.analysisPreviewUrl}
+                                isAnalyzing={entry.isAnalyzing} onRemove={() => handleRemoveImage(entry.id)}
+                                onManualSelectToggle={() => handleManualSelectToggle(entry.id)} isProcessing={isUiDisabled}
+                                isAnalyzed={entry.isAnalyzed} 
+                                isManualSelectMode={manualSelectImageId === entry.id}
+                              />
+                            ))}
+                          </div>
+                        </ScrollArea>
+                      </>
                     )}
                 </div>
                 <div className="w-full lg:w-3/5 xl:w-2/3 flex flex-col space-y-6">
@@ -1680,7 +1644,3 @@ export default function AstroStackerPage() {
     </div>
   );
 }
- 
-    
-
-    
