@@ -234,6 +234,7 @@ export default function AstroStackerPage() {
         handleStackAllImages();
       }
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLiveStacking, appMode, allImageStarData]);
 
   const saveLearnedPatterns = (patterns: LearnedPattern[]) => {
@@ -1150,35 +1151,18 @@ export default function AstroStackerPage() {
           addLog("[Live Capture] No frames captured for exposure simulation.");
           return null;
       }
-
-      // Instead of averaging, normalize the accumulated values for a long-exposure effect
-      const normalizedData = new Uint8ClampedArray(accumulatedData.length);
-      let maxVal = 0;
-      for (let i = 0; i < accumulatedData.length; i+=4) {
-          maxVal = Math.max(maxVal, accumulatedData[i], accumulatedData[i+1], accumulatedData[i+2]);
+      
+      const clampedData = new Uint8ClampedArray(accumulatedData.length);
+      for (let i = 0; i < accumulatedData.length; i += 4) {
+          clampedData[i] = Math.min(255, accumulatedData[i]);
+          clampedData[i+1] = Math.min(255, accumulatedData[i+1]);
+          clampedData[i+2] = Math.min(255, accumulatedData[i+2]);
+          clampedData[i+3] = 255; // Full alpha
       }
 
-      if (maxVal > 0) {
-          const scale = 255 / maxVal;
-          for (let i = 0; i < accumulatedData.length; i+=4) {
-              normalizedData[i] = accumulatedData[i] * scale;
-              normalizedData[i+1] = accumulatedData[i+1] * scale;
-              normalizedData[i+2] = accumulatedData[i+2] * scale;
-              normalizedData[i+3] = 255; // Full alpha
-          }
-      } else {
-          // If the image is completely black, just return a black image.
-          // This avoids division by zero.
-          for (let i = 0; i < accumulatedData.length; i+=4) {
-             normalizedData[i] = 0;
-             normalizedData[i+1] = 0;
-             normalizedData[i+2] = 0;
-             normalizedData[i+3] = 255;
-          }
-      }
 
-      addLog(`[Live Capture] Simulated exposure: accumulated ${frameCount} frames and normalized.`);
-      return new ImageData(normalizedData, canvas.width, canvas.height);
+      addLog(`[Live Capture] Simulated exposure: accumulated ${frameCount} frames.`);
+      return new ImageData(clampedData, canvas.width, canvas.height);
   };
 
   const captureLoop = async () => {
@@ -1233,10 +1217,12 @@ export default function AstroStackerPage() {
   };
   
   const handleStopLiveStacking = useCallback(() => {
-    isCapturing.current = false;
+    if (isCapturing.current) {
+      isCapturing.current = false;
+      addLog("라이브 캡처 세션이 종료되었습니다. 분석이 완료되면 최종 스태킹이 시작됩니다.");
+    }
     setIsLiveStacking(false);
     setProgressPercent(0);
-    addLog("라이브 캡처 세션이 종료되었습니다. 분석이 완료되면 최종 스태킹이 시작됩니다.");
   }, []);
 
   async function createImageQueueEntryFromFile(file: File): Promise<ImageQueueEntry | null> {
@@ -1517,7 +1503,7 @@ export default function AstroStackerPage() {
                                     <StopCircle className="mr-2 h-5 w-5" /> 중지
                                 </Button>
                             ) : (
-                                <Button onClick={handleStartLiveStacking} disabled={isUiDisabled || !hasCameraPermission} className="w-full">
+                                <Button onClick={handleStartLiveStacking} disabled={isUiDisabled || hasCameraPermission === false} className="w-full">
                                     <Play className="mr-2 h-5 w-5" /> 라이브 스태킹 시작
                                 </Button>
                             )}
@@ -1676,3 +1662,5 @@ export default function AstroStackerPage() {
     </div>
   );
 }
+
+    
