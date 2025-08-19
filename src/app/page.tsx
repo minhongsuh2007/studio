@@ -148,23 +148,38 @@ export default function AstroStackerPage() {
     });
   }, []);
 
-  const applyIsoToStream = useCallback((stream: MediaStream, iso: number) => {
+  const applyIsoToStream = useCallback(async (stream: MediaStream, iso: number) => {
     const track = stream.getVideoTracks()[0];
     if (track && track.getCapabilities) {
         const capabilities = track.getCapabilities();
         // @ts-ignore
-        if (capabilities.iso) {
-            track.applyConstraints({
+        if (capabilities.iso || track.getSettings().iso) {
+            try {
+                // Attempt 1: Standard advanced constraint
                 // @ts-ignore
-                advanced: [{ iso }]
-            }).then(() => {
-                addLog(`[CAMERA] ISO updated to ${iso}`);
-            }).catch(e => {
-                console.error("Failed to set ISO:", e);
-                addLog(`[CAMERA-WARN] Could not update ISO to ${iso}.`);
-            });
+                await track.applyConstraints({ advanced: [{ iso: iso }] });
+                addLog(`[CAMERA] ISO successfully updated to ${iso} via advanced constraint.`);
+            } catch (e) {
+                console.warn(`Advanced ISO constraint failed:`, e);
+                addLog(`[CAMERA-WARN] Advanced ISO constraint failed. Trying other methods...`);
+                try {
+                    // Attempt 2: Direct constraint with other manual settings
+                    await track.applyConstraints({
+                        // @ts-ignore
+                        iso: iso,
+                        // @ts-ignore
+                        exposureMode: 'manual',
+                        // @ts-ignore
+                        torch: false // Ensure flash/torch is off
+                    });
+                     addLog(`[CAMERA] ISO successfully updated to ${iso} via direct constraint.`);
+                } catch (e2) {
+                    console.error("All attempts to set ISO failed:", e2);
+                    addLog(`[CAMERA-ERROR] All attempts to set ISO to ${iso} failed. The camera may not support this control.`);
+                }
+            }
         } else {
-             addLog("[CAMERA-WARN] Camera does not support ISO control.");
+             addLog("[CAMERA-WARN] Camera does not report support for ISO control.");
         }
     }
   }, [addLog]);
@@ -182,45 +197,49 @@ export default function AstroStackerPage() {
 
     const initializeCamera = async () => {
         try {
+            // Clear any existing stream
             if (videoRef.current && videoRef.current.srcObject) {
                 (videoRef.current.srcObject as MediaStream).getTracks().forEach(track => track.stop());
             }
 
+            // Get device list if we don't have it
             if (videoDevices.length === 0) {
                 await navigator.mediaDevices.getUserMedia({ video: true }); // Request permission to get device list
                 const devices = await navigator.mediaDevices.enumerateDevices();
                 const videoInputs = devices.filter(d => d.kind === 'videoinput');
                 setVideoDevices(videoInputs);
-                
                 if (videoInputs.length > 0) {
+                    // Find a preferred camera (e.g., back-facing) or default to the first one
                     const rearCamera = videoInputs.find(d => d.label.toLowerCase().includes('back')) || videoInputs[0];
                     setSelectedVideoDevice(rearCamera.deviceId);
-                    return; 
                 }
-            }
-
-            if (!selectedVideoDevice && videoDevices.length > 0) {
-                const rearCamera = videoDevices.find(d => d.label.toLowerCase().includes('back')) || videoDevices[0];
-                setSelectedVideoDevice(rearCamera.deviceId);
-                return; 
+                setHasCameraPermission(true);
+                return; // Let the effect re-run with the new device ID and list
             }
             
-            if (!selectedVideoDevice) {
+            let deviceIdToUse = selectedVideoDevice;
+            if (!deviceIdToUse && videoDevices.length > 0) {
+                const rearCamera = videoDevices.find(d => d.label.toLowerCase().includes('back')) || videoDevices[0];
+                deviceIdToUse = rearCamera.deviceId;
+                setSelectedVideoDevice(deviceIdToUse); // Update state for the UI
+            }
+            
+            if (!deviceIdToUse) {
                 addLog("[오류] 사용 가능한 비디오 장치가 없습니다.");
                 setHasCameraPermission(false);
                 return;
             }
             
-            const constraints: MediaStreamConstraints = { video: { deviceId: { exact: selectedVideoDevice } } };
+            const constraints: MediaStreamConstraints = { video: { deviceId: { exact: deviceIdToUse } } };
             const stream = await navigator.mediaDevices.getUserMedia(constraints);
             
             if (videoRef.current) {
                 videoRef.current.srcObject = stream;
                 // Apply ISO immediately after setting the stream
-                applyIsoToStream(stream, liveStackingParams.iso);
+                await applyIsoToStream(stream, liveStackingParams.iso);
             }
             setHasCameraPermission(true);
-            addLog(`카메라 스트림을 성공적으로 시작했습니다: ${selectedVideoDevice}`);
+            addLog(`카메라 스트림을 성공적으로 시작했습니다: ${videoDevices.find(d => d.deviceId === deviceIdToUse)?.label || deviceIdToUse}`);
             
         } catch (error) {
             console.error('카메라 접근 오류:', error);
@@ -231,8 +250,7 @@ export default function AstroStackerPage() {
     
     initializeCamera();
 
-    // No return cleanup function here to avoid race conditions. Cleanup is handled at the start of the effect.
-  }, [appMode, selectedVideoDevice, videoDevices, addLog, applyIsoToStream]);
+  }, [appMode, selectedVideoDevice, videoDevices.length]); // Rerun when mode, selected device, or device list presence changes
 
 
   // Effect to handle ISO changes.
@@ -1671,4 +1689,5 @@ export default function AstroStackerPage() {
   );
 }
 
+    
     
