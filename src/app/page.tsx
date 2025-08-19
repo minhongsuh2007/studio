@@ -148,6 +148,27 @@ export default function AstroStackerPage() {
     });
   }, []);
 
+  const applyIsoToStream = useCallback((stream: MediaStream, iso: number) => {
+    const track = stream.getVideoTracks()[0];
+    if (track && track.getCapabilities) {
+        const capabilities = track.getCapabilities();
+        // @ts-ignore
+        if (capabilities.iso) {
+            track.applyConstraints({
+                // @ts-ignore
+                advanced: [{ iso }]
+            }).then(() => {
+                addLog(`[CAMERA] ISO updated to ${iso}`);
+            }).catch(e => {
+                console.error("Failed to set ISO:", e);
+                addLog(`[CAMERA-WARN] Could not update ISO to ${iso}.`);
+            });
+        } else {
+             addLog("[CAMERA-WARN] Camera does not support ISO control.");
+        }
+    }
+  }, [addLog]);
+
   // Effect for initializing and managing the camera stream in live mode
   useEffect(() => {
     if (appMode !== 'live') {
@@ -159,31 +180,26 @@ export default function AstroStackerPage() {
         return;
     }
 
-    let stream: MediaStream | null = null;
     const initializeCamera = async () => {
         try {
-            // Stop any existing stream
             if (videoRef.current && videoRef.current.srcObject) {
                 (videoRef.current.srcObject as MediaStream).getTracks().forEach(track => track.stop());
             }
 
-            // Get device list if not already fetched
             if (videoDevices.length === 0) {
                 await navigator.mediaDevices.getUserMedia({ video: true }); // Request permission to get device list
                 const devices = await navigator.mediaDevices.enumerateDevices();
                 const videoInputs = devices.filter(d => d.kind === 'videoinput');
                 setVideoDevices(videoInputs);
                 
-                // Auto-select rear camera or first camera
                 if (videoInputs.length > 0) {
                     const rearCamera = videoInputs.find(d => d.label.toLowerCase().includes('back')) || videoInputs[0];
                     setSelectedVideoDevice(rearCamera.deviceId);
-                    return; // Let the re-render with new selectedVideoDevice trigger the stream
+                    return; 
                 }
             }
 
             if (!selectedVideoDevice && videoDevices.length > 0) {
-                // If there's no selection yet but we have devices, select one.
                 const rearCamera = videoDevices.find(d => d.label.toLowerCase().includes('back')) || videoDevices[0];
                 setSelectedVideoDevice(rearCamera.deviceId);
                 return; 
@@ -196,13 +212,15 @@ export default function AstroStackerPage() {
             }
             
             const constraints: MediaStreamConstraints = { video: { deviceId: { exact: selectedVideoDevice } } };
-            stream = await navigator.mediaDevices.getUserMedia(constraints);
+            const stream = await navigator.mediaDevices.getUserMedia(constraints);
             
             if (videoRef.current) {
                 videoRef.current.srcObject = stream;
+                // Apply ISO immediately after setting the stream
+                applyIsoToStream(stream, liveStackingParams.iso);
             }
             setHasCameraPermission(true);
-            addLog(`카메라 스트림을 성공적으로 시작했습니다.`);
+            addLog(`카메라 스트림을 성공적으로 시작했습니다: ${selectedVideoDevice}`);
             
         } catch (error) {
             console.error('카메라 접근 오류:', error);
@@ -213,38 +231,16 @@ export default function AstroStackerPage() {
     
     initializeCamera();
 
-    return () => {
-        if (stream) {
-            stream.getTracks().forEach(track => track.stop());
-        }
-    };
-  }, [appMode, selectedVideoDevice]);
+    // No return cleanup function here to avoid race conditions. Cleanup is handled at the start of the effect.
+  }, [appMode, selectedVideoDevice, videoDevices, addLog, applyIsoToStream]);
 
 
-  // Effect to handle ISO changes. This is now separate.
+  // Effect to handle ISO changes.
   useEffect(() => {
     if (appMode === 'live' && videoRef.current && videoRef.current.srcObject) {
-        const stream = videoRef.current.srcObject as MediaStream;
-        const track = stream.getVideoTracks()[0];
-        if (track && track.getCapabilities) {
-            const capabilities = track.getCapabilities();
-            // @ts-ignore
-            if (capabilities.iso) {
-                track.applyConstraints({
-                    // @ts-ignore
-                    advanced: [{ iso: liveStackingParams.iso }]
-                }).then(() => {
-                    addLog(`[CAMERA] ISO updated to ${liveStackingParams.iso}`);
-                }).catch(e => {
-                    console.error("Failed to set ISO:", e);
-                    addLog(`[CAMERA-WARN] Could not update ISO to ${liveStackingParams.iso}.`);
-                });
-            } else {
-                 addLog("[CAMERA-WARN] Camera does not support ISO control.");
-            }
-        }
+        applyIsoToStream(videoRef.current.srcObject as MediaStream, liveStackingParams.iso);
     }
-  }, [liveStackingParams.iso, appMode, addLog, videoRef.current?.srcObject]);
+  }, [liveStackingParams.iso, appMode, applyIsoToStream]);
 
   useEffect(() => {
     try {
@@ -1674,3 +1670,5 @@ export default function AstroStackerPage() {
     </div>
   );
 }
+
+    
