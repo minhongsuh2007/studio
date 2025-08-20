@@ -155,7 +155,18 @@ function findBestMatch(detectedStars: Star[], pattern: StarPattern): { score: nu
 export async function identifyCelestialObjectsFromImage(imageDataUri: string): Promise<CelestialIdentificationResult> {
     try {
         const imageData = await getImageDataFromUrl(imageDataUri);
-        const detectedStars = detectBrightBlobs(imageData, imageData.width, imageData.height);
+        
+        let detectedStars: Star[] = [];
+        let currentThreshold = 200;
+        const minThreshold = 150;
+
+        // Try to detect stars, lowering threshold if not enough are found
+        while (detectedStars.length < 10 && currentThreshold >= minThreshold) {
+            detectedStars = detectBrightBlobs(imageData, imageData.width, imageData.height, currentThreshold);
+            if (detectedStars.length < 10) {
+                currentThreshold -= 10;
+            }
+        }
 
         if (detectedStars.length < 3) {
             return {
@@ -203,3 +214,5 @@ export async function identifyCelestialObjectsFromImage(imageDataUri: string): P
         throw new Error(`Failed during client-side analysis: ${errorMessage}`);
     }
 }
+
+    

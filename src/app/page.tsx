@@ -76,7 +76,7 @@ export default function AstroStackerPage() {
   const [stackedImage, setStackedImage] = useState<string | null>(null);
   const [isProcessingStack, setIsProcessingStack] = useState(false);
   const [isTrainingModel, setIsTrainingModel] = useState(false);
-  const [stackingMode, setStackingMode] = useState<StackingMode>('average');
+  const [stackingMode, setStackingMode] = useState<StackingMode>('median');
   const [alignmentMethod, setAlignmentMethod] = useState<AlignmentMethod>('standard');
   const [stackingQuality, setStackingQuality] = useState<StackingQuality>('standard');
   const [planetaryStackingQuality, setPlanetaryStackingQuality] = useState<number>(50);
@@ -1295,7 +1295,6 @@ export default function AstroStackerPage() {
                 </div>
                 <div className="space-y-2"><Label className="text-base font-semibold text-foreground">{t('stackingMode')}</Label>
                   <RadioGroup value={stackingMode} onValueChange={(v) => setStackingMode(v as StackingMode)} className="grid grid-cols-2 gap-2" disabled={isUiDisabled}>
-                    <div className="flex items-center space-x-1"><RadioGroupItem value="average" id="mode-average" /><Label htmlFor="mode-average">Average</Label></div>
                     <div className="flex items-center space-x-1"><RadioGroupItem value="median" id="mode-median" /><Label htmlFor="mode-median">Median</Label></div>
                     <div className="flex items-center space-x-1"><RadioGroupItem value="sigma" id="mode-sigma" /><Label htmlFor="mode-sigma">Sigma Clip</Label></div>
                     <div className="flex items-center space-x-1"><RadioGroupItem value="laplacian" id="mode-laplacian" /><Label htmlFor="mode-laplacian">Planetary (Sharpen)</Label></div>
