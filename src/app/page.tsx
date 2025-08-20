@@ -1107,6 +1107,13 @@ export default function AstroStackerPage() {
   const isUiDisabled = isProcessingStack || isTrainingModel || allImageStarData.some(img => img.isAnalyzing) || isIdentifying;
   const currentYear = new Date().getFullYear();
 
+  // Determine the primary image to show in the main preview area
+  const mainPreviewUrl = 
+      identificationResult?.annotatedImageUrl || // Highest priority: annotated result
+      (showPostProcessEditor ? editedPreviewUrl : stackedImage) || // Then the post-processing or stacked image
+      null; // Default to null if none of the above exist
+
+
   return (
     <div className="flex flex-col min-h-screen bg-background">
       <AppHeader onTutorialClick={() => setIsTutorialOpen(true)} />
@@ -1261,7 +1268,7 @@ export default function AstroStackerPage() {
               ) : testImage ? (
                   <StarAnnotationCanvas imageUrl={testImage.analysisPreviewUrl} allStars={testImage.detectedStars} manualStars={testImageMatchedStars} onCanvasClick={() => {}} analysisWidth={testImage.analysisDimensions.width} analysisHeight={testImage.analysisDimensions.height} />
               ) : (
-                  <ImagePreview imageUrl={showPostProcessEditor ? editedPreviewUrl : stackedImage} fitMode={previewFitMode} />
+                  <ImagePreview imageUrl={mainPreviewUrl} fitMode={previewFitMode} />
               )}
             </div>
             {stackedImage && (

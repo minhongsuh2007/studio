@@ -18,6 +18,7 @@ export interface CelestialIdentificationResult {
   constellations: string[];
   objects_in_field: string[];
   targetFound: boolean;
+  annotatedImageUrl?: string; // URL for the annotated image
 }
 
 const API_URL = 'https://nova.astrometry.net/api';
@@ -130,5 +131,6 @@ export async function identifyCelestialObjects(input: CelestialIdentificationInp
     constellations,
     objects_in_field: objectsInField,
     targetFound,
+    annotatedImageUrl: `https://nova.astrometry.net/annotated_display/${jobId}`
   };
 }
