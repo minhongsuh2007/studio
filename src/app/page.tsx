@@ -1,3 +1,4 @@
+
 "use client";
 
 import type React from 'react';
@@ -751,7 +752,7 @@ export default function AstroStackerPage() {
     try {
       const result = await identifyCelestialObjects({
         imageDataUri: stackedImage,
-        log: addLog, // Pass the logger function
+        celestialObject: astrometryTarget,
       });
       setIdentificationResult(result);
       addLog(`[IDENTIFY SUCCESS] ${result.summary}`);
@@ -1240,6 +1241,19 @@ export default function AstroStackerPage() {
                       <Label htmlFor="astrometry-check" className="font-semibold text-base">천체 확인 (Astrometry)</Label>
                   </div>
                   
+                  {isAstrometryActive && (
+                    <div className="space-y-2">
+                      <Label htmlFor="astrometry-target">Target Object (Optional)</Label>
+                      <Input 
+                        id="astrometry-target" 
+                        placeholder="e.g., Andromeda Galaxy, M42" 
+                        value={astrometryTarget} 
+                        onChange={(e) => setAstrometryTarget(e.target.value)} 
+                        disabled={isUiDisabled} 
+                      />
+                    </div>
+                  )}
+
                    <Button onClick={handleStartIdentification} disabled={isUiDisabled || !stackedImage || !isAstrometryActive} className="w-full">
                       {isIdentifying ? <><Loader2 className="mr-2 h-5 w-5 animate-spin" />분석 중...</> : <><Satellite className="mr-2 h-5 w-5" />분석 시작</>}
                     </Button>
@@ -1253,8 +1267,9 @@ export default function AstroStackerPage() {
                   <AlertTitle>천체 분석 결과</AlertTitle>
                   <AlertDescription>
                     <p className="font-semibold">{identificationResult.summary}</p>
-                    <p>주요 별자리: {identificationResult.constellations.join(', ')}</p>
-                     <p>주요 천체: {identificationResult.objects_in_field.join(', ')}</p>
+                    {identificationResult.constellations.length > 0 && <p>주요 별자리: {identificationResult.constellations.join(', ')}</p>}
+                    {identificationResult.objects_in_field.length > 0 && <p>주요 천체: {identificationResult.objects_in_field.join(', ')}</p>}
+                    {astrometryTarget && <p className="font-bold mt-2">{astrometryTarget}: <span className={identificationResult.targetFound ? 'text-green-400' : 'text-red-400'}>{identificationResult.targetFound ? 'FOUND' : 'NOT FOUND'}</span></p>}
                   </AlertDescription>
                 </Alert>
               )}
