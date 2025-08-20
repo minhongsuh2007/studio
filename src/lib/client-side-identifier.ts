@@ -2,30 +2,67 @@
 'use client';
 import { detectBrightBlobs, type Star } from './astro-align';
 
-// Basic types for stars and constellations
-interface ConstellationPattern {
+// --- DATA ---
+// Data structure for our star patterns
+interface StarPattern {
     name: string;
-    stars: { x: number; y: number }[]; // Simplified for pattern matching
+    // Store pairs of stars and the vector between them
+    // [star1_index, star2_index, dx, dy, distance]
+    pairs: [number, number, number, number, number][];
+    stars: { name: string, x: number, y: number, mag: number }[]; // Basic star info
+    objects?: { name: string, x: number, y: number, type: string }[];
 }
 
-// Simplified data for demonstration. A real implementation would need a more robust dataset.
-const CONSTELLATION_DATA: ConstellationPattern[] = [
-   // This is a placeholder. A real implementation would require a significant
-   // dataset of star patterns (e.g., relative positions, angles, brightness ratios).
-   // For now, we will return a mock result.
+// Simplified constellation data. A real implementation would need a much larger, more precise dataset.
+// Coordinates are arbitrary, what matters are the relative positions (vectors).
+// Using Orion as a test case.
+const CONSTELLATION_DATA: StarPattern[] = [
+    {
+        name: "Orion",
+        stars: [
+            { name: "Betelgeuse", x: 80, y: 50, mag: 0.45 },
+            { name: "Rigel", x: 20, y: 250, mag: 0.18 },
+            { name: "Bellatrix", x: 30, y: 60, mag: 1.64 },
+            { name: "Mintaka", x: 35, y: 150, mag: 2.23 },
+            { name: "Alnilam", x: 55, y: 155, mag: 1.70 },
+            { name: "Alnitak", x: 70, y: 160, mag: 1.74 },
+            { name: "Saiph", x: 85, y: 260, mag: 2.07 },
+        ],
+        pairs: [], // Will be populated dynamically
+        objects: [
+            { name: "Orion Nebula (M42)", x: 60, y: 180, type: "Nebula" },
+            { name: "Horsehead Nebula", x: 72, y: 165, type: "Nebula" }
+        ]
+    }
 ];
+
+// Pre-calculate vectors for our constellation data
+CONSTELLATION_DATA.forEach(pattern => {
+    const p_stars = pattern.stars;
+    for (let i = 0; i < p_stars.length; i++) {
+        for (let j = i + 1; j < p_stars.length; j++) {
+            const dx = p_stars[j].x - p_stars[i].x;
+            const dy = p_stars[j].y - p_stars[i].y;
+            const dist = Math.hypot(dx, dy);
+            pattern.pairs.push([i, j, dx, dy, dist]);
+        }
+    }
+    // Sort by distance for faster matching later
+    pattern.pairs.sort((a, b) => a[4] - b[4]);
+});
+
 
 export interface CelestialIdentificationResult {
   summary: string;
   constellations: string[];
   objects_in_field: string[];
-  targetFound: boolean; // This can be repurposed or removed if no specific target search is needed.
+  targetFound: boolean;
 }
 
 async function getImageDataFromUrl(url: string): Promise<ImageData> {
     return new Promise((resolve, reject) => {
         const img = new Image();
-        img.crossOrigin = "Anonymous"; // Required for loading from data URL in some contexts
+        img.crossOrigin = "Anonymous";
         img.onload = () => {
             const canvas = document.createElement('canvas');
             const ctx = canvas.getContext('2d', { willReadFrequently: true });
@@ -42,33 +79,122 @@ async function getImageDataFromUrl(url: string): Promise<ImageData> {
     });
 }
 
-// Define the exported wrapper function that performs the analysis.
-export async function identifyCelestialObjectsFromImage(imageDataUri: string): Promise<CelestialIdentificationResult> {
-    
-    // In a real implementation, we would:
-    // 1. Get ImageData from the imageDataUri. (Now done via helper)
-    // 2. Run a star detection algorithm on the image data.
-    // 3. Extract the brightest stars and their relative patterns.
-    // 4. Compare these patterns against the CONSTELLATION_DATA.
-    // 5. If a match is found, return the constellation name.
+function findBestMatch(detectedStars: Star[], pattern: StarPattern): { score: number, transform: { scale: number, angle: number, dx: number, dy: number } | null } {
+    if (detectedStars.length < 3) return { score: 0, transform: null };
 
+    // Use the ~30 brightest stars for matching
+    const candidateStars = detectedStars.sort((a, b) => b.brightness - a.brightness).slice(0, 30);
+    const candidatePairs: [number, number, number, number, number][] = [];
+    for (let i = 0; i < candidateStars.length; i++) {
+        for (let j = i + 1; j < candidateStars.length; j++) {
+            const dx = candidateStars[j].x - candidateStars[i].x;
+            const dy = candidateStars[j].y - candidateStars[i].y;
+            const dist = Math.hypot(dx, dy);
+            candidatePairs.push([i, j, dx, dy, dist]);
+        }
+    }
+    candidatePairs.sort((a, b) => a[4] - b[4]);
+
+    let bestMatch = { score: 0, transform: null, matches: 0 };
+
+    // Iterate through all pairs in the candidate image as potential matches for a pattern pair
+    for (const cPair of candidatePairs) {
+        for (const pPair of pattern.pairs) {
+            // Find scale and rotation to match these two pairs
+            const scale = cPair[4] / pPair[4];
+            const angle = Math.atan2(cPair[3], cPair[2]) - Math.atan2(pPair[3], pPair[2]);
+
+            const cos = Math.cos(angle);
+            const sin = Math.sin(angle);
+            
+            // Transform pattern's first star based on this hypothesis
+            const pStar1 = pattern.stars[pPair[0]];
+            const transformedX = pStar1.x * cos - pStar1.y * sin;
+            const transformedY = pStar1.x * sin + pStar1.y * cos;
+
+            // Find translation
+            const cStar1 = candidateStars[cPair[0]];
+            const dx = cStar1.x - transformedX * scale;
+            const dy = cStar1.y - transformedY * scale;
+
+            // Now, verify this transform with all other stars
+            let matchCount = 0;
+            const positionTolerance = 0.05 * Math.max(cPair[4], pPair[4] * scale);
+
+            for (const pStar of pattern.stars) {
+                const tx = (pStar.x * cos - pStar.y * sin) * scale + dx;
+                const ty = (pStar.x * sin + pStar.y * cos) * scale + dy;
+
+                // Find the closest candidate star
+                let closestDist = Infinity;
+                for (const cStar of candidateStars) {
+                    const dist = Math.hypot(cStar.x - tx, cStar.y - ty);
+                    if (dist < closestDist) {
+                        closestDist = dist;
+                    }
+                }
+                if (closestDist < positionTolerance) {
+                    matchCount++;
+                }
+            }
+            
+            if (matchCount > bestMatch.matches) {
+                bestMatch = {
+                    score: matchCount / pattern.stars.length,
+                    transform: { scale, angle, dx, dy },
+                    matches: matchCount
+                };
+            }
+        }
+    }
+
+    return { score: bestMatch.score, transform: bestMatch.transform };
+}
+
+
+export async function identifyCelestialObjectsFromImage(imageDataUri: string): Promise<CelestialIdentificationResult> {
     try {
         const imageData = await getImageDataFromUrl(imageDataUri);
-        
-        // Step 2: Detect stars (re-using existing logic)
         const detectedStars = detectBrightBlobs(imageData, imageData.width, imageData.height);
-        
-        // Steps 3-5: Pattern matching (using mock logic for now)
-        // As building this complex logic is beyond a single step,
-        // we will return a mock result to demonstrate the new, self-contained client-side flow.
-        const mockConstellations = ["Orion", "Taurus"];
-        const mockObjects = ["Orion Nebula (M42)", "Pleiades (M45)"];
-        
+
+        if (detectedStars.length < 3) {
+            return {
+                summary: `Analysis complete, but not enough stars were detected (${detectedStars.length}) for pattern matching.`,
+                constellations: [],
+                objects_in_field: [],
+                targetFound: false,
+            };
+        }
+
+        let bestResult = {
+            pattern: null as StarPattern | null,
+            score: 0,
+            transform: null
+        };
+
+        for (const pattern of CONSTELLATION_DATA) {
+            const match = findBestMatch(detectedStars, pattern);
+            if (match.score > bestResult.score) {
+                bestResult = { pattern, score: match.score, transform: match.transform };
+            }
+        }
+
+        const MATCH_THRESHOLD = 0.5; // Require at least 50% of stars to match
+        if (bestResult.pattern && bestResult.score > MATCH_THRESHOLD) {
+            const identifiedPattern = bestResult.pattern;
+            return {
+                summary: `Analysis complete. Found ${detectedStars.length} stars. Best match: ${identifiedPattern.name} (Confidence: ${(bestResult.score * 100).toFixed(0)}%).`,
+                constellations: [identifiedPattern.name],
+                objects_in_field: identifiedPattern.objects?.map(o => o.name) || [],
+                targetFound: true,
+            };
+        }
+
         return {
-            summary: `Client-side analysis complete. Found ${detectedStars.length} star candidates. Identified ${mockConstellations.length} constellation(s). (Mock Result)`,
-            constellations: mockConstellations,
-            objects_in_field: mockObjects,
-            targetFound: false, // Target search not implemented in this simplified flow
+            summary: `Analysis complete. Found ${detectedStars.length} stars, but no known constellations could be matched with high confidence.`,
+            constellations: [],
+            objects_in_field: [],
+            targetFound: false,
         };
 
     } catch (error) {
@@ -77,5 +203,3 @@ export async function identifyCelestialObjectsFromImage(imageDataUri: string): P
         throw new Error(`Failed during client-side analysis: ${errorMessage}`);
     }
 }
-
-    
