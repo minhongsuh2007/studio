@@ -34,7 +34,7 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/
 import { createMasterFrame, applyCalibration } from '@/lib/image-calibration';
 import { applyPostProcessing, calculateHistogram, detectStarsForRemoval } from '@/lib/post-process';
 import { Input } from '@/components/ui/input';
-import { identifyCelestialObjects, type CelestialIdentificationResult } from '@/ai/flows/identify-celestial-objects';
+import { identifyCelestialObjectsFromImage, type CelestialIdentificationResult } from '@/lib/client-side-identifier';
 
 
 interface ImageQueueEntry {
@@ -739,26 +739,24 @@ export default function AstroStackerPage() {
 
   const handleStartIdentification = async () => {
     if (!stackedImage) {
-      addLog('[ERROR] No stacked image available for identification.');
-      return;
+        addLog('[ERROR] No stacked image available for identification.');
+        return;
     }
-  
+
     setIsIdentifying(true);
     setIdentificationResult(null);
     addLog(`[IDENTIFY START] Starting celestial identification...`);
-  
+
     try {
-      const result = await identifyCelestialObjects({
-        imageDataUri: stackedImage, // Pass the stacked image data
-      });
-      setIdentificationResult(result);
-      addLog(`[IDENTIFY SUCCESS] ${result.summary}`);
+        const result = await identifyCelestialObjectsFromImage(stackedImage);
+        setIdentificationResult(result);
+        addLog(`[IDENTIFY SUCCESS] ${result.summary}`);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      addLog(`[IDENTIFY ERROR] ${errorMessage}`);
-      window.alert(`Identification Failed: ${errorMessage}`);
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        addLog(`[IDENTIFY ERROR] ${errorMessage}`);
+        window.alert(`Identification Failed: ${errorMessage}`);
     } finally {
-      setIsIdentifying(false);
+        setIsIdentifying(false);
     }
   };
 
@@ -1403,3 +1401,5 @@ export default function AstroStackerPage() {
     </div>
   );
 }
+
+    
