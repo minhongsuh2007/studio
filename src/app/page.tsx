@@ -1,4 +1,3 @@
-
 "use client";
 
 import type React from 'react';
@@ -744,19 +743,15 @@ export default function AstroStackerPage() {
       addLog('[ERROR] No stacked image available for identification.');
       return;
     }
-    if (isAstrometryActive && !astrometryTarget) {
-      addLog('[ERROR] Please enter a celestial object to identify.');
-      return;
-    }
     
     setIsIdentifying(true);
     setIdentificationResult(null);
-    addLog(`[IDENTIFY START] Starting celestial identification. Target: ${astrometryTarget || 'None'}`);
+    addLog(`[IDENTIFY START] Starting celestial identification using astrometry.net...`);
     
     try {
       const result = await identifyCelestialObjects({
         imageDataUri: stackedImage,
-        targetObjectName: astrometryTarget,
+        log: addLog, // Pass the logger function
       });
       setIdentificationResult(result);
       addLog(`[IDENTIFY SUCCESS] ${result.summary}`);
@@ -1244,13 +1239,8 @@ export default function AstroStackerPage() {
                       <Checkbox id="astrometry-check" checked={isAstrometryActive} onCheckedChange={checked => setIsAstrometryActive(!!checked)} />
                       <Label htmlFor="astrometry-check" className="font-semibold text-base">천체 확인 (Astrometry)</Label>
                   </div>
-                  {isAstrometryActive && (
-                    <div className="pl-6 space-y-3 animate-accordion-down">
-                        <Label htmlFor="astrometry-target">찾고 싶은 천체 (예: M31, Orion Nebula)</Label>
-                        <Input id="astrometry-target" placeholder="천체 이름 입력 (선택 사항)" value={astrometryTarget} onChange={e => setAstrometryTarget(e.target.value)} disabled={isIdentifying} />
-                    </div>
-                  )}
-                   <Button onClick={handleStartIdentification} disabled={isUiDisabled || !stackedImage} className="w-full">
+                  
+                   <Button onClick={handleStartIdentification} disabled={isUiDisabled || !stackedImage || !isAstrometryActive} className="w-full">
                       {isIdentifying ? <><Loader2 className="mr-2 h-5 w-5 animate-spin" />분석 중...</> : <><Satellite className="mr-2 h-5 w-5" />분석 시작</>}
                     </Button>
                     <Button onClick={handleOpenPostProcessEditor} className="w-full" variant="outline" size="lg" disabled={isUiDisabled}><Wand2 className="mr-2 h-5 w-5" />{t('finalizeAndDownload')}</Button>
@@ -1258,12 +1248,13 @@ export default function AstroStackerPage() {
               </Card>
             )}
              {identificationResult && (
-                <Alert variant={identificationResult.targetInImage ? 'default' : 'destructive'}>
+                <Alert variant={'default'}>
                   <Satellite className="h-4 w-4" />
                   <AlertTitle>천체 분석 결과</AlertTitle>
                   <AlertDescription>
                     <p className="font-semibold">{identificationResult.summary}</p>
                     <p>주요 별자리: {identificationResult.constellations.join(', ')}</p>
+                     <p>주요 천체: {identificationResult.objects_in_field.join(', ')}</p>
                   </AlertDescription>
                 </Alert>
               )}
