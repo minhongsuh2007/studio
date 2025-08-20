@@ -91,7 +91,7 @@ function createTriangles(stars: (Star | {ra:number, dec:number})[]): Triangle[] 
                 if (sides[0] > 1e-6) { // Avoid degenerate triangles
                     triangles.push({
                         indices: [i, j, k],
-                        sides: sides,
+                        sides: sides as [number, number, number],
                         ratios: [sides[1] / sides[0], sides[2] / sides[0]],
                         maxSide: sides[2],
                     });
@@ -155,6 +155,8 @@ function verifyTransform(
     
     let matchCount = 0;
     const matchedPairs: [Star, typeof catalogStars[0]][] = [];
+    const usedImageStars = new Set<Star>();
+
 
     for (const catStar of allCatalogStars) {
         let catRa = catStar.ra;
@@ -176,6 +178,8 @@ function verifyTransform(
         let min_dist_sq = tolerance * tolerance;
 
         for (const imgStar of candidateStars) {
+            if (usedImageStars.has(imgStar)) continue; // Don't re-use image stars
+
             const dist_sq = (imgStar.x - expectedX)**2 + (imgStar.y - expectedY)**2;
             if (dist_sq < min_dist_sq) {
                 min_dist_sq = dist_sq;
@@ -186,6 +190,7 @@ function verifyTransform(
         if (bestMatch) {
             matchCount++;
             matchedPairs.push([bestMatch, catStar]);
+            usedImageStars.add(bestMatch);
         }
     }
     return { score: matchCount, matchedPairs };
@@ -221,38 +226,36 @@ export async function identifyCelestialObjectsFromImage(imageDataUri: string): P
 
         let bestSolution = { score: 0, transform: null as Transform | null, matchedPairs: [] as [Star, typeof catalogStars[0]][] };
 
-        // Main matching loop
+        // Main matching loop - This is computationally intensive
         for (const imgTriangle of imgTriangles) {
-            // Find catalog triangles that match the image triangle's ratios
-            // This is the most performance-intensive part. For a client-side solution, we must optimize.
-            // Instead of pre-calculating all catalog triangles, we'll iterate through the catalog stars.
-            // This is still slow but avoids massive memory usage.
-        }
-
-        // Simplified loop for demonstration: Iterate through catalog stars to form triangles to match against the first image triangle
-        const firstImgTriangle = imgTriangles[0];
-        if (firstImgTriangle) {
-             for (let i = 0; i < catalogStars.length; i++) {
+            for (let i = 0; i < catalogStars.length; i++) {
                 for (let j = i + 1; j < catalogStars.length; j++) {
-                    const sideA = Math.hypot(catalogStars[j].ra - catalogStars[i].ra, catalogStars[j].dec - catalogStars[i].dec);
-                    const expectedSideB = firstImgTriangle.ratios[0] * sideA;
-                    const expectedSideC = firstImgTriangle.ratios[1] * sideA;
-
-                    // This is where a k-d tree or other spatial index on the catalog would be crucial for performance.
-                    // We are simulating this with a simple search, which will be slow.
+                    
+                    const catSideA = Math.hypot(catalogStars[j].ra - catalogStars[i].ra, catalogStars[j].dec - catalogStars[i].dec);
+                    if (catSideA <= 0) continue;
+                    
+                    // Ratio of the longest side helps prune the search space
+                    const scaleRatio = imgTriangle.maxSide / catSideA;
+                    
+                    // Estimate search radius for the third catalog star
+                    const searchRadius = (imgTriangle.sides[0] * scaleRatio) + (imgTriangle.sides[1] * scaleRatio);
+                    
                     for (let k = j + 1; k < catalogStars.length; k++) {
-                        const sideB = Math.hypot(catalogStars[k].ra - catalogStars[j].ra, catalogStars[k].dec - catalogStars[j].dec);
-                        const sideC = Math.hypot(catalogStars[i].ra - catalogStars[k].ra, catalogStars[i].dec - catalogStars[k].dec);
-                        
-                        const sides = [sideA, sideB, sideC].sort((a,b)=>a-b);
-                        const ratios = [sides[1]/sides[0], sides[2]/sides[0]];
+                        const catSideB = Math.hypot(catalogStars[k].ra - catalogStars[i].ra, catalogStars[k].dec - catalogStars[i].dec);
+                        const catSideC = Math.hypot(catalogStars[k].ra - catalogStars[j].ra, catalogStars[k].dec - catalogStars[j].dec);
 
-                        const ratioError = Math.hypot(ratios[0] - firstImgTriangle.ratios[0], ratios[1] - firstImgTriangle.ratios[1]);
+                        const catSides = [catSideA, catSideB, catSideC].sort((a,b) => a-b);
+                        if (catSides[0] <= 0) continue;
+
+                        const catRatios : [number, number] = [catSides[1] / catSides[0], catSides[2] / catSides[0]];
+
+                        const ratioError = Math.hypot(catRatios[0] - imgTriangle.ratios[0], catRatios[1] - imgTriangle.ratios[1]);
 
                         if (ratioError < TRIANGLE_MATCH_TOLERANCE) {
                              // Potential match found, try to derive and verify transform
                             const cStars = [catalogStars[i], catalogStars[j], catalogStars[k]];
-                            const iStars = firstImgTriangle.indices.map(idx => candidateStars[idx]);
+                            // Get the original image stars that formed the triangle
+                            const iStars = imgTriangle.indices.map(idx => candidateStars[idx]);
 
                             for(let mirrored of [false, true]) {
                                 const transform = getTransform([iStars[0], iStars[1]], [cStars[0], cStars[1]], mirrored);
@@ -270,6 +273,10 @@ export async function identifyCelestialObjectsFromImage(imageDataUri: string): P
                     }
                 }
             }
+             // Early exit if a very good solution is found
+            if (bestSolution.score > candidateStars.length * 0.8) {
+                break;
+            }
         }
        
         if (bestSolution.score > MIN_MATCH_COUNT) {
@@ -279,10 +286,22 @@ export async function identifyCelestialObjectsFromImage(imageDataUri: string): P
             const centerDEC = centerPair[1].dec;
 
             // Find unique constellation names from matched stars
-            const constellations = [...new Set(matchedPairs.map(p => p[1].con).filter(Boolean))];
+            const constellationCounts: Record<string, number> = {};
+            matchedPairs.forEach(p => {
+                const con = p[1].con;
+                if(con) {
+                    constellationCounts[con] = (constellationCounts[con] || 0) + 1;
+                }
+            });
+
+            const constellations = Object.entries(constellationCounts)
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 3) // Show top 3 constellations at most
+                .map(entry => entry[0]);
+
 
             return {
-                summary: `Analysis successful! Found ${bestSolution.score} matching stars.`,
+                summary: `Analysis successful! Found ${bestSolution.score} matching stars. Image center is likely near RA ${centerRA.toFixed(2)}°, Dec ${centerDEC.toFixed(2)}°.`,
                 constellations: constellations,
                 objects_in_field: [], // Could be expanded later
                 targetFound: true,

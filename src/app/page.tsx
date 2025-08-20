@@ -1256,7 +1256,7 @@ export default function AstroStackerPage() {
               <Card className="bg-background/50">
                 <CardContent className="p-4 space-y-4">
                    <Button onClick={handleStartIdentification} disabled={isUiDisabled || !stackedImage} className="w-full">
-                      {isIdentifying ? <><Loader2 className="mr-2 h-5 w-5 animate-spin" />분석 중...</> : <><Satellite className="mr-2 h-5 w-5" />천체 확인</>}
+                      {isIdentifying ? <><Loader2 className="mr-2 h-5 w-5 animate-spin" />Identifying...</> : <><Satellite className="mr-2 h-5 w-5" />Identify Celestials</>}
                     </Button>
                     <Button onClick={handleOpenPostProcessEditor} className="w-full" variant="outline" size="lg" disabled={isUiDisabled}><Wand2 className="mr-2 h-5 w-5" />{t('finalizeAndDownload')}</Button>
                 </CardContent>
@@ -1265,11 +1265,11 @@ export default function AstroStackerPage() {
              {identificationResult && (
                 <Alert variant={'default'}>
                   <Satellite className="h-4 w-4" />
-                  <AlertTitle>천체 분석 결과</AlertTitle>
+                  <AlertTitle>Celestial Analysis Result</AlertTitle>
                   <AlertDescription>
                     <p className="font-semibold">{identificationResult.summary}</p>
-                    {identificationResult.constellations.length > 0 && <p>주요 별자리: {identificationResult.constellations.join(', ')}</p>}
-                    {identificationResult.objects_in_field.length > 0 && <p>주요 천체: {identificationResult.objects_in_field.join(', ')}</p>}
+                    {identificationResult.constellations.length > 0 && <p>Major Constellations: {identificationResult.constellations.join(', ')}</p>}
+                    {identificationResult.objects_in_field.length > 0 && <p>Major Objects: {identificationResult.objects_in_field.join(', ')}</p>}
                   </AlertDescription>
                 </Alert>
               )}
