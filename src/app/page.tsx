@@ -126,8 +126,6 @@ export default function AstroStackerPage() {
   const [modelNormalization, setModelNormalization] = useState<{ means: number[], stds: number[] } | null>(null);
 
   // --- Astrometry State ---
-  const [isAstrometryActive, setIsAstrometryActive] = useState(false);
-  const [astrometryTarget, setAstrometryTarget] = useState('');
   const [isIdentifying, setIsIdentifying] = useState(false);
   const [identificationResult, setIdentificationResult] = useState<CelestialIdentificationResult | null>(null);
 
@@ -747,43 +745,11 @@ export default function AstroStackerPage() {
   
     setIsIdentifying(true);
     setIdentificationResult(null);
-    addLog(`[IDENTIFY START] Starting celestial identification using astrometry.net...`);
+    addLog(`[IDENTIFY START] Starting celestial identification...`);
   
     try {
-      // Create a downscaled version of the image for upload
-      const img = new Image();
-      img.src = stackedImage;
-      await new Promise(resolve => { img.onload = resolve; });
-  
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      if (!ctx) throw new Error("Could not create canvas context for resizing.");
-  
-      const MAX_DIM = 2048; // Max dimension for astrometry
-      let targetWidth = img.width;
-      let targetHeight = img.height;
-  
-      if (img.width > MAX_DIM || img.height > MAX_DIM) {
-        if (img.width > img.height) {
-          targetWidth = MAX_DIM;
-          targetHeight = Math.round((img.height / img.width) * MAX_DIM);
-        } else {
-          targetHeight = MAX_DIM;
-          targetWidth = Math.round((img.width / img.height) * MAX_DIM);
-        }
-        addLog(`[IDENTIFY] Resizing image for astrometry from ${img.width}x${img.height} to ${targetWidth}x${targetHeight}.`);
-      }
-  
-      canvas.width = targetWidth;
-      canvas.height = targetHeight;
-      ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
-  
-      // Get the resized image as a JPEG data URL to reduce size
-      const resizedImageDataUri = canvas.toDataURL('image/jpeg', 0.9);
-  
       const result = await identifyCelestialObjects({
-        imageDataUri: resizedImageDataUri,
-        celestialObject: astrometryTarget,
+        imageDataUri: stackedImage, // Pass the stacked image data
       });
       setIdentificationResult(result);
       addLog(`[IDENTIFY SUCCESS] ${result.summary}`);
@@ -1108,10 +1074,7 @@ export default function AstroStackerPage() {
   const currentYear = new Date().getFullYear();
 
   // Determine the primary image to show in the main preview area
-  const mainPreviewUrl = 
-      identificationResult?.annotatedImageUrl || // Highest priority: annotated result
-      (showPostProcessEditor ? editedPreviewUrl : stackedImage) || // Then the post-processing or stacked image
-      null; // Default to null if none of the above exist
+  const mainPreviewUrl = (showPostProcessEditor ? editedPreviewUrl : stackedImage) || null;
 
 
   return (
@@ -1274,26 +1237,8 @@ export default function AstroStackerPage() {
             {stackedImage && (
               <Card className="bg-background/50">
                 <CardContent className="p-4 space-y-4">
-                  <div className="flex items-center space-x-2">
-                      <Checkbox id="astrometry-check" checked={isAstrometryActive} onCheckedChange={checked => setIsAstrometryActive(!!checked)} />
-                      <Label htmlFor="astrometry-check" className="font-semibold text-base">천체 확인 (Astrometry)</Label>
-                  </div>
-                  
-                  {isAstrometryActive && (
-                    <div className="space-y-2">
-                      <Label htmlFor="astrometry-target">Target Object (Optional)</Label>
-                      <Input 
-                        id="astrometry-target" 
-                        placeholder="e.g., Andromeda Galaxy, M42" 
-                        value={astrometryTarget} 
-                        onChange={(e) => setAstrometryTarget(e.target.value)} 
-                        disabled={isUiDisabled} 
-                      />
-                    </div>
-                  )}
-
-                   <Button onClick={handleStartIdentification} disabled={isUiDisabled || !stackedImage || !isAstrometryActive} className="w-full">
-                      {isIdentifying ? <><Loader2 className="mr-2 h-5 w-5 animate-spin" />분석 중...</> : <><Satellite className="mr-2 h-5 w-5" />분석 시작</>}
+                   <Button onClick={handleStartIdentification} disabled={isUiDisabled || !stackedImage} className="w-full">
+                      {isIdentifying ? <><Loader2 className="mr-2 h-5 w-5 animate-spin" />분석 중...</> : <><Satellite className="mr-2 h-5 w-5" />천체 확인</>}
                     </Button>
                     <Button onClick={handleOpenPostProcessEditor} className="w-full" variant="outline" size="lg" disabled={isUiDisabled}><Wand2 className="mr-2 h-5 w-5" />{t('finalizeAndDownload')}</Button>
                 </CardContent>
@@ -1307,7 +1252,6 @@ export default function AstroStackerPage() {
                     <p className="font-semibold">{identificationResult.summary}</p>
                     {identificationResult.constellations.length > 0 && <p>주요 별자리: {identificationResult.constellations.join(', ')}</p>}
                     {identificationResult.objects_in_field.length > 0 && <p>주요 천체: {identificationResult.objects_in_field.join(', ')}</p>}
-                    {astrometryTarget && <p className="font-bold mt-2">{astrometryTarget}: <span className={identificationResult.targetFound ? 'text-green-400' : 'text-red-400'}>{identificationResult.targetFound ? 'FOUND' : 'NOT FOUND'}</span></p>}
                   </AlertDescription>
                 </Alert>
               )}
