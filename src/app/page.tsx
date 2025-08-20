@@ -19,7 +19,7 @@ import { ImagePreview } from '@/components/astrostacker/ImagePreview';
 import { ImagePostProcessEditor } from '@/components/astrostacker/ImagePostProcessEditor';
 import { TutorialDialog } from '@/components/astrostacker/TutorialDialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Star as StarIcon, ListChecks, CheckCircle, RefreshCcw, Edit3, Loader2, Orbit, Trash2, Wand2, ShieldOff, Layers, Baseline, X, AlertTriangle, BrainCircuit, TestTube2, Eraser, Download, Upload, Cpu, AlertCircle, Moon, Sun, Sparkles, UserCheck, Zap, Diamond, Globe, Camera, Video, Play, StopCircle } from 'lucide-react';
+import { Star as StarIcon, ListChecks, CheckCircle, RefreshCcw, Edit3, Loader2, Orbit, Trash2, Wand2, ShieldOff, Layers, Baseline, X, AlertTriangle, BrainCircuit, TestTube2, Eraser, Download, Upload, Cpu, AlertCircle, Moon, Sun, Sparkles, UserCheck, Zap, Diamond, Globe, Camera, Video, Play, StopCircle, Satellite } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
@@ -33,9 +33,8 @@ import NextImage from 'next/image';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { createMasterFrame, applyCalibration } from '@/lib/image-calibration';
 import { applyPostProcessing, calculateHistogram, detectStarsForRemoval } from '@/lib/post-process';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { identifyCelestialObjects, type CelestialIdentificationResult } from '@/ai/flows/identify-celestial-objects';
 
 
 interface ImageQueueEntry {
@@ -61,7 +60,6 @@ interface CalibrationFrameEntry {
   dimensions: { width: number; height: number };
 }
 
-type AppMode = 'upload' | 'live';
 type PreviewFitMode = 'contain' | 'cover';
 type OutputFormat = 'png' | 'jpeg';
 type AlignmentMethod = 'standard' | 'consensus' | 'planetary';
@@ -74,7 +72,6 @@ const TF_MODEL_STORAGE_KEY = 'localstorage://astrostacker-model';
 
 export default function AstroStackerPage() {
   const { t } = useLanguage();
-  const [appMode, setAppMode] = useState<AppMode>('upload');
   const [allImageStarData, setAllImageStarData] = useState<ImageQueueEntry[]>([]);
   const [stackedImage, setStackedImage] = useState<string | null>(null);
   const [isProcessingStack, setIsProcessingStack] = useState(false);
@@ -128,14 +125,12 @@ export default function AstroStackerPage() {
   const [trainedModel, setTrainedModel] = useState<tf.LayersModel | null>(null);
   const [modelNormalization, setModelNormalization] = useState<{ means: number[], stds: number[] } | null>(null);
 
-  // --- Live Stacking State ---
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const [hasCameraPermission, setHasCameraPermission] = useState<boolean | null>(null);
-  const [isLiveStacking, setIsLiveStacking] = useState(false);
-  const isCapturing = useRef(false);
-  const [liveStackingParams, setLiveStackingParams] = useState({ iso: 800, count: 10 });
-  const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([]);
-  const [selectedVideoDevice, setSelectedVideoDevice] = useState<string>('');
+  // --- Astrometry State ---
+  const [isAstrometryActive, setIsAstrometryActive] = useState(false);
+  const [astrometryTarget, setAstrometryTarget] = useState('');
+  const [isIdentifying, setIsIdentifying] = useState(false);
+  const [identificationResult, setIdentificationResult] = useState<CelestialIdentificationResult | null>(null);
+
 
   const addLog = useCallback((message: string) => {
     setLogs(prevLogs => {
@@ -147,118 +142,6 @@ export default function AstroStackerPage() {
       return [newLog, ...prevLogs].slice(0, 150);
     });
   }, []);
-
-  const applyIsoToStream = useCallback(async (stream: MediaStream, iso: number) => {
-    const track = stream.getVideoTracks()[0];
-    if (track && track.getCapabilities) {
-        const capabilities = track.getCapabilities();
-        // @ts-ignore
-        if (capabilities.iso || track.getSettings().iso) {
-            try {
-                // Attempt 1: Standard advanced constraint
-                // @ts-ignore
-                await track.applyConstraints({ advanced: [{ iso: iso }] });
-                addLog(`[CAMERA] ISO successfully updated to ${iso} via advanced constraint.`);
-            } catch (e) {
-                console.warn(`Advanced ISO constraint failed:`, e);
-                addLog(`[CAMERA-WARN] Advanced ISO constraint failed. Trying other methods...`);
-                try {
-                    // Attempt 2: Direct constraint with other manual settings
-                    await track.applyConstraints({
-                        // @ts-ignore
-                        iso: iso,
-                        // @ts-ignore
-                        exposureMode: 'manual',
-                        // @ts-ignore
-                        torch: false // Ensure flash/torch is off
-                    });
-                     addLog(`[CAMERA] ISO successfully updated to ${iso} via direct constraint.`);
-                } catch (e2) {
-                    console.error("All attempts to set ISO failed:", e2);
-                    addLog(`[CAMERA-ERROR] All attempts to set ISO to ${iso} failed. The camera may not support this control.`);
-                }
-            }
-        } else {
-             addLog("[CAMERA-WARN] Camera does not report support for ISO control.");
-        }
-    }
-  }, [addLog]);
-
-  // Effect for initializing and managing the camera stream in live mode
-  useEffect(() => {
-    if (appMode !== 'live') {
-        // Stop camera if we switch away from live mode
-        if (videoRef.current && videoRef.current.srcObject) {
-            (videoRef.current.srcObject as MediaStream).getTracks().forEach(track => track.stop());
-            videoRef.current.srcObject = null;
-        }
-        return;
-    }
-
-    const initializeCamera = async () => {
-        try {
-            // Clear any existing stream
-            if (videoRef.current && videoRef.current.srcObject) {
-                (videoRef.current.srcObject as MediaStream).getTracks().forEach(track => track.stop());
-            }
-
-            // Get device list if we don't have it
-            if (videoDevices.length === 0) {
-                await navigator.mediaDevices.getUserMedia({ video: true }); // Request permission to get device list
-                const devices = await navigator.mediaDevices.enumerateDevices();
-                const videoInputs = devices.filter(d => d.kind === 'videoinput');
-                setVideoDevices(videoInputs);
-                if (videoInputs.length > 0) {
-                    // Find a preferred camera (e.g., back-facing) or default to the first one
-                    const rearCamera = videoInputs.find(d => d.label.toLowerCase().includes('back')) || videoInputs[0];
-                    setSelectedVideoDevice(rearCamera.deviceId);
-                }
-                setHasCameraPermission(true);
-                return; // Let the effect re-run with the new device ID and list
-            }
-            
-            let deviceIdToUse = selectedVideoDevice;
-            if (!deviceIdToUse && videoDevices.length > 0) {
-                const rearCamera = videoDevices.find(d => d.label.toLowerCase().includes('back')) || videoDevices[0];
-                deviceIdToUse = rearCamera.deviceId;
-                setSelectedVideoDevice(deviceIdToUse); // Update state for the UI
-            }
-            
-            if (!deviceIdToUse) {
-                addLog("[오류] 사용 가능한 비디오 장치가 없습니다.");
-                setHasCameraPermission(false);
-                return;
-            }
-            
-            const constraints: MediaStreamConstraints = { video: { deviceId: { exact: deviceIdToUse } } };
-            const stream = await navigator.mediaDevices.getUserMedia(constraints);
-            
-            if (videoRef.current) {
-                videoRef.current.srcObject = stream;
-                // Apply ISO immediately after setting the stream
-                await applyIsoToStream(stream, liveStackingParams.iso);
-            }
-            setHasCameraPermission(true);
-            addLog(`카메라 스트림을 성공적으로 시작했습니다: ${videoDevices.find(d => d.deviceId === deviceIdToUse)?.label || deviceIdToUse}`);
-            
-        } catch (error) {
-            console.error('카메라 접근 오류:', error);
-            setHasCameraPermission(false);
-            addLog("[오류] 카메라 권한이 거부되었습니다. 브라우저 설정에서 권한을 허용해주세요.");
-        }
-    };
-    
-    initializeCamera();
-
-  }, [appMode, selectedVideoDevice, videoDevices.length]); // Rerun when mode, selected device, or device list presence changes
-
-
-  // Effect to handle ISO changes.
-  useEffect(() => {
-    if (appMode === 'live' && videoRef.current && videoRef.current.srcObject) {
-        applyIsoToStream(videoRef.current.srcObject as MediaStream, liveStackingParams.iso);
-    }
-  }, [liveStackingParams.iso, appMode, applyIsoToStream]);
 
   useEffect(() => {
     try {
@@ -290,17 +173,6 @@ export default function AstroStackerPage() {
       addLog("[ERROR] Failed to load learned patterns from localStorage.");
     }
   }, [addLog]);
-  
-  useEffect(() => {
-    if (!isLiveStacking && appMode === 'live' && allImageStarData.length >= 2) {
-      const allAnalyzed = allImageStarData.every(img => img.isAnalyzed);
-      if (allAnalyzed) {
-        addLog("[Live Stacking] All captured frames analyzed. Starting final stack.");
-        handleStackAllImages();
-      }
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isLiveStacking, appMode, allImageStarData]);
 
   const saveLearnedPatterns = (patterns: LearnedPattern[]) => {
     try {
@@ -744,6 +616,7 @@ export default function AstroStackerPage() {
     setProgressPercent(0);
     setStackedImage(null);
     setShowPostProcessEditor(false);
+    setIdentificationResult(null); // Reset previous identification
     addLog(`[STACK START] Method: ${alignmentMethod}. Quality: ${stackingQuality}. Stacking ${imagesToStack.length} images. Mode: ${stackingMode}.`);
   
     try {
@@ -850,7 +723,8 @@ export default function AstroStackerPage() {
       setEditedPreviewUrl(resultDataUrl);
   
       handleResetAdjustments();
-      setShowPostProcessEditor(true);
+      // Don't show post-process editor immediately, wait for user action
+      // setShowPostProcessEditor(true); 
       addLog(`Stacking Complete: Successfully stacked ${calibratedLightFrames.length} images.`);
   
     } catch (error) {
@@ -862,6 +736,36 @@ export default function AstroStackerPage() {
       setIsProcessingStack(false);
       setProgressPercent(0);
       addLog("[STACK END] Stacking process finished.");
+    }
+  };
+
+  const handleStartIdentification = async () => {
+    if (!stackedImage) {
+      addLog('[ERROR] No stacked image available for identification.');
+      return;
+    }
+    if (isAstrometryActive && !astrometryTarget) {
+      addLog('[ERROR] Please enter a celestial object to identify.');
+      return;
+    }
+    
+    setIsIdentifying(true);
+    setIdentificationResult(null);
+    addLog(`[IDENTIFY START] Starting celestial identification. Target: ${astrometryTarget || 'None'}`);
+    
+    try {
+      const result = await identifyCelestialObjects({
+        imageDataUri: stackedImage,
+        targetObjectName: astrometryTarget,
+      });
+      setIdentificationResult(result);
+      addLog(`[IDENTIFY SUCCESS] ${result.summary}`);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      addLog(`[IDENTIFY ERROR] ${errorMessage}`);
+      window.alert(`Identification Failed: ${errorMessage}`);
+    } finally {
+      setIsIdentifying(false);
     }
   };
 
@@ -1171,486 +1075,309 @@ export default function AstroStackerPage() {
       }
   };
 
-  const captureFrame = async (): Promise<ImageData | null> => {
-      if (!videoRef.current || !videoRef.current.srcObject) return null;
-      
-      const video = videoRef.current;
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d', { willReadFrequently: true });
-      if (!ctx) return null;
-
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-
-      if (canvas.width === 0 || canvas.height === 0) {
-          addLog("[Live Capture Error] Video dimensions are zero. Cannot capture.");
-          return null;
-      }
-
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      return ctx.getImageData(0, 0, canvas.width, canvas.height);
-  };
-
-  const captureLoop = async () => {
-    for (let i = 0; i < liveStackingParams.count; i++) {
-        if (!isCapturing.current) {
-            addLog("라이브 스태킹이 사용자에 의해 중지되었습니다.");
-            break;
-        }
-
-        addLog(`[Live Capture] Capturing frame ${i + 1}/${liveStackingParams.count}...`);
-        setProgressPercent(((i + 1) / liveStackingParams.count) * 100);
-
-        const capturedImageData = await captureFrame();
-        if (!capturedImageData) {
-            addLog(`[Live Capture Error] Failed to capture frame ${i + 1}. Skipping.`);
-            continue;
-        }
-
-        const canvas = document.createElement('canvas');
-        canvas.width = capturedImageData.width;
-        canvas.height = capturedImageData.height;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) continue;
-        ctx.putImageData(capturedImageData, 0, 0);
-
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
-        const blob = await (await fetch(dataUrl)).blob();
-        const file = new File([blob], `capture-${i + 1}.jpg`, { type: 'image/jpeg' });
-        
-        const newEntry = await createImageQueueEntryFromFile(file);
-        if (newEntry) {
-            setAllImageStarData(prev => [...prev, newEntry]);
-            analyzeImageForStars(newEntry);
-        }
-    }
-    handleStopLiveStacking();
-  }
-
-  const handleStartLiveStacking = async () => {
-    if (!videoRef.current || isLiveStacking) return;
-  
-    addLog(`라이브 스태킹 시작: ISO ${liveStackingParams.iso}, ${liveStackingParams.count} 프레임`);
-    setIsLiveStacking(true);
-    isCapturing.current = true;
-    setAllImageStarData([]);
-    setStackedImage(null);
-  
-    captureLoop();
-  };
-  
-  const handleStopLiveStacking = useCallback(() => {
-    if (isCapturing.current) {
-      isCapturing.current = false;
-      addLog("라이브 캡처 세션이 종료되었습니다. 분석이 완료되면 최종 스태킹이 시작됩니다.");
-    }
-    setIsLiveStacking(false);
-    setProgressPercent(0);
-  }, []);
-
-  async function createImageQueueEntryFromFile(file: File): Promise<ImageQueueEntry | null> {
-    try {
-      const originalPreviewUrl = await fileToDataURL(file);
-      const img = new Image();
-      const originalDimensions = await new Promise<{ width: number; height: number }>((resolve, reject) => {
-        img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
-        img.onerror = () => reject(new Error("Could not load image to get dimensions."));
-        img.src = originalPreviewUrl;
-      });
-      return {
-        id: `${file.name}-${Date.now()}`, file, originalPreviewUrl,
-        analysisPreviewUrl: originalPreviewUrl, isAnalyzing: false, isAnalyzed: false,
-        originalDimensions, analysisDimensions: originalDimensions, imageData: null, detectedStars: [],
-      };
-    } catch (error) {
-      addLog(`[ERROR] Could not process captured image ${file.name}: ${error instanceof Error ? error.message : "Unknown error"}`);
-      return null;
-    }
-  }
-
   const imageForAnnotation = allImageStarData.find(img => img.id === manualSelectImageId);
   const canStartStacking = allImageStarData.length >= 2 && allImageStarData.every(img => img.isAnalyzed);
-  const isUiDisabled = isProcessingStack || isTrainingModel || allImageStarData.some(img => img.isAnalyzing) || isLiveStacking;
+  const isUiDisabled = isProcessingStack || isTrainingModel || allImageStarData.some(img => img.isAnalyzing) || isIdentifying;
   const currentYear = new Date().getFullYear();
 
   return (
     <div className="flex flex-col min-h-screen bg-background">
       <AppHeader onTutorialClick={() => setIsTutorialOpen(true)} />
       <main className="flex-grow container mx-auto py-6 px-2 sm:px-4 md:px-6">
-      <Tabs defaultValue="upload" value={appMode} onValueChange={(value) => setAppMode(value as AppMode)} className="w-full">
-          <TabsList className="grid w-full grid-cols-2">
-            <TabsTrigger value="upload" disabled={isUiDisabled}><Upload className="mr-2 h-4 w-4"/>파일 업로드</TabsTrigger>
-            <TabsTrigger value="live" disabled={isUiDisabled}><Camera className="mr-2 h-4 w-4"/>라이브 스태킹</TabsTrigger>
-          </TabsList>
-          <TabsContent value="upload">
-            <div className="flex flex-col lg:flex-row gap-6 mt-6">
-              <div className="w-full lg:w-2/5 xl:w-1/3 space-y-6">
-                <Card className="shadow-lg">
-                  <CardHeader>
-                    <CardTitle className="flex items-center text-xl font-headline"><StarIcon className="mr-2 h-5 w-5 text-accent" />{t('uploadAndConfigure')}</CardTitle>
-                    <CardDescription className="text-sm max-h-32 overflow-y-auto">{t('cardDescription')}</CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <ImageUploadArea onFilesAdded={handleFilesAdded} isProcessing={isUiDisabled} multiple={true} />
+        <div className="flex flex-col lg:flex-row gap-6 mt-6">
+          <div className="w-full lg:w-2/5 xl:w-1/3 space-y-6">
+            <Card className="shadow-lg">
+              <CardHeader>
+                <CardTitle className="flex items-center text-xl font-headline"><StarIcon className="mr-2 h-5 w-5 text-accent" />{t('uploadAndConfigure')}</CardTitle>
+                <CardDescription className="text-sm max-h-32 overflow-y-auto">{t('cardDescription')}</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <ImageUploadArea onFilesAdded={handleFilesAdded} isProcessing={isUiDisabled} multiple={true} />
 
-                    <Accordion type="multiple" className="w-full">
-                      <AccordionItem value="darks">
-                        <AccordionTrigger>
-                          <div className="flex items-center gap-2">
-                            <Moon className="h-5 w-5" />
-                            <div>
-                              <p>Dark Frames ({darkFrames.length})</p>
-                              <span className="text-xs text-muted-foreground font-normal">Optional - for thermal noise</span>
-                            </div>
-                          </div>
-                        </AccordionTrigger>
-                        <AccordionContent className="space-y-2">
-                          <div className="flex items-center space-x-2">
-                            <Switch id="use-darks" checked={useDarks} onCheckedChange={setUseDarks} disabled={isUiDisabled || darkFrames.length === 0} />
-                            <Label htmlFor="use-darks">{t('useDarkFramesLabel')}</Label>
-                          </div>
-                          <ImageUploadArea onFilesAdded={(f) => handleCalibrationFilesAdded(f, 'dark')} isProcessing={isUiDisabled} multiple={true} />
-                          {darkFrames.length > 0 && 
-                            <ScrollArea className="h-32">
-                              <div className="grid grid-cols-2 gap-2 p-1">
-                                {darkFrames.map(f => (
-                                  <div key={f.id} className="relative">
-                                    <NextImage src={f.previewUrl} alt={f.file.name} width={100} height={60} className="rounded-md object-cover" />
-                                    <Button size="icon" variant="destructive" className="absolute top-1 right-1 h-6 w-6" onClick={() => setDarkFrames(p => p.filter(i => i.id !== f.id))}><X className="h-4 w-4"/></Button>
-                                  </div>
-                                ))}
-                              </div>
-                            </ScrollArea>
-                          }
-                        </AccordionContent>
-                      </AccordionItem>
-                      <AccordionItem value="flats">
-                        <AccordionTrigger>
-                          <div className="flex items-center gap-2">
-                            <Sun className="h-5 w-5" />
-                            <div>
-                              <p>Flat Frames ({flatFrames.length})</p>
-                              <span className="text-xs text-muted-foreground font-normal">Optional - for dust/vignetting</span>
-                            </div>
-                          </div>
-                        </AccordionTrigger>
-                        <AccordionContent className="space-y-2">
-                          <div className="flex items-center space-x-2">
-                            <Switch id="use-flats" checked={useFlats} onCheckedChange={setUseFlats} disabled={isUiDisabled || flatFrames.length === 0} />
-                            <Label htmlFor="use-flats">{t('useFlatFramesLabel')}</Label>
-                          </div>
-                          <ImageUploadArea onFilesAdded={(f) => handleCalibrationFilesAdded(f, 'flat')} isProcessing={isUiDisabled} multiple={true} />
-                          {flatFrames.length > 0 && 
-                            <ScrollArea className="h-32">
-                              <div className="grid grid-cols-2 gap-2 p-1">
-                                {flatFrames.map(f => (
-                                  <div key={f.id} className="relative">
-                                    <NextImage src={f.previewUrl} alt={f.file.name} width={100} height={60} className="rounded-md object-cover" />
-                                    <Button size="icon" variant="destructive" className="absolute top-1 right-1 h-6 w-6" onClick={() => setFlatFrames(p => p.filter(i => i.id !== f.id))}><X className="h-4 w-4"/></Button>
-                                  </div>
-                                ))}
-                              </div>
-                            </ScrollArea>
-                          }
-                        </AccordionContent>
-                      </AccordionItem>
-                      <AccordionItem value="bias">
-                        <AccordionTrigger>
-                          <div className="flex items-center gap-2">
-                            <Sparkles className="h-5 w-5" />
-                            <div>
-                              <p>Bias Frames ({biasFrames.length})</p>
-                              <span className="text-xs text-muted-foreground font-normal">Optional - for read-out noise</span>
-                            </div>
-                          </div>
-                        </AccordionTrigger>
-                        <AccordionContent className="space-y-2">
-                          <div className="flex items-center space-x-2">
-                            <Switch id="use-bias" checked={useBias} onCheckedChange={setUseBias} disabled={isUiDisabled || biasFrames.length === 0} />
-                            <Label htmlFor="use-bias">{t('useBiasFramesLabel')}</Label>
-                          </div>
-                          <ImageUploadArea onFilesAdded={(f) => handleCalibrationFilesAdded(f, 'bias')} isProcessing={isUiDisabled} multiple={true} />
-                          {biasFrames.length > 0 && 
-                            <ScrollArea className="h-32">
-                              <div className="grid grid-cols-2 gap-2 p-1">
-                                {biasFrames.map(f => (
-                                  <div key={f.id} className="relative">
-                                    <NextImage src={f.previewUrl} alt={f.file.name} width={100} height={60} className="rounded-md object-cover" />
-                                    <Button size="icon" variant="destructive" className="absolute top-1 right-1 h-6 w-6" onClick={() => setBiasFrames(p => p.filter(i => i.id !== f.id))}><X className="h-4 w-4"/></Button>
-                                  </div>
-                                ))}
-                              </div>
-                            </ScrollArea>
-                          }
-                        </AccordionContent>
-                      </AccordionItem>
-                    </Accordion>
-
-
-                    {isProcessingStack && progressPercent > 0 && (
-                      <div className="space-y-2 my-4">
-                        <Progress value={progressPercent} className="w-full h-3" />
-                        <p className="text-sm text-center text-muted-foreground">{t('stackingProgress', {progressPercent: Math.round(progressPercent)})}</p>
-                      </div>
-                    )}
-                    {allImageStarData.length > 0 && (
-                      <>
-                        <h3 className="text-lg font-semibold mt-4 text-foreground">{t('imageQueueCount', {count: allImageStarData.length})}</h3>
-                        <ScrollArea className="h-60 border rounded-md p-2 bg-background/30">
-                          <div className="grid grid-cols-1 gap-3">
-                            {allImageStarData.map((entry, index) => (
-                              <ImageQueueItem
-                                key={entry.id} id={entry.id} index={index} file={entry.file} previewUrl={entry.analysisPreviewUrl}
-                                isAnalyzing={entry.isAnalyzing} onRemove={() => handleRemoveImage(entry.id)}
-                                onManualSelectToggle={() => handleManualSelectToggle(entry.id)} isProcessing={isUiDisabled}
-                                isAnalyzed={entry.isAnalyzed} 
-                                isManualSelectMode={manualSelectImageId === entry.id}
-                              />
-                            ))}
-                          </div>
-                        </ScrollArea>
-                      </>
-                    )}
-                    {manualSelectImageId && imageForAnnotation && (
-                      <Card className="mt-2 bg-muted/20">
-                        <CardHeader className="p-3"><CardTitle className="text-base">Manual Star Selection</CardTitle>
-                          <CardDescription className="text-xs">Now editing: {imageForAnnotation.file.name}. Selected {manualSelectedStars.length} stars.</CardDescription>
-                        </CardHeader>
-                        <CardFooter className="p-3 flex flex-col gap-2">
-                          <Button onClick={handleWipeAllStars} className="w-full" variant="destructive" size="sm"><Eraser className="mr-2 h-4 w-4" />Wipe All Stars</Button>
-                          <Button onClick={handleConfirmManualSelection} className="w-full" variant="secondary"><CheckCircle className="mr-2 h-4 w-4" />Confirm &amp; Learn Pattern</Button>
-                          <Button onClick={() => {setManualSelectImageId(null); setManualSelectedStars([]); setCanvasStars([]);}} className="w-full"><X className="mr-2 h-4 w-4" />Cancel</Button>
-                        </CardFooter>
-                      </Card>
-                    )}
-                  </CardContent>
-                </Card>
-              </div>
-              <div className="w-full lg:w-3/5 xl:w-2/3 flex flex-col space-y-6">
-                <div className="flex-grow">
-                  {imageForAnnotation ? (
-                      <StarAnnotationCanvas imageUrl={imageForAnnotation.analysisPreviewUrl} allStars={canvasStars} manualStars={manualSelectedStars} onCanvasClick={handleStarAnnotationClick} analysisWidth={imageForAnnotation.analysisDimensions.width} analysisHeight={imageForAnnotation.analysisDimensions.height} />
-                  ) : testImage ? (
-                      <StarAnnotationCanvas imageUrl={testImage.analysisPreviewUrl} allStars={testImage.detectedStars} manualStars={testImageMatchedStars} onCanvasClick={() => {}} analysisWidth={testImage.analysisDimensions.width} analysisHeight={testImage.analysisDimensions.height} />
-                  ) : (
-                      <ImagePreview imageUrl={showPostProcessEditor ? editedPreviewUrl : stackedImage} fitMode={previewFitMode} />
-                  )}
-                </div>
-                {stackedImage && !showPostProcessEditor && (<Button onClick={handleOpenPostProcessEditor} className="w-full bg-purple-600 hover:bg-purple-700 text-white" size="lg" disabled={isProcessingStack}><Wand2 className="mr-2 h-5 w-5" />{t('finalizeAndDownload')}</Button>)}
-                <div className="space-y-4 pt-4">
-                    <div className="space-y-2"><Label className="text-base font-semibold text-foreground">Alignment Method</Label>
-                      <RadioGroup value={alignmentMethod} onValueChange={(v) => setAlignmentMethod(v as AlignmentMethod)} className="grid grid-cols-2 gap-x-2 gap-y-2" disabled={isUiDisabled}>
-                        <div className="flex items-center space-x-1"><RadioGroupItem value="standard" id="align-standard" /><Label htmlFor="align-standard" className="flex items-center gap-1"><StarIcon className="h-4 w-4"/>Standard (Deep Sky)</Label></div>
-                        <div className="flex items-center space-x-1"><RadioGroupItem value="consensus" id="align-consensus" /><Label htmlFor="align-consensus" className="flex items-center gap-1"><Sparkles className="h-4 w-4"/>Consensus (Deep Sky)</Label></div>
-                        <div className="flex items-center space-x-1"><RadioGroupItem value="planetary" id="align-planetary" /><Label htmlFor="align-planetary" className="flex items-center gap-1"><Globe className="h-4 w-4"/>Planetary (Surface)</Label></div>
-                      </RadioGroup>
-                       {alignmentMethod === 'planetary' && (
-                        <div className="space-y-2 pl-2 pt-2 border-l-2 border-accent/50 ml-2">
-                            <Label htmlFor="planetaryQualitySlider">Stack Top {planetaryStackingQuality}% of Frames</Label>
-                            <Slider id="planetaryQualitySlider" min={1} max={100} step={1} value={[planetaryStackingQuality]} onValueChange={(v) => setPlanetaryStackingQuality(v[0])} disabled={isUiDisabled} />
+                <Accordion type="multiple" className="w-full">
+                  <AccordionItem value="darks">
+                    <AccordionTrigger>
+                      <div className="flex items-center gap-2">
+                        <Moon className="h-5 w-5" />
+                        <div>
+                          <p>Dark Frames ({darkFrames.length})</p>
+                          <span className="text-xs text-muted-foreground font-normal">Optional - for thermal noise</span>
                         </div>
-                      )}
-                    </div>
-                     <div className="space-y-2"><Label className="text-base font-semibold text-foreground">Stacking Quality</Label>
-                      <RadioGroup value={stackingQuality} onValueChange={(v) => setStackingQuality(v as StackingQuality)} className="flex space-x-2" disabled={isUiDisabled}>
-                        <div className="flex items-center space-x-1"><RadioGroupItem value="standard" id="quality-standard" /><Label htmlFor="quality-standard" className="flex items-center gap-1"><Zap className="h-4 w-4"/>Standard (Fast)</Label></div>
-                        <div className="flex items-center space-x-1"><RadioGroupItem value="high" id="quality-high" /><Label htmlFor="quality-high" className="flex items-center gap-1"><Diamond className="h-4 w-4"/>High Quality (Slow)</Label></div>
-                      </RadioGroup>
-                    </div>
-                    <div className="space-y-2"><Label className="text-base font-semibold text-foreground">{t('stackingMode')}</Label>
-                      <RadioGroup value={stackingMode} onValueChange={(v) => setStackingMode(v as StackingMode)} className="grid grid-cols-2 gap-2" disabled={isUiDisabled}>
-                        <div className="flex items-center space-x-1"><RadioGroupItem value="average" id="mode-average" /><Label htmlFor="mode-average">Average</Label></div>
-                        <div className="flex items-center space-x-1"><RadioGroupItem value="median" id="mode-median" /><Label htmlFor="mode-median">Median</Label></div>
-                        <div className="flex items-center space-x-1"><RadioGroupItem value="sigma" id="mode-sigma" /><Label htmlFor="mode-sigma">Sigma Clip</Label></div>
-                        <div className="flex items-center space-x-1"><RadioGroupItem value="laplacian" id="mode-laplacian" /><Label htmlFor="mode-laplacian">Planetary (Sharpen)</Label></div>
-                      </RadioGroup>
-                    </div>
-                    <div className="space-y-2"><Label className="text-base font-semibold text-foreground">{t('previewFit')}</Label>
-                      <RadioGroup value={previewFitMode} onValueChange={(v) => setPreviewFitMode(v as PreviewFitMode)} className="flex space-x-4" disabled={isUiDisabled}>
-                        <div className="flex items-center space-x-2"><RadioGroupItem value="contain" id="fit-contain" /><Label htmlFor="fit-contain">Contain</Label></div>
-                        <div className="flex items-center space-x-2"><RadioGroupItem value="cover" id="fit-cover" /><Label htmlFor="fit-cover">Cover</Label></div>
-                      </RadioGroup>
-                    </div>
-                    <div className="space-y-2"><Label className="text-base font-semibold text-foreground">{t('outputFormat')}</Label>
-                      <RadioGroup value={outputFormat} onValueChange={(v) => setOutputFormat(v as OutputFormat)} className="flex space-x-4" disabled={isUiDisabled}>
-                        <div className="flex items-center space-x-2"><RadioGroupItem value="png" id="format-png" /><Label htmlFor="format-png">PNG</Label></div>
-                        <div className="flex items-center space-x-2"><RadioGroupItem value="jpeg" id="format-jpeg" /><Label htmlFor="format-jpeg">JPG</Label></div>
-                      </RadioGroup>
-                    </div>
-                    {outputFormat === 'jpeg' && (<div className="space-y-2"><Label htmlFor="jpegQualitySlider">{t('jpgQuality', {jpegQuality})}</Label><Slider id="jpegQualitySlider" min={10} max={100} step={1} value={[jpegQuality]} onValueChange={(v) => setJpegQuality(v[0])} disabled={isUiDisabled} /></div>)}
-                    <Button onClick={handleStackAllImages} disabled={!canStartStacking || isUiDisabled} className="w-full bg-accent hover:bg-accent/90 text-accent-foreground mt-4">
-                      {isProcessingStack ? <><Loader2 className="mr-2 h-5 w-5 animate-spin" />{t('stackingButtonInProgress')}</> : <><CheckCircle className="mr-2 h-5 w-5" />{t('stackImagesButton', { count: allImageStarData.length })}</>}
-                    </Button>
-                  </div>
-              </div>
-            </div>
-          </TabsContent>
-          <TabsContent value="live">
-            <div className="flex flex-col lg:flex-row gap-6 mt-6">
-                <div className="w-full lg:w-2/5 xl:w-1/3 space-y-6">
-                    <Card className="shadow-lg">
-                        <CardHeader>
-                            <CardTitle className="flex items-center text-xl font-headline"><Camera className="mr-2 h-5 w-5 text-accent" />라이브 스태킹 설정</CardTitle>
-                            <CardDescription>어포컬 촬영을 위한 라이브 스태킹 모드입니다. 카메라, 프레임 수, ISO를 설정하고 시작하세요.</CardDescription>
-                        </CardHeader>
-                        <CardContent className="space-y-4">
-                            <div className="space-y-2">
-                                <Label htmlFor="camera-select">카메라 선택</Label>
-                                <Select onValueChange={setSelectedVideoDevice} value={selectedVideoDevice} disabled={isUiDisabled}>
-                                    <SelectTrigger id="camera-select">
-                                        <SelectValue placeholder="카메라를 선택하세요..." />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        {videoDevices.map(device => (
-                                            <SelectItem key={device.deviceId} value={device.deviceId}>
-                                                {device.label || `카메라 ${videoDevices.indexOf(device) + 1}`}
-                                            </SelectItem>
-                                        ))}
-                                    </SelectContent>
-                                </Select>
-                            </div>
-                            <div className="space-y-2">
-                                <Label htmlFor="iso">ISO</Label>
-                                <Input id="iso" type="number" value={liveStackingParams.iso} onChange={(e) => setLiveStackingParams(p => ({...p, iso: Number(e.target.value)}))} min={100} step={100} disabled={isUiDisabled} />
-                            </div>
-                            <div className="space-y-2">
-                                <Label htmlFor="capture-count">촬영 매수</Label>
-                                <Input id="capture-count" type="number" value={liveStackingParams.count} onChange={(e) => setLiveStackingParams(p => ({...p, count: Number(e.target.value)}))} min={2} disabled={isUiDisabled} />
-                            </div>
-                            {isLiveStacking ? (
-                                <Button onClick={handleStopLiveStacking} variant="destructive" className="w-full">
-                                    <StopCircle className="mr-2 h-5 w-5" /> 중지
-                                </Button>
-                            ) : (
-                                <Button onClick={handleStartLiveStacking} disabled={isUiDisabled || hasCameraPermission === false} className="w-full">
-                                    <Play className="mr-2 h-5 w-5" /> 라이브 스태킹 시작
-                                </Button>
-                            )}
-                             {isLiveStacking && progressPercent > 0 && (
-                                <div className="space-y-2 my-4">
-                                    <Progress value={progressPercent} className="w-full h-3" />
-                                    <p className="text-sm text-center text-muted-foreground">{Math.round(progressPercent)}% 완료됨</p>
-                                </div>
-                            )}
-                        </CardContent>
-                    </Card>
-                    {appMode === 'live' && allImageStarData.length > 0 && (
-                      <>
-                        <h3 className="text-lg font-semibold mt-4 text-foreground">촬영된 원본 사진 ({allImageStarData.length})</h3>
-                        <ScrollArea className="h-60 border rounded-md p-2 bg-background/30">
-                          <div className="grid grid-cols-1 gap-3">
-                            {allImageStarData.map((entry, index) => (
-                              <ImageQueueItem
-                                key={entry.id} id={entry.id} index={index} file={entry.file} previewUrl={entry.analysisPreviewUrl}
-                                isAnalyzing={entry.isAnalyzing} onRemove={() => handleRemoveImage(entry.id)}
-                                onManualSelectToggle={() => handleManualSelectToggle(entry.id)} isProcessing={isUiDisabled}
-                                isAnalyzed={entry.isAnalyzed} 
-                                isManualSelectMode={manualSelectImageId === entry.id}
-                              />
+                      </div>
+                    </AccordionTrigger>
+                    <AccordionContent className="space-y-2">
+                      <div className="flex items-center space-x-2">
+                        <Switch id="use-darks" checked={useDarks} onCheckedChange={setUseDarks} disabled={isUiDisabled || darkFrames.length === 0} />
+                        <Label htmlFor="use-darks">{t('useDarkFramesLabel')}</Label>
+                      </div>
+                      <ImageUploadArea onFilesAdded={(f) => handleCalibrationFilesAdded(f, 'dark')} isProcessing={isUiDisabled} multiple={true} />
+                      {darkFrames.length > 0 && 
+                        <ScrollArea className="h-32">
+                          <div className="grid grid-cols-2 gap-2 p-1">
+                            {darkFrames.map(f => (
+                              <div key={f.id} className="relative">
+                                <NextImage src={f.previewUrl} alt={f.file.name} width={100} height={60} className="rounded-md object-cover" />
+                                <Button size="icon" variant="destructive" className="absolute top-1 right-1 h-6 w-6" onClick={() => setDarkFrames(p => p.filter(i => i.id !== f.id))}><X className="h-4 w-4"/></Button>
+                              </div>
                             ))}
                           </div>
                         </ScrollArea>
-                      </>
-                    )}
-                </div>
-                <div className="w-full lg:w-3/5 xl:w-2/3 flex flex-col space-y-6">
-                    {imageForAnnotation ? (
-                       <div className="flex-grow">
-                        <StarAnnotationCanvas imageUrl={imageForAnnotation.analysisPreviewUrl} allStars={canvasStars} manualStars={manualSelectedStars} onCanvasClick={handleStarAnnotationClick} analysisWidth={imageForAnnotation.analysisDimensions.width} analysisHeight={imageForAnnotation.analysisDimensions.height} />
-                       </div>
-                    ) : stackedImage ? (
-                        <ImagePreview imageUrl={showPostProcessEditor ? editedPreviewUrl : stackedImage} fitMode={previewFitMode} />
-                    ) : (
-                        <Card className="flex-grow flex items-center justify-center shadow-lg bg-black">
-                            <CardContent className="w-full h-full p-2">
-                                {hasCameraPermission === false ? (
-                                    <Alert variant="destructive">
-                                        <AlertCircle className="h-4 w-4" />
-                                        <AlertTitle>카메라 접근 실패</AlertTitle>
-                                        <AlertDescription>
-                                            카메라 권한이 필요합니다. 브라우저 설정에서 이 앱의 카메라 접근을 허용해주세요.
-                                        </AlertDescription>
-                                    </Alert>
-                                ) : (
-                                    <div className="relative w-full h-full">
-                                        <video ref={videoRef} className="w-full h-full object-contain rounded-md" autoPlay muted playsInline />
-                                        {isLiveStacking && (
-                                            <div className="absolute top-2 right-2 bg-red-600 text-white px-3 py-1 rounded-full text-sm font-bold animate-pulse flex items-center gap-2">
-                                                <Video className="h-4 w-4"/> REC
-                                            </div>
-                                        )}
-                                    </div>
-                                )}
-                            </CardContent>
-                        </Card>
-                    )}
-                </div>
-            </div>
-          </TabsContent>
-      </Tabs>
-      <div className="flex flex-col lg:flex-row gap-6 mt-6">
-        <div className="w-full lg:w-2/5 xl:w-1/3 space-y-6">
-            {logs.length > 0 && (
-              <Card className="mt-4">
-                <CardHeader className="p-3 border-b"><CardTitle className="text-base flex items-center"><ListChecks className="mr-2 h-4 w-4" />{t('processingLogs')}</CardTitle></CardHeader>
-                <CardContent className="p-0">
-                  <ScrollArea ref={logContainerRef} className="h-48 p-3 text-xs bg-muted/20 rounded-b-md">
-                    {logs.map((log) => (
-                      <div key={log.id} className="mb-1 font-mono">
-                        <span className="text-muted-foreground mr-2">{log.timestamp}</span>
-                        <span className={ log.message.toLowerCase().includes('error') || log.message.toLowerCase().includes('failed') ? 'text-destructive' : log.message.toLowerCase().includes('warn') ? 'text-yellow-500' : log.message.startsWith('[ALIGN]') || log.message.startsWith('[AI ALIGN]') ? 'text-sky-400' : 'text-foreground/80'}>{log.message}</span>
+                      }
+                    </AccordionContent>
+                  </AccordionItem>
+                  <AccordionItem value="flats">
+                    <AccordionTrigger>
+                      <div className="flex items-center gap-2">
+                        <Sun className="h-5 w-5" />
+                        <div>
+                          <p>Flat Frames ({flatFrames.length})</p>
+                          <span className="text-xs text-muted-foreground font-normal">Optional - for dust/vignetting</span>
+                        </div>
                       </div>
-                    ))}
-                  </ScrollArea>
+                    </AccordionTrigger>
+                    <AccordionContent className="space-y-2">
+                      <div className="flex items-center space-x-2">
+                        <Switch id="use-flats" checked={useFlats} onCheckedChange={setUseFlats} disabled={isUiDisabled || flatFrames.length === 0} />
+                        <Label htmlFor="use-flats">{t('useFlatFramesLabel')}</Label>
+                      </div>
+                      <ImageUploadArea onFilesAdded={(f) => handleCalibrationFilesAdded(f, 'flat')} isProcessing={isUiDisabled} multiple={true} />
+                      {flatFrames.length > 0 && 
+                        <ScrollArea className="h-32">
+                          <div className="grid grid-cols-2 gap-2 p-1">
+                            {flatFrames.map(f => (
+                              <div key={f.id} className="relative">
+                                <NextImage src={f.previewUrl} alt={f.file.name} width={100} height={60} className="rounded-md object-cover" />
+                                <Button size="icon" variant="destructive" className="absolute top-1 right-1 h-6 w-6" onClick={() => setFlatFrames(p => p.filter(i => i.id !== f.id))}><X className="h-4 w-4"/></Button>
+                              </div>
+                            ))}
+                          </div>
+                        </ScrollArea>
+                      }
+                    </AccordionContent>
+                  </AccordionItem>
+                  <AccordionItem value="bias">
+                    <AccordionTrigger>
+                      <div className="flex items-center gap-2">
+                        <Sparkles className="h-5 w-5" />
+                        <div>
+                          <p>Bias Frames ({biasFrames.length})</p>
+                          <span className="text-xs text-muted-foreground font-normal">Optional - for read-out noise</span>
+                        </div>
+                      </div>
+                    </AccordionTrigger>
+                    <AccordionContent className="space-y-2">
+                      <div className="flex items-center space-x-2">
+                        <Switch id="use-bias" checked={useBias} onCheckedChange={setUseBias} disabled={isUiDisabled || biasFrames.length === 0} />
+                        <Label htmlFor="use-bias">{t('useBiasFramesLabel')}</Label>
+                      </div>
+                      <ImageUploadArea onFilesAdded={(f) => handleCalibrationFilesAdded(f, 'bias')} isProcessing={isUiDisabled} multiple={true} />
+                      {biasFrames.length > 0 && 
+                        <ScrollArea className="h-32">
+                          <div className="grid grid-cols-2 gap-2 p-1">
+                            {biasFrames.map(f => (
+                              <div key={f.id} className="relative">
+                                <NextImage src={f.previewUrl} alt={f.file.name} width={100} height={60} className="rounded-md object-cover" />
+                                <Button size="icon" variant="destructive" className="absolute top-1 right-1 h-6 w-6" onClick={() => setBiasFrames(p => p.filter(i => i.id !== f.id))}><X className="h-4 w-4"/></Button>
+                              </div>
+                            ))}
+                          </div>
+                        </ScrollArea>
+                      }
+                    </AccordionContent>
+                  </AccordionItem>
+                </Accordion>
+
+
+                {isProcessingStack && progressPercent > 0 && (
+                  <div className="space-y-2 my-4">
+                    <Progress value={progressPercent} className="w-full h-3" />
+                    <p className="text-sm text-center text-muted-foreground">{t('stackingProgress', {progressPercent: Math.round(progressPercent)})}</p>
+                  </div>
+                )}
+                {allImageStarData.length > 0 && (
+                  <>
+                    <h3 className="text-lg font-semibold mt-4 text-foreground">{t('imageQueueCount', {count: allImageStarData.length})}</h3>
+                    <ScrollArea className="h-60 border rounded-md p-2 bg-background/30">
+                      <div className="grid grid-cols-1 gap-3">
+                        {allImageStarData.map((entry, index) => (
+                          <ImageQueueItem
+                            key={entry.id} id={entry.id} index={index} file={entry.file} previewUrl={entry.analysisPreviewUrl}
+                            isAnalyzing={entry.isAnalyzing} onRemove={() => handleRemoveImage(entry.id)}
+                            onManualSelectToggle={() => handleManualSelectToggle(entry.id)} isProcessing={isUiDisabled}
+                            isAnalyzed={entry.isAnalyzed} 
+                            isManualSelectMode={manualSelectImageId === entry.id}
+                          />
+                        ))}
+                      </div>
+                    </ScrollArea>
+                  </>
+                )}
+                {manualSelectImageId && imageForAnnotation && (
+                  <Card className="mt-2 bg-muted/20">
+                    <CardHeader className="p-3"><CardTitle className="text-base">Manual Star Selection</CardTitle>
+                      <CardDescription className="text-xs">Now editing: {imageForAnnotation.file.name}. Selected {manualSelectedStars.length} stars.</CardDescription>
+                    </CardHeader>
+                    <CardFooter className="p-3 flex flex-col gap-2">
+                      <Button onClick={handleWipeAllStars} className="w-full" variant="destructive" size="sm"><Eraser className="mr-2 h-4 w-4" />Wipe All Stars</Button>
+                      <Button onClick={handleConfirmManualSelection} className="w-full" variant="secondary"><CheckCircle className="mr-2 h-4 w-4" />Confirm &amp; Learn Pattern</Button>
+                      <Button onClick={() => {setManualSelectImageId(null); setManualSelectedStars([]); setCanvasStars([]);}} className="w-full"><X className="mr-2 h-4 w-4" />Cancel</Button>
+                    </CardFooter>
+                  </Card>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+          <div className="w-full lg:w-3/5 xl:w-2/3 flex flex-col space-y-6">
+            <div className="flex-grow">
+              {imageForAnnotation ? (
+                  <StarAnnotationCanvas imageUrl={imageForAnnotation.analysisPreviewUrl} allStars={canvasStars} manualStars={manualSelectedStars} onCanvasClick={handleStarAnnotationClick} analysisWidth={imageForAnnotation.analysisDimensions.width} analysisHeight={imageForAnnotation.analysisDimensions.height} />
+              ) : testImage ? (
+                  <StarAnnotationCanvas imageUrl={testImage.analysisPreviewUrl} allStars={testImage.detectedStars} manualStars={testImageMatchedStars} onCanvasClick={() => {}} analysisWidth={testImage.analysisDimensions.width} analysisHeight={testImage.analysisDimensions.height} />
+              ) : (
+                  <ImagePreview imageUrl={showPostProcessEditor ? editedPreviewUrl : stackedImage} fitMode={previewFitMode} />
+              )}
+            </div>
+            {stackedImage && (
+              <Card className="bg-background/50">
+                <CardContent className="p-4 space-y-4">
+                  <div className="flex items-center space-x-2">
+                      <Checkbox id="astrometry-check" checked={isAstrometryActive} onCheckedChange={checked => setIsAstrometryActive(!!checked)} />
+                      <Label htmlFor="astrometry-check" className="font-semibold text-base">천체 확인 (Astrometry)</Label>
+                  </div>
+                  {isAstrometryActive && (
+                    <div className="pl-6 space-y-3 animate-accordion-down">
+                        <Label htmlFor="astrometry-target">찾고 싶은 천체 (예: M31, Orion Nebula)</Label>
+                        <Input id="astrometry-target" placeholder="천체 이름 입력 (선택 사항)" value={astrometryTarget} onChange={e => setAstrometryTarget(e.target.value)} disabled={isIdentifying} />
+                    </div>
+                  )}
+                   <Button onClick={handleStartIdentification} disabled={isUiDisabled || !stackedImage} className="w-full">
+                      {isIdentifying ? <><Loader2 className="mr-2 h-5 w-5 animate-spin" />분석 중...</> : <><Satellite className="mr-2 h-5 w-5" />분석 시작</>}
+                    </Button>
+                    <Button onClick={handleOpenPostProcessEditor} className="w-full" variant="outline" size="lg" disabled={isUiDisabled}><Wand2 className="mr-2 h-5 w-5" />{t('finalizeAndDownload')}</Button>
                 </CardContent>
               </Card>
             )}
-        </div>
-        <div className="w-full lg:w-3/5 xl:w-2/3 space-y-6">
-            <Card>
-                <CardHeader><CardTitle className="flex items-center"><BrainCircuit className="mr-2 h-5 w-5" />{t('learningModeCardTitle')}</CardTitle><CardDescription>{t('learningModeCardDescription')}</CardDescription></CardHeader>
-                <CardContent>
-                    <div className="grid grid-cols-2 gap-4 mb-4">
-                      <Button onClick={handleExportPatterns} disabled={learnedPatterns.length === 0}><Download className="mr-2 h-4 w-4" />{t('exportPatternsButton')}</Button>
-                      <ImageUploadArea onFilesAdded={handleImportPatterns} isProcessing={isUiDisabled} multiple={false} accept={{ 'application/json': ['.json'] }} dropzoneText={t('importPatternsDropzone')} buttonText={t('importPatternsButton')} />
+             {identificationResult && (
+                <Alert variant={identificationResult.targetInImage ? 'default' : 'destructive'}>
+                  <Satellite className="h-4 w-4" />
+                  <AlertTitle>천체 분석 결과</AlertTitle>
+                  <AlertDescription>
+                    <p className="font-semibold">{identificationResult.summary}</p>
+                    <p>주요 별자리: {identificationResult.constellations.join(', ')}</p>
+                  </AlertDescription>
+                </Alert>
+              )}
+            <div className="space-y-4 pt-4">
+                <div className="space-y-2"><Label className="text-base font-semibold text-foreground">Alignment Method</Label>
+                  <RadioGroup value={alignmentMethod} onValueChange={(v) => setAlignmentMethod(v as AlignmentMethod)} className="grid grid-cols-2 gap-x-2 gap-y-2" disabled={isUiDisabled}>
+                    <div className="flex items-center space-x-1"><RadioGroupItem value="standard" id="align-standard" /><Label htmlFor="align-standard" className="flex items-center gap-1"><StarIcon className="h-4 w-4"/>Standard (Deep Sky)</Label></div>
+                    <div className="flex items-center space-x-1"><RadioGroupItem value="consensus" id="align-consensus" /><Label htmlFor="align-consensus" className="flex items-center gap-1"><Sparkles className="h-4 w-4"/>Consensus (Deep Sky)</Label></div>
+                    <div className="flex items-center space-x-1"><RadioGroupItem value="planetary" id="align-planetary" /><Label htmlFor="align-planetary" className="flex items-center gap-1"><Globe className="h-4 w-4"/>Planetary (Surface)</Label></div>
+                  </RadioGroup>
+                   {alignmentMethod === 'planetary' && (
+                    <div className="space-y-2 pl-2 pt-2 border-l-2 border-accent/50 ml-2">
+                        <Label htmlFor="planetaryQualitySlider">Stack Top {planetaryStackingQuality}% of Frames</Label>
+                        <Slider id="planetaryQualitySlider" min={1} max={100} step={1} value={[planetaryStackingQuality]} onValueChange={(v) => setPlanetaryStackingQuality(v[0])} disabled={isUiDisabled} />
                     </div>
-                     <Button onClick={handleTrainModel} disabled={isUiDisabled || learnedPatterns.filter(p => selectedPatternIDs.has(p.id)).length === 0} className="w-full mb-4">
-                        {isTrainingModel ? <><Loader2 className="mr-2 h-4 w-4 animate-spin"/>{t('trainingModelButton')}</> : <><Cpu className="mr-2 h-4 w-4" />{t('trainModelButton')}</>}
-                    </Button>
-                    {trainedModel && <Alert variant="default" className="mb-4"><AlertCircle className="h-4 w-4" /><AlertTitle>Model Ready</AlertTitle><AlertDescription>An AI model is trained and ready. The 'Consensus' alignment method can be enhanced by this for better star recognition in future updates.</AlertDescription></Alert>}
-
-                    <h4 className="font-semibold mb-2">{t('allLearnedPatternsListTitle')}</h4>
-                    {learnedPatterns.length === 0 ? (<p className="text-sm text-muted-foreground">{t('noPatternLearnedYetInfo')}</p>) : (
-                        <ScrollArea className="h-40 border rounded-md p-2">
-                            {learnedPatterns.map(p => (
-                                <div key={p.id} className="flex items-center justify-between p-2 rounded-md hover:bg-muted/50">
-                                    <div className="flex items-center gap-2">
-                                        <Checkbox id={`pattern-${p.id}`} checked={selectedPatternIDs.has(p.id)} onCheckedChange={(checked) => handlePatternSelectionChange(p.id, !!checked)} />
-                                        <div>
-                                            <label htmlFor={`pattern-${p.id}`} className="font-medium text-sm cursor-pointer">{p.id} ({p.characteristics.length} stars)</label>
-                                            <p className="text-xs text-muted-foreground"> {p.sourceImageIds.length} source images. Learned on {new Date(p.timestamp).toLocaleDateString()}</p>
-                                        </div>
-                                    </div>
-                                    <Button variant="ghost" size="icon" className="h-7 w-7 z-10" onClick={() => deletePattern(p.id)}><Trash2 className="h-4 w-4 text-destructive"/></Button>
-                                </div>
-                            ))}
-                        </ScrollArea>
-                    )}
-                </CardContent>
-            </Card>
-
-            <Card>
-                <CardHeader><CardTitle className="flex items-center"><TestTube2 className="mr-2 h-5 w-5" />{t('learnTestCardTitle')}</CardTitle><CardDescription>{t('learnTestCardDescription')}</CardDescription></CardHeader>
-                <CardContent className="space-y-4">
-                    <ImageUploadArea onFilesAdded={handleTestFileAdded} isProcessing={isAnalyzingTestImage || isUiDisabled} multiple={false} />
-                    <Button onClick={runPatternTest} disabled={isAnalyzingTestImage || isUiDisabled || !testImage} className="w-full">
-                        {isAnalyzingTestImage ? <><Loader2 className="mr-2 h-4 w-4 animate-spin"/>{t('analyzingTestImageProgress')}</> : <>{t('runPatternTestButton')}</>}
-                    </Button>
-                    {testImage && <p className="text-sm text-center text-muted-foreground">{t('recognizedStarsCount', {count: testImageMatchedStars.length})}</p>}
-                </CardContent>
-            </Card>
+                  )}
+                </div>
+                 <div className="space-y-2"><Label className="text-base font-semibold text-foreground">Stacking Quality</Label>
+                  <RadioGroup value={stackingQuality} onValueChange={(v) => setStackingQuality(v as StackingQuality)} className="flex space-x-2" disabled={isUiDisabled}>
+                    <div className="flex items-center space-x-1"><RadioGroupItem value="standard" id="quality-standard" /><Label htmlFor="quality-standard" className="flex items-center gap-1"><Zap className="h-4 w-4"/>Standard (Fast)</Label></div>
+                    <div className="flex items-center space-x-1"><RadioGroupItem value="high" id="quality-high" /><Label htmlFor="quality-high" className="flex items-center gap-1"><Diamond className="h-4 w-4"/>High Quality (Slow)</Label></div>
+                  </RadioGroup>
+                </div>
+                <div className="space-y-2"><Label className="text-base font-semibold text-foreground">{t('stackingMode')}</Label>
+                  <RadioGroup value={stackingMode} onValueChange={(v) => setStackingMode(v as StackingMode)} className="grid grid-cols-2 gap-2" disabled={isUiDisabled}>
+                    <div className="flex items-center space-x-1"><RadioGroupItem value="average" id="mode-average" /><Label htmlFor="mode-average">Average</Label></div>
+                    <div className="flex items-center space-x-1"><RadioGroupItem value="median" id="mode-median" /><Label htmlFor="mode-median">Median</Label></div>
+                    <div className="flex items-center space-x-1"><RadioGroupItem value="sigma" id="mode-sigma" /><Label htmlFor="mode-sigma">Sigma Clip</Label></div>
+                    <div className="flex items-center space-x-1"><RadioGroupItem value="laplacian" id="mode-laplacian" /><Label htmlFor="mode-laplacian">Planetary (Sharpen)</Label></div>
+                  </RadioGroup>
+                </div>
+                <div className="space-y-2"><Label className="text-base font-semibold text-foreground">{t('previewFit')}</Label>
+                  <RadioGroup value={previewFitMode} onValueChange={(v) => setPreviewFitMode(v as PreviewFitMode)} className="flex space-x-4" disabled={isUiDisabled}>
+                    <div className="flex items-center space-x-2"><RadioGroupItem value="contain" id="fit-contain" /><Label htmlFor="fit-contain">Contain</Label></div>
+                    <div className="flex items-center space-x-2"><RadioGroupItem value="cover" id="fit-cover" /><Label htmlFor="fit-cover">Cover</Label></div>
+                  </RadioGroup>
+                </div>
+                <div className="space-y-2"><Label className="text-base font-semibold text-foreground">{t('outputFormat')}</Label>
+                  <RadioGroup value={outputFormat} onValueChange={(v) => setOutputFormat(v as OutputFormat)} className="flex space-x-4" disabled={isUiDisabled}>
+                    <div className="flex items-center space-x-2"><RadioGroupItem value="png" id="format-png" /><Label htmlFor="format-png">PNG</Label></div>
+                    <div className="flex items-center space-x-2"><RadioGroupItem value="jpeg" id="format-jpeg" /><Label htmlFor="format-jpeg">JPG</Label></div>
+                  </RadioGroup>
+                </div>
+                {outputFormat === 'jpeg' && (<div className="space-y-2"><Label htmlFor="jpegQualitySlider">{t('jpgQuality', {jpegQuality})}</Label><Slider id="jpegQualitySlider" min={10} max={100} step={1} value={[jpegQuality]} onValueChange={(v) => setJpegQuality(v[0])} disabled={isUiDisabled} /></div>)}
+                <Button onClick={handleStackAllImages} disabled={!canStartStacking || isUiDisabled} className="w-full bg-accent hover:bg-accent/90 text-accent-foreground mt-4">
+                  {isProcessingStack ? <><Loader2 className="mr-2 h-5 w-5 animate-spin" />{t('stackingButtonInProgress')}</> : <><CheckCircle className="mr-2 h-5 w-5" />{t('stackImagesButton', { count: allImageStarData.length })}</>}
+                </Button>
+              </div>
+          </div>
         </div>
-      </div>
+
+        <div className="flex flex-col lg:flex-row gap-6 mt-6">
+          <div className="w-full lg:w-2/5 xl:w-1/3 space-y-6">
+              {logs.length > 0 && (
+                <Card className="mt-4">
+                  <CardHeader className="p-3 border-b"><CardTitle className="text-base flex items-center"><ListChecks className="mr-2 h-4 w-4" />{t('processingLogs')}</CardTitle></CardHeader>
+                  <CardContent className="p-0">
+                    <ScrollArea ref={logContainerRef} className="h-48 p-3 text-xs bg-muted/20 rounded-b-md">
+                      {logs.map((log) => (
+                        <div key={log.id} className="mb-1 font-mono">
+                          <span className="text-muted-foreground mr-2">{log.timestamp}</span>
+                          <span className={ log.message.toLowerCase().includes('error') || log.message.toLowerCase().includes('failed') ? 'text-destructive' : log.message.toLowerCase().includes('warn') ? 'text-yellow-500' : log.message.startsWith('[ALIGN]') || log.message.startsWith('[AI ALIGN]') ? 'text-sky-400' : 'text-foreground/80'}>{log.message}</span>
+                        </div>
+                      ))}
+                    </ScrollArea>
+                  </CardContent>
+                </Card>
+              )}
+          </div>
+          <div className="w-full lg:w-3/5 xl:w-2/3 space-y-6">
+              <Card>
+                  <CardHeader><CardTitle className="flex items-center"><BrainCircuit className="mr-2 h-5 w-5" />{t('learningModeCardTitle')}</CardTitle><CardDescription>{t('learningModeCardDescription')}</CardDescription></CardHeader>
+                  <CardContent>
+                      <div className="grid grid-cols-2 gap-4 mb-4">
+                        <Button onClick={handleExportPatterns} disabled={learnedPatterns.length === 0}><Download className="mr-2 h-4 w-4" />{t('exportPatternsButton')}</Button>
+                        <ImageUploadArea onFilesAdded={handleImportPatterns} isProcessing={isUiDisabled} multiple={false} accept={{ 'application/json': ['.json'] }} dropzoneText={t('importPatternsDropzone')} buttonText={t('importPatternsButton')} />
+                      </div>
+                       <Button onClick={handleTrainModel} disabled={isUiDisabled || learnedPatterns.filter(p => selectedPatternIDs.has(p.id)).length === 0} className="w-full mb-4">
+                          {isTrainingModel ? <><Loader2 className="mr-2 h-4 w-4 animate-spin"/>{t('trainingModelButton')}</> : <><Cpu className="mr-2 h-4 w-4" />{t('trainModelButton')}</>}
+                      </Button>
+                      {trainedModel && <Alert variant="default" className="mb-4"><AlertCircle className="h-4 w-4" /><AlertTitle>Model Ready</AlertTitle><AlertDescription>An AI model is trained and ready. The 'Consensus' alignment method can be enhanced by this for better star recognition in future updates.</AlertDescription></Alert>}
+
+                      <h4 className="font-semibold mb-2">{t('allLearnedPatternsListTitle')}</h4>
+                      {learnedPatterns.length === 0 ? (<p className="text-sm text-muted-foreground">{t('noPatternLearnedYetInfo')}</p>) : (
+                          <ScrollArea className="h-40 border rounded-md p-2">
+                              {learnedPatterns.map(p => (
+                                  <div key={p.id} className="flex items-center justify-between p-2 rounded-md hover:bg-muted/50">
+                                      <div className="flex items-center gap-2">
+                                          <Checkbox id={`pattern-${p.id}`} checked={selectedPatternIDs.has(p.id)} onCheckedChange={(checked) => handlePatternSelectionChange(p.id, !!checked)} />
+                                          <div>
+                                              <label htmlFor={`pattern-${p.id}`} className="font-medium text-sm cursor-pointer">{p.id} ({p.characteristics.length} stars)</label>
+                                              <p className="text-xs text-muted-foreground"> {p.sourceImageIds.length} source images. Learned on {new Date(p.timestamp).toLocaleDateString()}</p>
+                                          </div>
+                                      </div>
+                                      <Button variant="ghost" size="icon" className="h-7 w-7 z-10" onClick={() => deletePattern(p.id)}><Trash2 className="h-4 w-4 text-destructive"/></Button>
+                                  </div>
+                              ))}
+                          </ScrollArea>
+                      )}
+                  </CardContent>
+              </Card>
+
+              <Card>
+                  <CardHeader><CardTitle className="flex items-center"><TestTube2 className="mr-2 h-5 w-5" />{t('learnTestCardTitle')}</CardTitle><CardDescription>{t('learnTestCardDescription')}</CardDescription></CardHeader>
+                  <CardContent className="space-y-4">
+                      <ImageUploadArea onFilesAdded={handleTestFileAdded} isProcessing={isAnalyzingTestImage || isUiDisabled} multiple={false} />
+                      <Button onClick={runPatternTest} disabled={isAnalyzingTestImage || isUiDisabled || !testImage} className="w-full">
+                          {isAnalyzingTestImage ? <><Loader2 className="mr-2 h-4 w-4 animate-spin"/>{t('analyzingTestImageProgress')}</> : <>{t('runPatternTestButton')}</>}
+                      </Button>
+                      {testImage && <p className="text-sm text-center text-muted-foreground">{t('recognizedStarsCount', {count: testImageMatchedStars.length})}</p>}
+                  </CardContent>
+              </Card>
+          </div>
+        </div>
       </main>
       <footer className="py-6 text-center text-sm text-muted-foreground border-t border-border">
         <div>{t('creditsLine1', {year: currentYear})}</div>
@@ -1688,6 +1415,3 @@ export default function AstroStackerPage() {
     </div>
   );
 }
-
-    
-    
