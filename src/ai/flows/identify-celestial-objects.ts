@@ -23,8 +23,8 @@ export interface CelestialIdentificationResult {
 
 const API_URL = 'https://nova.astrometry.net/api';
 
-// Helper function to perform requests to the Astrometry.net API
-async function requestAstrometry(endpoint: string, body: any, isUpload: boolean = false) {
+// Helper function to perform requests to the Astrometry.net API with retries
+async function requestAstrometry(endpoint: string, body: any, isUpload: boolean = false, retries: number = 3) {
   const url = `${API_URL}/${endpoint}`;
   const options: RequestInit = {
     method: 'POST',
@@ -32,12 +32,32 @@ async function requestAstrometry(endpoint: string, body: any, isUpload: boolean 
     ...(!isUpload && { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }),
   };
 
-  const response = await fetch(url, options);
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Astrometry.net API error on ${endpoint}: ${response.status} ${response.statusText} - ${errorText}`);
+  for (let i = 0; i < retries; i++) {
+      try {
+          const response = await fetch(url, options);
+          if (!response.ok) {
+              if (response.status === 503 && i < retries - 1) {
+                  const waitTime = Math.pow(2, i) * 1000; // Exponential backoff: 1s, 2s
+                  console.warn(`Astrometry.net returned 503. Retrying in ${waitTime / 1000}s...`);
+                  await new Promise(resolve => setTimeout(resolve, waitTime));
+                  continue; // Retry the loop
+              }
+              const errorText = await response.text();
+              const friendlyError = response.status === 503 
+                ? "The server is temporarily unavailable. Please try again later."
+                : `Astrometry.net API error on ${endpoint}: ${response.status} ${response.statusText}`;
+
+              throw new Error(`${friendlyError} - Details: ${errorText}`);
+          }
+          return response.json();
+      } catch (error) {
+          if (i === retries - 1) { // If it's the last retry, rethrow the error
+              throw error;
+          }
+      }
   }
-  return response.json();
+  // This part should not be reachable if retries are configured, but as a safeguard:
+  throw new Error(`Astrometry.net request failed after ${retries} retries.`);
 }
 
 
