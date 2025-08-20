@@ -52,8 +52,8 @@ export async function identifyCelestialObjects(input: CelestialIdentificationInp
       throw new Error('No valid Astrometry.net API keys found in the configuration.');
   }
 
-  // Select a random API key from the list
-  const apiKey = apiKeys[Math.floor(Math.random() * apiKeys.length)];
+  // Select an API key from the list based on the current time to avoid Math.random()
+  const apiKey = apiKeys[Date.now() % apiKeys.length];
 
   const loginData = await requestAstrometry('login', { apikey: apiKey });
   if (loginData.status !== 'success') {
