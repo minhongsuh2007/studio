@@ -744,14 +744,45 @@ export default function AstroStackerPage() {
       addLog('[ERROR] No stacked image available for identification.');
       return;
     }
-    
+  
     setIsIdentifying(true);
     setIdentificationResult(null);
     addLog(`[IDENTIFY START] Starting celestial identification using astrometry.net...`);
-    
+  
     try {
+      // Create a downscaled version of the image for upload
+      const img = new Image();
+      img.src = stackedImage;
+      await new Promise(resolve => { img.onload = resolve; });
+  
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error("Could not create canvas context for resizing.");
+  
+      const MAX_DIM = 2048; // Max dimension for astrometry
+      let targetWidth = img.width;
+      let targetHeight = img.height;
+  
+      if (img.width > MAX_DIM || img.height > MAX_DIM) {
+        if (img.width > img.height) {
+          targetWidth = MAX_DIM;
+          targetHeight = Math.round((img.height / img.width) * MAX_DIM);
+        } else {
+          targetHeight = MAX_DIM;
+          targetWidth = Math.round((img.width / img.height) * MAX_DIM);
+        }
+        addLog(`[IDENTIFY] Resizing image for astrometry from ${img.width}x${img.height} to ${targetWidth}x${targetHeight}.`);
+      }
+  
+      canvas.width = targetWidth;
+      canvas.height = targetHeight;
+      ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
+  
+      // Get the resized image as a JPEG data URL to reduce size
+      const resizedImageDataUri = canvas.toDataURL('image/jpeg', 0.9);
+  
       const result = await identifyCelestialObjects({
-        imageDataUri: stackedImage,
+        imageDataUri: resizedImageDataUri,
         celestialObject: astrometryTarget,
       });
       setIdentificationResult(result);
