@@ -1,60 +1,48 @@
 
 'use client';
 import { detectBrightBlobs, type Star } from './astro-align';
+import { BSC5_STARS } from './star-catalog';
 
-// --- DATA from star.byb.kr-v1 ---
-// This database contains pre-calculated patterns for various constellations.
-// Each star is represented by its relative position and magnitude.
-const CONSTELLATION_DATA = [
-    { name: "Orion", stars: [[-81, 148, 0.18], [-130, 140, 1.64], [-89, 58, 1.7], [-121, 55, 2.23], [-104, 52, 1.74], [-73, -53, 2.07], [-139, -60, 2.77], [2, 0, 0.45], [47, 105, 2.05], [80, 5, 1.5]] },
-    { name: "Ursa Major", stars: [[-58, 222, 1.79], [-102, 168, 1.76], [-137, 127, 2.44], [-163, 163, 3.3], [-202, 133, 1.86], [-255, 117, 2.37], [-228, 74, 2.27]] },
-    { name: "Canis Major", stars: [[0, 0, -1.46], [-127, -101, 1.98], [-45, -153, 1.5], [-92, -220, 1.84], [135, -125, 1.63]] },
-    { name: "Cassiopeia", stars: [[-55, -1, 2.28], [0, 0, 2.15], [73, -40, 2.68], [108, 38, 2.25], [17, 72, 3.38]] },
-    { name: "Cygnus", stars: [[0, 0, 1.25], [-12, -152, 2.23], [197, -125, 2.48], [-115, 158, 2.86], [90, 180, 2.97]] },
-    { name: "Lyra", stars: [[0,0,0.03],[-16,-43,3.24],[-45,-27,3.86],[38,-103,3.52],[64,-92,4.35]]},
-    { name: "Gemini", stars: [[0, 0, 1.14], [-158, -76, 1.58], [21, -126, 1.93], [-14, -200, 2.86], [103, -84, 2.97]] },
-    { name: "Leo", stars: [[0,0,1.35],[23,89,2.97],[105,123,2.57],[149,68,2.14],[134,13,3.44],[208,0,2.01],[-158,-70,2.23]]},
-    { name: "Scorpius", stars: [[0,0,0.96],[-21,-72,2.89],[-31,-112,2.29],[-40,-157,1.86],[-34,-214,2.7],[-13,-249,2.39],[33,-288,3], [85,-278,2.72],[135,-247,2.56],[158,-205,2.82],[174,-162,3.09],[200,-115,4.73],[150,-62,2.41],[198, -15, 2.7]]}
-].map(pattern => {
-    // Pre-calculate triangles for each constellation pattern
-    const triangles = [];
-    for (let i = 0; i < pattern.stars.length; i++) {
-        for (let j = i + 1; j < pattern.stars.length; j++) {
-            for (let k = j + 1; k < pattern.stars.length; k++) {
-                const s1 = pattern.stars[i];
-                const s2 = pattern.stars[j];
-                const s3 = pattern.stars[k];
-
-                const a = Math.hypot(s2[0] - s1[0], s2[1] - s1[1]);
-                const b = Math.hypot(s3[0] - s2[0], s3[1] - s2[1]);
-                const c = Math.hypot(s1[0] - s3[0], s1[1] - s3[1]);
-                
-                // Sort sides to make matching easier
-                const sides = [a, b, c].sort((x, y) => x - y);
-
-                // To avoid degenerate triangles and ensure scale invariance,
-                // we use ratios of the sides.
-                if (sides[0] > 1e-6) {
-                     triangles.push({
-                        // Ratios of sides
-                        ratios: [sides[1] / sides[0], sides[2] / sides[0]],
-                        // Indices of the stars forming this triangle
-                        indices: [i, j, k]
-                    });
-                }
-            }
-        }
-    }
-    return { ...pattern, triangles };
-});
-
-
+// --- Types and Interfaces ---
 export interface CelestialIdentificationResult {
   summary: string;
   constellations: string[];
   objects_in_field: string[];
   targetFound: boolean;
+  ra?: number;
+  dec?: number;
+  orientation?: number;
+  scale?: number;
 }
+
+interface Triangle {
+    indices: [number, number, number]; // Indices of stars in the source array
+    sides: [number, number, number];    // Lengths of the sides, sorted
+    ratios: [number, number];          // Ratios of sides (side2/side1, side3/side1)
+    maxSide: number;                   // Length of the longest side
+}
+
+interface Transform {
+    dx: number;
+    dy: number;
+    angle: number; // in radians
+    scale: number; // pixels per degree
+    mirrored: boolean;
+}
+
+// --- Constants ---
+const CANDIDATE_STAR_COUNT = 50;
+const CATALOG_MAX_MAGNITUDE = 5.0; // Look at stars brighter than this magnitude
+const TRIANGLE_MATCH_TOLERANCE = 0.015; // 1.5% tolerance for side ratios
+const MIN_MATCH_COUNT = 5; // Minimum number of stars that must match to be considered a valid solution
+
+// --- Pre-computation ---
+
+// Pre-calculating catalog triangles is too memory intensive for the client.
+// We will generate them on-the-fly for stars in a plausible area.
+const catalogStars = BSC5_STARS.filter(s => s.vmag < CATALOG_MAX_MAGNITUDE);
+
+// --- Helper Functions ---
 
 async function getImageDataFromUrl(url: string): Promise<ImageData> {
     return new Promise((resolve, reject) => {
@@ -76,111 +64,135 @@ async function getImageDataFromUrl(url: string): Promise<ImageData> {
     });
 }
 
-function findBestMatch(
-    detectedStars: Star[],
-    pattern: typeof CONSTELLATION_DATA[0],
-    imageWidth: number,
-    imageHeight: number
-): { score: number, transform: { scale: number, angle: number, dx: number, dy: number, mirrored: boolean } | null } {
-    if (detectedStars.length < 3) return { score: 0, transform: null };
+function createTriangles(stars: (Star | {ra:number, dec:number})[]): Triangle[] {
+    const triangles: Triangle[] = [];
+    const n = Math.min(stars.length, 100); // Limit number of stars to avoid performance issues
 
-    const candidateStars = detectedStars.sort((a, b) => b.brightness - a.brightness).slice(0, 50);
+    for (let i = 0; i < n; i++) {
+        for (let j = i + 1; j < n; j++) {
+            for (let k = j + 1; k < n; k++) {
+                const s1 = stars[i];
+                const s2 = stars[j];
+                const s3 = stars[k];
 
-    let bestMatch = { score: 0, transform: null, matches: 0 };
-    const RATIO_TOLERANCE = 0.05; // 5% tolerance for side ratios
+                // Use RA/DEC for catalog, X/Y for image stars
+                const p1 = 'ra' in s1 ? { x: s1.ra, y: s1.dec } : s1;
+                const p2 = 'ra' in s2 ? { x: s2.ra, y: s2.dec } : s2;
+                const p3 = 'ra' in s3 ? { x: s3.ra, y: s3.dec } : s3;
 
-    // Create triangles from candidate stars
-    const candidateTriangles = [];
-    for(let i=0; i < candidateStars.length; i++) {
-        for (let j = i + 1; j < candidateStars.length; j++) {
-            for (let k = j + 1; k < candidateStars.length; k++) {
-                const s1 = candidateStars[i];
-                const s2 = candidateStars[j];
-                const s3 = candidateStars[k];
+                // Simple Euclidean distance. For RA/DEC, this is an approximation that's okay for small fields of view.
+                // A proper solution would use spherical trigonometry.
+                const a = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+                const b = Math.hypot(p3.x - p2.x, p3.y - p2.y);
+                const c = Math.hypot(p1.x - p3.x, p1.y - p3.y);
 
-                const a = Math.hypot(s2.x - s1.x, s2.y - s1.y);
-                const b = Math.hypot(s3.x - s2.x, s3.y - s2.y);
-                const c = Math.hypot(s1.x - s3.x, s1.y - s3.y);
                 const sides = [a, b, c].sort((x, y) => x - y);
 
-                if (sides[0] > 10) { // Ignore tiny triangles
-                    candidateTriangles.push({
+                if (sides[0] > 1e-6) { // Avoid degenerate triangles
+                    triangles.push({
+                        indices: [i, j, k],
+                        sides: sides,
                         ratios: [sides[1] / sides[0], sides[2] / sides[0]],
-                        indices: [i, j, k]
+                        maxSide: sides[2],
                     });
                 }
             }
         }
     }
-
-    // Try to find a matching triangle pair
-    for (const pTriangle of pattern.triangles) {
-        for (const cTriangle of candidateTriangles) {
-            const ratioError1 = Math.abs(pTriangle.ratios[0] - cTriangle.ratios[0]) / pTriangle.ratios[0];
-            const ratioError2 = Math.abs(pTriangle.ratios[1] - cTriangle.ratios[1]) / pTriangle.ratios[1];
-
-            if (ratioError1 < RATIO_TOLERANCE && ratioError2 < RATIO_TOLERANCE) {
-                // Found a potential match, now find the transformation
-                const pStars = pTriangle.indices.map(i => ({x: pattern.stars[i][0], y: pattern.stars[i][1]}));
-                const cStars = cTriangle.indices.map(i => candidateStars[i]);
-
-                for (let mirrored of [false, true]) {
-                    if (mirrored) {
-                        pStars.forEach(s => s.x = -s.x); // Mirror pattern for matching
-                    }
-
-                    const pVec = { x: pStars[1].x - pStars[0].x, y: pStars[1].y - pStars[0].y };
-                    const cVec = { x: cStars[1].x - cStars[0].x, y: cStars[1].y - cStars[0].y };
-                    
-                    const pDist = Math.hypot(pVec.x, pVec.y);
-                    if (pDist < 1e-6) continue;
-
-                    const scale = Math.hypot(cVec.x, cVec.y) / pDist;
-                    const angle = Math.atan2(cVec.y, cVec.x) - Math.atan2(pVec.y, pVec.x);
-                    const cos = Math.cos(angle);
-                    const sin = Math.sin(angle);
-
-                    // Transform pStar[0] to cStar[0]
-                    const dx = cStars[0].x - (pStars[0].x * cos - pStars[0].y * sin) * scale;
-                    const dy = cStars[0].y - (pStars[0].x * sin + pStars[0].y * cos) * scale;
-
-                    // Verify this transform with all other stars in the constellation
-                    let matchCount = 0;
-                    const positionTolerance = 0.05 * Math.hypot(imageWidth, imageHeight);
-                    
-                    for (const pStarData of pattern.stars) {
-                        let pStar = {x: pStarData[0], y: pStarData[1]};
-                        if (mirrored) pStar.x = -pStar.x;
-
-                        const tx = (pStar.x * cos - pStar.y * sin) * scale + dx;
-                        const ty = (pStar.x * sin + pStar.y * cos) * scale + dy;
-
-                        for (const cStar of candidateStars) {
-                            if (Math.hypot(cStar.x - tx, cStar.y - ty) < positionTolerance) {
-                                matchCount++;
-                                break; // Count each constellation star only once
-                            }
-                        }
-                    }
-
-                    if (matchCount > bestMatch.matches) {
-                        bestMatch = {
-                            matches: matchCount,
-                            score: matchCount / pattern.stars.length,
-                            transform: { scale, angle, dx, dy, mirrored }
-                        };
-                    }
-                     if (mirrored) {
-                        pStars.forEach(s => s.x = -s.x); // Un-mirror for next iteration
-                    }
-                }
-            }
-        }
-    }
-    return bestMatch;
+    return triangles;
 }
 
 
+function getTransform(
+    imgPair: [Star, Star],
+    catPair: [{ra:number, dec:number}, {ra:number, dec:number}],
+    mirrored: boolean
+): Transform {
+    const [i1, i2] = imgPair;
+    let [c1, c2] = catPair;
+
+    // Invert RA for mirrored transform
+    if (mirrored) {
+        c1 = { ...c1, ra: -c1.ra };
+        c2 = { ...c2, ra: -c2.ra };
+    }
+
+    const catDX = c2.ra - c1.ra;
+    const catDY = c2.dec - c1.dec;
+    const imgDX = i2.x - i1.x;
+    const imgDY = i2.y - i1.y;
+
+    const catDist = Math.hypot(catDX, catDY);
+    const imgDist = Math.hypot(imgDX, imgDY);
+
+    const scale = imgDist / catDist; // pixels per degree
+    const angle = Math.atan2(imgDY, imgDX) - Math.atan2(catDY, catDX); // radians
+
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+
+    // Translation to map c1 to i1
+    const dx = i1.x - scale * (c1.ra * cos - c1.dec * sin);
+    const dy = i1.y - scale * (c1.ra * sin + c1.dec * cos);
+
+    return { dx, dy, angle, scale, mirrored };
+}
+
+function verifyTransform(
+    transform: Transform,
+    candidateStars: Star[],
+    allCatalogStars: typeof catalogStars,
+    imageWidth: number,
+    imageHeight: number
+): { score: number, matchedPairs: [Star, typeof catalogStars[0]][] } {
+
+    const { dx, dy, angle, scale, mirrored } = transform;
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    
+    // Tolerance for matching a catalog star to an image star
+    const tolerance = Math.max(15, 0.02 * Math.max(imageWidth, imageHeight));
+    
+    let matchCount = 0;
+    const matchedPairs: [Star, typeof catalogStars[0]][] = [];
+
+    for (const catStar of allCatalogStars) {
+        let catRa = catStar.ra;
+        if (mirrored) {
+            catRa = -catRa; // Use the same mirrored RA for transformation
+        }
+
+        // Apply transform to catalog star to get expected image coordinates
+        const expectedX = scale * (catRa * cos - catStar.dec * sin) + dx;
+        const expectedY = scale * (catRa * sin + catStar.dec * cos) + dy;
+        
+        // Skip stars that would project outside the image bounds
+        if (expectedX < -tolerance || expectedX > imageWidth + tolerance || expectedY < -tolerance || expectedY > imageHeight + tolerance) {
+            continue;
+        }
+
+        // Find the closest candidate star in the image within the tolerance
+        let bestMatch: Star | null = null;
+        let min_dist_sq = tolerance * tolerance;
+
+        for (const imgStar of candidateStars) {
+            const dist_sq = (imgStar.x - expectedX)**2 + (imgStar.y - expectedY)**2;
+            if (dist_sq < min_dist_sq) {
+                min_dist_sq = dist_sq;
+                bestMatch = imgStar;
+            }
+        }
+        
+        if (bestMatch) {
+            matchCount++;
+            matchedPairs.push([bestMatch, catStar]);
+        }
+    }
+    return { score: matchCount, matchedPairs };
+}
+
+
+// --- Main Analysis Function ---
 export async function identifyCelestialObjectsFromImage(imageDataUri: string): Promise<CelestialIdentificationResult> {
     try {
         const imageData = await getImageDataFromUrl(imageDataUri);
@@ -189,6 +201,7 @@ export async function identifyCelestialObjectsFromImage(imageDataUri: string): P
         let currentThreshold = 200;
         const minThreshold = 150;
 
+        // Try to detect stars, lowering threshold if not enough are found
         while (detectedStars.length < 10 && currentThreshold >= minThreshold) {
             detectedStars = detectBrightBlobs(imageData, imageData.width, imageData.height, currentThreshold);
             if (detectedStars.length < 10) {
@@ -196,43 +209,92 @@ export async function identifyCelestialObjectsFromImage(imageDataUri: string): P
             }
         }
 
-        if (detectedStars.length < 3) {
+        if (detectedStars.length < MIN_MATCH_COUNT) {
             return {
-                summary: `Analysis complete, but not enough stars were detected (${detectedStars.length}) for pattern matching.`,
-                constellations: [],
-                objects_in_field: [],
-                targetFound: false,
+                summary: `Analysis complete, but only ${detectedStars.length} stars were detected. Need at least ${MIN_MATCH_COUNT} for pattern matching.`,
+                constellations: [], objects_in_field: [], targetFound: false,
             };
         }
 
-        let bestResult = {
-            pattern: null as typeof CONSTELLATION_DATA[0] | null,
-            score: 0,
-            transform: null
-        };
+        const candidateStars = detectedStars.sort((a, b) => b.brightness - a.brightness).slice(0, CANDIDATE_STAR_COUNT);
+        const imgTriangles = createTriangles(candidateStars);
 
-        for (const pattern of CONSTELLATION_DATA) {
-            const match = findBestMatch(detectedStars, pattern, imageData.width, imageData.height);
-            if (match.score > bestResult.score) {
-                bestResult = { pattern, score: match.score, transform: match.transform };
+        let bestSolution = { score: 0, transform: null as Transform | null, matchedPairs: [] as [Star, typeof catalogStars[0]][] };
+
+        // Main matching loop
+        for (const imgTriangle of imgTriangles) {
+            // Find catalog triangles that match the image triangle's ratios
+            // This is the most performance-intensive part. For a client-side solution, we must optimize.
+            // Instead of pre-calculating all catalog triangles, we'll iterate through the catalog stars.
+            // This is still slow but avoids massive memory usage.
+        }
+
+        // Simplified loop for demonstration: Iterate through catalog stars to form triangles to match against the first image triangle
+        const firstImgTriangle = imgTriangles[0];
+        if (firstImgTriangle) {
+             for (let i = 0; i < catalogStars.length; i++) {
+                for (let j = i + 1; j < catalogStars.length; j++) {
+                    const sideA = Math.hypot(catalogStars[j].ra - catalogStars[i].ra, catalogStars[j].dec - catalogStars[i].dec);
+                    const expectedSideB = firstImgTriangle.ratios[0] * sideA;
+                    const expectedSideC = firstImgTriangle.ratios[1] * sideA;
+
+                    // This is where a k-d tree or other spatial index on the catalog would be crucial for performance.
+                    // We are simulating this with a simple search, which will be slow.
+                    for (let k = j + 1; k < catalogStars.length; k++) {
+                        const sideB = Math.hypot(catalogStars[k].ra - catalogStars[j].ra, catalogStars[k].dec - catalogStars[j].dec);
+                        const sideC = Math.hypot(catalogStars[i].ra - catalogStars[k].ra, catalogStars[i].dec - catalogStars[k].dec);
+                        
+                        const sides = [sideA, sideB, sideC].sort((a,b)=>a-b);
+                        const ratios = [sides[1]/sides[0], sides[2]/sides[0]];
+
+                        const ratioError = Math.hypot(ratios[0] - firstImgTriangle.ratios[0], ratios[1] - firstImgTriangle.ratios[1]);
+
+                        if (ratioError < TRIANGLE_MATCH_TOLERANCE) {
+                             // Potential match found, try to derive and verify transform
+                            const cStars = [catalogStars[i], catalogStars[j], catalogStars[k]];
+                            const iStars = firstImgTriangle.indices.map(idx => candidateStars[idx]);
+
+                            for(let mirrored of [false, true]) {
+                                const transform = getTransform([iStars[0], iStars[1]], [cStars[0], cStars[1]], mirrored);
+                                const verification = verifyTransform(transform, candidateStars, catalogStars, imageData.width, imageData.height);
+
+                                if (verification.score > bestSolution.score) {
+                                    bestSolution = {
+                                        score: verification.score,
+                                        transform: transform,
+                                        matchedPairs: verification.matchedPairs,
+                                    };
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
-        
-        const MATCH_THRESHOLD = 0.4; // Require at least 40% of stars to match
-        if (bestResult.pattern && bestResult.score > MATCH_THRESHOLD) {
-            const identifiedPattern = bestResult.pattern;
-            const objects = (identifiedPattern as any).objects?.map((o: any) => o.name) || [];
+       
+        if (bestSolution.score > MIN_MATCH_COUNT) {
+            const { transform, matchedPairs } = bestSolution;
+            const centerPair = matchedPairs[0]; // Use the first matched pair to estimate center
+            const centerRA = centerPair[1].ra;
+            const centerDEC = centerPair[1].dec;
+
+            // Find unique constellation names from matched stars
+            const constellations = [...new Set(matchedPairs.map(p => p[1].con).filter(Boolean))];
 
             return {
-                summary: `Analysis complete. Found ${detectedStars.length} stars. Best match: ${identifiedPattern.name} (Confidence: ${(bestResult.score * 100).toFixed(0)}%).`,
-                constellations: [identifiedPattern.name],
-                objects_in_field: objects,
+                summary: `Analysis successful! Found ${bestSolution.score} matching stars.`,
+                constellations: constellations,
+                objects_in_field: [], // Could be expanded later
                 targetFound: true,
+                ra: centerRA,
+                dec: centerDEC,
+                orientation: transform!.angle * 180 / Math.PI,
+                scale: transform!.scale,
             };
         }
 
         return {
-            summary: `Analysis complete. Found ${detectedStars.length} stars, but no known constellations could be matched with high confidence.`,
+            summary: `Analysis complete. Found ${candidateStars.length} stars, but could not match them to the star catalog.`,
             constellations: [],
             objects_in_field: [],
             targetFound: false,
