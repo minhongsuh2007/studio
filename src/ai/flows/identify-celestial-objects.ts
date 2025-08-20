@@ -42,10 +42,19 @@ async function requestAstrometry(endpoint: string, body: any, isUpload: boolean 
 
 // Define the exported wrapper function that calls the astrometry.net API
 export async function identifyCelestialObjects(input: CelestialIdentificationInput): Promise<CelestialIdentificationResult> {
-  const apiKey = process.env.ASTROMETRY_API_KEY;
-  if (!apiKey) {
-    throw new Error('Astrometry.net API key is not configured. Please set ASTROMETRY_API_KEY in your environment variables.');
+  const apiKeysString = process.env.ASTROMETRY_API_KEYS;
+  if (!apiKeysString) {
+    throw new Error('Astrometry.net API keys are not configured. Please set ASTROMETRY_API_KEYS in your environment variables.');
   }
+  
+  const apiKeys = apiKeysString.split(',').map(key => key.trim()).filter(key => key);
+  if (apiKeys.length === 0) {
+      throw new Error('No valid Astrometry.net API keys found in the configuration.');
+  }
+
+  // Select a random API key from the list
+  const apiKey = apiKeys[Math.floor(Math.random() * apiKeys.length)];
+  input.log(`[ASTROMETRY] Using one of the provided API keys.`);
 
   input.log('[ASTROMETRY] Logging in to get session key...');
   const loginData = await requestAstrometry('login', { apikey: apiKey });

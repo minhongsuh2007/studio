@@ -33,7 +33,7 @@ const nextConfig = {
     return config;
   },
   env: {
-    ASTROMETRY_API_KEY: process.env.ASTROMETRY_API_KEY,
+    ASTROMETRY_API_KEYS: process.env.ASTROMETRY_API_KEYS,
   }
 };
 
