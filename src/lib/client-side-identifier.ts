@@ -79,7 +79,7 @@ async function getImageDataFromUrl(url: string): Promise<ImageData> {
     });
 }
 
-function findBestMatch(detectedStars: Star[], pattern: StarPattern): { score: number, transform: { scale: number, angle: number, dx: number, dy: number } | null } {
+function findBestMatch(detectedStars: Star[], pattern: StarPattern, imageWidth: number, imageHeight: number): { score: number, transform: { scale: number, angle: number, dx: number, dy: number } | null } {
     if (detectedStars.length < 3) return { score: 0, transform: null };
 
     // Use the ~30 brightest stars for matching
@@ -96,10 +96,14 @@ function findBestMatch(detectedStars: Star[], pattern: StarPattern): { score: nu
     candidatePairs.sort((a, b) => a[4] - b[4]);
 
     let bestMatch = { score: 0, transform: null, matches: 0 };
+    const imageDiagonal = Math.hypot(imageWidth, imageHeight);
 
     // Iterate through all pairs in the candidate image as potential matches for a pattern pair
     for (const cPair of candidatePairs) {
+        if(cPair[4] < 10) continue; // Ignore pairs that are too close
         for (const pPair of pattern.pairs) {
+            if(pPair[4] === 0) continue;
+
             // Find scale and rotation to match these two pairs
             const scale = cPair[4] / pPair[4];
             const angle = Math.atan2(cPair[3], cPair[2]) - Math.atan2(pPair[3], pPair[2]);
@@ -119,9 +123,11 @@ function findBestMatch(detectedStars: Star[], pattern: StarPattern): { score: nu
 
             // Now, verify this transform with all other stars
             let matchCount = 0;
-            const positionTolerance = 0.05 * Math.max(cPair[4], pPair[4] * scale);
+            // Tolerance should be a small fraction of the image size
+            const positionTolerance = 0.02 * imageDiagonal;
 
             for (const pStar of pattern.stars) {
+                 // Correct rotation formula application for each star
                 const tx = (pStar.x * cos - pStar.y * sin) * scale + dx;
                 const ty = (pStar.x * sin + pStar.y * cos) * scale + dy;
 
@@ -184,7 +190,7 @@ export async function identifyCelestialObjectsFromImage(imageDataUri: string): P
         };
 
         for (const pattern of CONSTELLATION_DATA) {
-            const match = findBestMatch(detectedStars, pattern);
+            const match = findBestMatch(detectedStars, pattern, imageData.width, imageData.height);
             if (match.score > bestResult.score) {
                 bestResult = { pattern, score: match.score, transform: match.transform };
             }
@@ -214,5 +220,3 @@ export async function identifyCelestialObjectsFromImage(imageDataUri: string): P
         throw new Error(`Failed during client-side analysis: ${errorMessage}`);
     }
 }
-
-    
