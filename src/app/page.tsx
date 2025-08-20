@@ -739,26 +739,46 @@ export default function AstroStackerPage() {
 
   const handleStartIdentification = async () => {
     if (!stackedImage) {
-        addLog('[ERROR] No stacked image available for identification.');
-        return;
+      addLog('[IDENTIFY ERROR] No stacked image available for identification.');
+      return;
     }
-
+  
     setIsIdentifying(true);
     setIdentificationResult(null);
     addLog(`[IDENTIFY START] Starting celestial identification...`);
-
+  
     try {
-        const result = await identifyCelestialObjectsFromImage(stackedImage);
-        setIdentificationResult(result);
-        addLog(`[IDENTIFY SUCCESS] ${result.summary}`);
+      // 1. Try analyzing the stacked image first
+      addLog(`[IDENTIFY] Analyzing stacked image...`);
+      let result = await identifyCelestialObjectsFromImage(stackedImage);
+  
+      // 2. If stacked image fails, fall back to original light frames
+      if (!result.targetFound) {
+        addLog(`[IDENTIFY FALLBACK] Stacked image analysis failed. Trying original light frames...`);
+        const lightFrames = allImageStarData.filter(img => img.isAnalyzed && img.imageData);
+        for (const frame of lightFrames) {
+          addLog(`[IDENTIFY FALLBACK] Analyzing original frame: ${frame.file.name}...`);
+          const frameResult = await identifyCelestialObjectsFromImage(frame.originalPreviewUrl);
+          if (frameResult.targetFound) {
+            addLog(`[IDENTIFY SUCCESS] Found a match in original frame: ${frame.file.name}`);
+            result = frameResult;
+            break; // Stop on the first successful match
+          }
+        }
+      }
+  
+      setIdentificationResult(result);
+      addLog(`[IDENTIFY FINAL] ${result.summary}`);
+  
     } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        addLog(`[IDENTIFY ERROR] ${errorMessage}`);
-        window.alert(`Identification Failed: ${errorMessage}`);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      addLog(`[IDENTIFY ERROR] ${errorMessage}`);
+      window.alert(`Identification Failed: ${errorMessage}`);
     } finally {
-        setIsIdentifying(false);
+      setIsIdentifying(false);
     }
   };
+  
 
   const handleOpenPostProcessEditor = () => {
     if (stackedImage) {
