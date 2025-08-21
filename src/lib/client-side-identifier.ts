@@ -119,7 +119,7 @@ function getTransform(
     const imgDist = Math.hypot(imgDX, imgDY);
 
     const scale = imgDist / catDist; // pixels per degree
-    const angle = Math.atan2(imgDY, imgDX) - Math.atan2(catDY, catDX); // radians
+    const angle = Math.atan2(imgDY, imgDX) - Math.atan2(catDY, catDY); // radians
 
     const cos = Math.cos(angle);
     const sin = Math.sin(angle);
@@ -139,8 +139,8 @@ function verifyTransform(
 ): { score: number, matchedPairs: [Star, typeof catalogStars[0]][] } {
 
     const { dx, dy, angle, scale, mirrored } = transform;
-    const cos = Math.cos(angle);
-    const sin = Math.sin(angle);
+    const cos = Math.cos(-angle); // Use inverse angle for mapping from catalog to image
+    const sin = Math.sin(-angle);
     
     const tolerance = Math.max(15, 0.02 * Math.max(imageWidth, imageHeight));
     
@@ -155,8 +155,12 @@ function verifyTransform(
             catRa = -catRa; 
         }
 
-        const expectedX = scale * (catRa * cos - catStar.dec * sin) + dx;
-        const expectedY = scale * (catRa * sin + catStar.dec * cos) + dy;
+        // Project catalog star onto image plane
+        const rotatedCatX = catRa * cos - catStar.dec * sin;
+        const rotatedCatY = catRa * sin + catStar.dec * cos;
+        
+        const expectedX = rotatedCatX * scale + dx;
+        const expectedY = rotatedCatY * scale + dy;
         
         if (expectedX < -tolerance || expectedX > imageWidth + tolerance || expectedY < -tolerance || expectedY > imageHeight + tolerance) {
             continue;
@@ -250,9 +254,26 @@ export async function identifyCelestialObjectsFromImage(imageDataUri: string): P
        
         if (bestSolution.score >= MIN_MATCH_COUNT) {
             const { transform, matchedPairs } = bestSolution;
-            const centerPair = matchedPairs[0]; 
-            const centerRA = centerPair[1].ra;
-            const centerDEC = centerPair[1].dec;
+            
+            // To get the center RA/Dec, we transform the image center coordinate back to the catalog coordinate
+            const { dx, dy, angle, scale, mirrored } = transform!;
+            const centerX = imageData.width / 2;
+            const centerY = imageData.height / 2;
+
+            const invScale = 1 / scale;
+            const cos = Math.cos(angle);
+            const sin = Math.sin(angle);
+            
+            const translatedX = (centerX - dx) * invScale;
+            const translatedY = (centerY - dy) * invScale;
+
+            let centerRA = translatedX * cos - translatedY * sin;
+            const centerDEC = translatedX * sin + translatedY * cos;
+
+            if (mirrored) {
+                centerRA = -centerRA;
+            }
+
 
             const constellationCounts: Record<string, number> = {};
             matchedPairs.forEach(p => {
