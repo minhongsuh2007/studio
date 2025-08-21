@@ -19,7 +19,7 @@ import { ImagePreview } from '@/components/astrostacker/ImagePreview';
 import { ImagePostProcessEditor } from '@/components/astrostacker/ImagePostProcessEditor';
 import { TutorialDialog } from '@/components/astrostacker/TutorialDialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Star as StarIcon, ListChecks, CheckCircle, RefreshCcw, Edit3, Loader2, Orbit, Trash2, Wand2, ShieldOff, Layers, Baseline, X, AlertTriangle, BrainCircuit, TestTube2, Eraser, Download, Upload, Cpu, AlertCircle, Moon, Sun, Sparkles, UserCheck, Zap, Diamond, Globe, Camera, Video, Play, StopCircle, Satellite } from 'lucide-react';
+import { Star as StarIcon, ListChecks, CheckCircle, RefreshCcw, Edit3, Loader2, Orbit, Trash2, Wand2, ShieldOff, Layers, Baseline, X, AlertTriangle, BrainCircuit, TestTube2, Eraser, Download, Upload, Cpu, AlertCircle, Moon, Sun, Sparkles, UserCheck, Zap, Diamond, Globe, Camera, Video, Play, StopCircle } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
@@ -34,7 +34,6 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/
 import { createMasterFrame, applyCalibration } from '@/lib/image-calibration';
 import { applyPostProcessing, calculateHistogram, detectStarsForRemoval } from '@/lib/post-process';
 import { Input } from '@/components/ui/input';
-import { identifyCelestialObjectsFromImage, type CelestialIdentificationResult } from '@/lib/client-side-identifier';
 
 
 interface ImageQueueEntry {
@@ -124,10 +123,6 @@ export default function AstroStackerPage() {
   // --- TFJS Model State ---
   const [trainedModel, setTrainedModel] = useState<tf.LayersModel | null>(null);
   const [modelNormalization, setModelNormalization] = useState<{ means: number[], stds: number[] } | null>(null);
-
-  // --- Astrometry State ---
-  const [isIdentifying, setIsIdentifying] = useState(false);
-  const [identificationResult, setIdentificationResult] = useState<CelestialIdentificationResult | null>(null);
 
 
   const addLog = useCallback((message: string) => {
@@ -614,7 +609,6 @@ export default function AstroStackerPage() {
     setProgressPercent(0);
     setStackedImage(null);
     setShowPostProcessEditor(false);
-    setIdentificationResult(null); // Reset previous identification
     addLog(`[STACK START] Method: ${alignmentMethod}. Quality: ${stackingQuality}. Stacking ${imagesToStack.length} images. Mode: ${stackingMode}.`);
   
     try {
@@ -736,49 +730,6 @@ export default function AstroStackerPage() {
       addLog("[STACK END] Stacking process finished.");
     }
   };
-
-  const handleStartIdentification = async () => {
-    if (!stackedImage) {
-      addLog('[IDENTIFY ERROR] No stacked image available for identification.');
-      return;
-    }
-  
-    setIsIdentifying(true);
-    setIdentificationResult(null);
-    addLog(`[IDENTIFY START] Starting celestial identification...`);
-  
-    try {
-      // 1. Try analyzing the stacked image first
-      addLog(`[IDENTIFY] Analyzing stacked image...`);
-      let result = await identifyCelestialObjectsFromImage(stackedImage);
-  
-      // 2. If stacked image fails, fall back to original light frames
-      if (!result.targetFound) {
-        addLog(`[IDENTIFY FALLBACK] Stacked image analysis failed. Trying original light frames...`);
-        const lightFrames = allImageStarData.filter(img => img.isAnalyzed && img.imageData);
-        for (const frame of lightFrames) {
-          addLog(`[IDENTIFY FALLBACK] Analyzing original frame: ${frame.file.name}...`);
-          const frameResult = await identifyCelestialObjectsFromImage(frame.originalPreviewUrl);
-          if (frameResult.targetFound) {
-            addLog(`[IDENTIFY SUCCESS] Found a match in original frame: ${frame.file.name}`);
-            result = frameResult;
-            break; // Stop on the first successful match
-          }
-        }
-      }
-  
-      setIdentificationResult(result);
-      addLog(`[IDENTIFY FINAL] ${result.summary}`);
-  
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      addLog(`[IDENTIFY ERROR] ${errorMessage}`);
-      window.alert(`Identification Failed: ${errorMessage}`);
-    } finally {
-      setIsIdentifying(false);
-    }
-  };
-  
 
   const handleOpenPostProcessEditor = () => {
     if (stackedImage) {
@@ -1088,7 +1039,7 @@ export default function AstroStackerPage() {
 
   const imageForAnnotation = allImageStarData.find(img => img.id === manualSelectImageId);
   const canStartStacking = allImageStarData.length >= 2 && allImageStarData.every(img => img.isAnalyzed);
-  const isUiDisabled = isProcessingStack || isTrainingModel || allImageStarData.some(img => img.isAnalyzing) || isIdentifying;
+  const isUiDisabled = isProcessingStack || isTrainingModel || allImageStarData.some(img => img.isAnalyzing);
   const currentYear = new Date().getFullYear();
 
   // Determine the primary image to show in the main preview area
@@ -1255,24 +1206,10 @@ export default function AstroStackerPage() {
             {stackedImage && (
               <Card className="bg-background/50">
                 <CardContent className="p-4 space-y-4">
-                   <Button onClick={handleStartIdentification} disabled={isUiDisabled || !stackedImage} className="w-full">
-                      {isIdentifying ? <><Loader2 className="mr-2 h-5 w-5 animate-spin" />Identifying...</> : <><Satellite className="mr-2 h-5 w-5" />Identify Celestials</>}
-                    </Button>
                     <Button onClick={handleOpenPostProcessEditor} className="w-full" variant="outline" size="lg" disabled={isUiDisabled}><Wand2 className="mr-2 h-5 w-5" />{t('finalizeAndDownload')}</Button>
                 </CardContent>
               </Card>
             )}
-             {identificationResult && (
-                <Alert variant={'default'}>
-                  <Satellite className="h-4 w-4" />
-                  <AlertTitle>Celestial Analysis Result</AlertTitle>
-                  <AlertDescription>
-                    <p className="font-semibold">{identificationResult.summary}</p>
-                    {identificationResult.constellations.length > 0 && <p>Major Constellations: {identificationResult.constellations.join(', ')}</p>}
-                    {identificationResult.objects_in_field.length > 0 && <p>Major Objects: {identificationResult.objects_in_field.join(', ')}</p>}
-                  </AlertDescription>
-                </Alert>
-              )}
             <div className="space-y-4 pt-4">
                 <div className="space-y-2"><Label className="text-base font-semibold text-foreground">Alignment Method</Label>
                   <RadioGroup value={alignmentMethod} onValueChange={(v) => setAlignmentMethod(v as AlignmentMethod)} className="grid grid-cols-2 gap-x-2 gap-y-2" disabled={isUiDisabled}>
@@ -1420,5 +1357,3 @@ export default function AstroStackerPage() {
     </div>
   );
 }
-
-    
