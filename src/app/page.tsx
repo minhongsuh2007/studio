@@ -98,7 +98,7 @@ export default function AstroStackerPage() {
   const [exposure, setExposure] = useState(0);
   const [saturation, setSaturation] = useState(100);
   const [blackPoint, setBlackPoint] = useState(0);
-  const [midtones, setMidtones] = useState(0.5);
+  const [midtones, setMidtones] = useState(1);
   const [whitePoint, setWhitePoint] = useState(255);
   const [starRemovalStrength, setStarRemovalStrength] = useState(0);
   const [isApplyingAdjustments, setIsApplyingAdjustments] = useState(false);
@@ -742,7 +742,7 @@ export default function AstroStackerPage() {
 
   const handleResetAdjustments = () => {
     setBrightness(100); setExposure(0); setSaturation(100);
-    setBlackPoint(0); setMidtones(0.5); setWhitePoint(255);
+    setBlackPoint(0); setMidtones(1); setWhitePoint(255);
     setStarRemovalStrength(0);
   };
   
