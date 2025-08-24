@@ -840,21 +840,28 @@ export default function AstroStackerPage() {
     
     setTimeout(async () => {
         const {data, width, height} = testImage.imageData!;
-        const initialCandidates = detectBrightBlobs(testImage.imageData!, width, height);
 
-        const { matchedStars, logs } = await findMatchingStars({
+        const { rankedStars, logs } = await findMatchingStars({
           imageData: {data: Array.from(data), width, height},
-          candidates: initialCandidates,
+          candidates: testImage.detectedStars,
           model: trainedModel,
           normalization: modelNormalization,
         });
         
         logs.forEach(logMsg => addLog(`[AI TEST] ${logMsg}`));
         
-        setTestImageMatchedStars(matchedStars);
+        if (rankedStars && Array.isArray(rankedStars)) {
+            const matchedStars = rankedStars.slice(0, 10).map(rs => rs.star);
+            setTestImageMatchedStars(matchedStars);
+            addLog(`Test complete. Found ${matchedStars.length} matching stars.`);
+            window.alert(t('testAnalysisCompleteToastDesc', {count: matchedStars.length, fileName: testImage.file.name}));
+        } else {
+            setTestImageMatchedStars([]);
+            addLog(`Test complete. No valid star data returned from AI.`);
+            window.alert(t('testAnalysisCompleteToastDesc', {count: 0, fileName: testImage.file.name}));
+        }
+        
         setIsAnalyzingTestImage(false);
-        addLog(`Test complete. Found ${matchedStars.length} matching stars.`);
-        window.alert(t('testAnalysisCompleteToastDesc', {count: matchedStars.length, fileName: testImage.file.name}));
     }, 100);
   };
   
@@ -1409,4 +1416,3 @@ export default function AstroStackerPage() {
   );
 }
 
-    
