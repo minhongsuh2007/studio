@@ -10,7 +10,6 @@ import { alignAndStack, detectBrightBlobs, type Star, type StackingMode } from '
 import { consensusAlignAndStack } from '@/lib/consensus-align';
 import { planetaryAlignAndStack } from '@/lib/planetary-align';
 import { extractCharacteristicsFromImage, findMatchingStars, type LearnedPattern, type SimpleImageData, type StarCharacteristics, predictSingle, buildModel } from '@/lib/ai-star-matcher';
-import type { ModelWeightData } from '@/lib/genkit-types';
 import { AppHeader } from '@/components/astrostacker/AppHeader';
 import { ImageUploadArea } from '@/components/astrostacker/ImageUploadArea';
 import { ImageQueueItem } from '@/components/astrostacker/ImageQueueItem';
@@ -49,6 +48,7 @@ interface ImageQueueEntry {
   analysisDimensions: { width: number; height: number };
   imageData: ImageData | null; // This will hold the analysis ImageData
   detectedStars: Star[];
+  aiVerifiedStars?: Star[]; // Optional array for stars verified by the AI model
 }
 
 
@@ -143,20 +143,37 @@ export default function AstroStackerPage() {
     });
   }, []);
 
-  const fileToDataURL = (file: File): Promise<string> => {
+  const fileToDataURL = useCallback((file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        if (e.target?.result) {
-          resolve(e.target.result as string);
+        addLog(`[fileToDataURL] Processing ${file.name} (type: ${file.type})`);
+        const standardImageTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+
+        const processWithFileReader = (file: File) => {
+            addLog(`[fileToDataURL] Using standard FileReader for ${file.name}`);
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                if (e.target?.result) {
+                    addLog(`[fileToDataURL] FileReader success for ${file.name}.`);
+                    resolve(e.target.result as string);
+                } else {
+                    reject(new Error(`FileReader failed for ${file.name}. Result was empty.`));
+                }
+            };
+            reader.onerror = (e) => reject(new Error(`Error reading file ${file.name} with FileReader.`));
+            reader.readAsDataURL(file);
+        };
+
+        // For this version, we only support standard browser-readable formats.
+        if (standardImageTypes.includes(file.type)) {
+            processWithFileReader(file);
         } else {
-          reject(new Error(`FileReader failed for ${file.name}.`));
+             // If not a standard type, we inform the user it's unsupported.
+            const errorMsg = `File type '${file.type}' is not supported for direct processing. Please use standard web formats like JPG or PNG.`;
+            addLog(`[ERROR] ${errorMsg}`);
+            reject(new Error(errorMsg));
         }
-      };
-      reader.onerror = (e) => reject(new Error(`Error reading file ${file.name}.`));
-      reader.readAsDataURL(file);
     });
-  };
+}, [addLog]);
 
   useEffect(() => {
     try {
@@ -273,7 +290,7 @@ export default function AstroStackerPage() {
           break;
         }
       }
-      
+
       finalUpdatedEntry = { ...finalUpdatedEntry, imageData, detectedStars, isAnalyzed: true };
       addLog(`[ANALYZE SUCCESS] Finalized with ${detectedStars.length} potential star candidates in ${entryToAnalyze.file.name} (Threshold: ${currentThreshold}).`);
   
@@ -702,12 +719,13 @@ export default function AstroStackerPage() {
             planetaryStackingQuality
         );
       } else if (alignmentMethod === 'consensus') {
-          stackedImageData = await consensusAlignAndStack(
-              calibratedLightFrames,
+          stackedImageData = await consensusAlignAndStack({
+              imageEntries: calibratedLightFrames,
               stackingMode,
+              modelPackage: trainedModel && modelNormalization ? { model: trainedModel, normalization: modelNormalization } : undefined,
               addLog,
-              progressUpdate
-          );
+              setProgress: progressUpdate,
+          });
       } else {
         const refImageForStandard = calibratedLightFrames[0];
         const refStarsForStandard = (manualSelectImageId === refImageForStandard.id && manualSelectedStars.length > 1) 
@@ -1306,7 +1324,7 @@ export default function AstroStackerPage() {
                        <Button onClick={handleTrainModel} disabled={isUiDisabled || learnedPatterns.filter(p => selectedPatternIDs.has(p.id)).length === 0} className="w-full mb-4">
                           {isTrainingModel ? <><Loader2 className="mr-2 h-4 w-4 animate-spin"/>{t('trainingModelButton')}</> : <><Cpu className="mr-2 h-4 w-4" />{t('trainModelButton')}</>}
                       </Button>
-                      {trainedModel && <Alert variant="default" className="mb-4"><AlertCircle className="h-4 w-4" /><AlertTitle>Model Ready</AlertTitle><AlertDescription>An AI model is trained and ready. The 'Consensus' alignment method can be enhanced by this for better star recognition in future updates.</AlertDescription></Alert>}
+                      {trainedModel && <Alert variant="default" className="mb-4"><AlertCircle className="h-4 w-4" /><AlertTitle>Model Ready</AlertTitle><AlertDescription>An AI model is trained and ready. The 'Consensus' alignment method will be enhanced by this for better star recognition.</AlertDescription></Alert>}
 
                       <h4 className="font-semibold mb-2">{t('allLearnedPatternsListTitle')}</h4>
                       {learnedPatterns.length === 0 ? (<p className="text-sm text-muted-foreground">{t('noPatternLearnedYetInfo')}</p>) : (
@@ -1373,7 +1391,3 @@ export default function AstroStackerPage() {
     </div>
   );
 }
-
-    
-
-    

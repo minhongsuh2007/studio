@@ -1,10 +1,5 @@
 
-
 'use client';
-
-// This file is deprecated as of the latest changes.
-// The AI alignment logic has been reverted to use the standard 2-star alignment for reliability.
-// This file is kept to avoid breaking potential imports but is no longer actively used in the stacking pipeline.
 
 import type { Star } from './astro-align';
 import * as tf from '@tensorflow/tfjs';
@@ -195,7 +190,7 @@ export function buildModel(): tf.LayersModel {
 }
 
 export function predictSingle(model: tf.LayersModel, means: number[], stds: number[], features: number[]): number {
-  const norm = features.map((v, j) => (v - means[j]) / stds[j]);
+  const norm = features.map((v, j) => (v - means[j]) / (stds[j] || 1));
   const input = tf.tensor2d([norm]);
   const p = model.predict(input) as tf.Tensor;
   const prob = p.dataSync()[0];

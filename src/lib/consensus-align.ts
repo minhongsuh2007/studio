@@ -1,17 +1,28 @@
 
-
 'use client';
 
-import type { Star, Transform } from '@/lib/astro-align';
-import { warpImage, stackImagesAverage, stackImagesMedian, stackImagesSigmaClip, stackImagesLaplacian, type StackingMode } from '@/lib/astro-align';
+import type { Star, StackingMode, Transform } from '@/lib/astro-align';
+import { warpImage, stackImagesAverage, stackImagesMedian, stackImagesSigmaClip, stackImagesLaplacian, detectBrightBlobs } from '@/lib/astro-align';
+import type * as tf from '@tensorflow/tfjs';
+import { findMatchingStars } from './ai-star-matcher';
 
 // This type definition is duplicated from page.tsx to avoid circular dependencies.
 interface ImageQueueEntry {
   id: string;
+  file: File;
   imageData: ImageData | null;
   detectedStars: Star[];
   analysisDimensions: { width: number; height: number; };
+  aiVerifiedStars?: Star[];
 };
+
+interface ModelPackage {
+    model: tf.LayersModel;
+    normalization: {
+        means: number[];
+        stds: number[];
+    };
+}
 
 /**
  * Calculates the transformation required to align two point sets.
@@ -79,7 +90,6 @@ function findBestGlobalPair(
     };
 
     const DIST_TOLERANCE = 0.05; // 5% tolerance for distance mismatch
-    const ANGLE_TOLERANCE_RAD = 0.05; // ~2.8 degrees tolerance
 
     // Iterate through all possible pairs in the reference image
     for (let i = 0; i < refImageStars.length; i++) {
@@ -146,30 +156,65 @@ function findBestGlobalPair(
 
 
 // --- MAIN CONSENSUS ALIGNMENT & STACKING FUNCTION ---
-export async function consensusAlignAndStack(
-  imageEntries: ImageQueueEntry[],
-  mode: StackingMode,
-  addLog: (message: string) => void,
-  setProgress: (progress: number) => void
-): Promise<Uint8ClampedArray> {
+export async function consensusAlignAndStack({
+    imageEntries,
+    stackingMode,
+    modelPackage,
+    addLog,
+    setProgress,
+}: {
+    imageEntries: ImageQueueEntry[];
+    stackingMode: StackingMode;
+    modelPackage?: ModelPackage;
+    addLog: (message: string) => void;
+    setProgress: (progress: number) => void;
+}): Promise<Uint8ClampedArray> {
   addLog("[CONSENSUS] Starting global consensus stacking.");
   if (imageEntries.length < 2) {
     throw new Error("Consensus stacking requires at least two images.");
   }
   
-  // 1. Gather all detected stars
-  const allImageStars = imageEntries
-    .filter(entry => entry.imageData && entry.detectedStars.length > 1)
-    .map(entry => ({
-        imageId: entry.id,
-        stars: entry.detectedStars
-    }));
-  
+  // 1. Get stars for all images. Prioritize AI-verified stars if available.
+  addLog("[CONSENSUS] Verifying stars for alignment...");
+  let allImageStars: { imageId: string, stars: Star[] }[] = [];
+
+  for (const [index, entry] of imageEntries.entries()) {
+    if (!entry.imageData) continue;
+
+    let starsForAlignment: Star[] = entry.detectedStars; // Fallback to detected stars
+
+    if (modelPackage && entry.aiVerifiedStars && entry.aiVerifiedStars.length > 1) {
+        starsForAlignment = entry.aiVerifiedStars;
+        addLog(`[CONSENSUS] Using ${starsForAlignment.length} AI-verified stars for ${entry.file.name}.`);
+    } else if (modelPackage) {
+        // If a model is provided but this image has no AI stars, try to find them now.
+        const { data, width, height } = entry.imageData;
+        const { matchedStars } = await findMatchingStars({
+            imageData: { data: Array.from(data), width, height },
+            candidates: entry.detectedStars,
+            model: modelPackage.model,
+            normalization: modelPackage.normalization,
+        });
+        if (matchedStars.length > 1) {
+            starsForAlignment = matchedStars;
+            addLog(`[CONSENSUS] Found ${starsForAlignment.length} AI-verified stars for ${entry.file.name} on-the-fly.`);
+        } else {
+            addLog(`[CONSENSUS] AI verification found < 2 stars for ${entry.file.name}. Falling back to ${entry.detectedStars.length} detected stars.`);
+        }
+    } else {
+         addLog(`[CONSENSUS] No AI model. Using ${entry.detectedStars.length} detected stars for ${entry.file.name}.`);
+    }
+    
+    if (starsForAlignment.length > 1) {
+        allImageStars.push({ imageId: entry.id, stars: starsForAlignment });
+    }
+    setProgress(0.2 * ((index + 1) / imageEntries.length));
+  }
+
   if (allImageStars.length < 2) {
       throw new Error("Fewer than two images have enough detected stars for consensus alignment.");
   }
 
-  setProgress(0.1);
   
   // 2. Find the best globally shared pair of stars
   addLog("[CONSENSUS] Finding the most common star pair across all images...");
@@ -231,7 +276,7 @@ export async function consensusAlignAndStack(
   }
 
   // 4. Stack the aligned images
-  addLog(`[CONSENSUS] Stacking ${alignedImageDatas.filter(d => d !== null).length} images with mode: ${mode}.`);
+  addLog(`[CONSENSUS] Stacking ${alignedImageDatas.filter(d => d !== null).length} images with mode: ${stackingMode}.`);
   setProgress(0.99);
 
   if (alignedImageDatas.filter(d => d !== null).length < 2) {
@@ -239,7 +284,7 @@ export async function consensusAlignAndStack(
   }
 
   let stackedResult;
-  switch (mode) {
+  switch (stackingMode) {
     case 'median':
         stackedResult = stackImagesMedian(alignedImageDatas);
         break;
@@ -258,3 +303,4 @@ export async function consensusAlignAndStack(
   addLog("[CONSENSUS] Stacking complete.");
   return stackedResult;
 }
+
