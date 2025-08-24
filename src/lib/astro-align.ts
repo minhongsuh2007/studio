@@ -6,6 +6,7 @@ export type Star = Point & { brightness: number; size: number };
 export type StackingMode = 'average' | 'median' | 'sigma' | 'laplacian';
 export interface ImageQueueEntry {
   id: string;
+  file: File;
   imageData: ImageData | null;
   detectedStars: Star[];
   analysisDimensions: { width: number; height: number; };

@@ -9,6 +9,7 @@ import { useLanguage } from '@/contexts/LanguageContext';
 import { alignAndStack, detectBrightBlobs, type Star, type StackingMode } from '@/lib/astro-align';
 import { consensusAlignAndStack } from '@/lib/consensus-align';
 import { planetaryAlignAndStack } from '@/lib/planetary-align';
+import { dumbAlignAndStack } from '@/lib/dumb-align';
 import { extractCharacteristicsFromImage, findMatchingStars, type LearnedPattern, type SimpleImageData, type StarCharacteristics, predictSingle, buildModel } from '@/lib/ai-star-matcher';
 import { AppHeader } from '@/components/astrostacker/AppHeader';
 import { ImageUploadArea } from '@/components/astrostacker/ImageUploadArea';
@@ -17,7 +18,7 @@ import { ImagePreview } from '@/components/astrostacker/ImagePreview';
 import { ImagePostProcessEditor } from '@/components/astrostacker/ImagePostProcessEditor';
 import { TutorialDialog } from '@/components/astrostacker/TutorialDialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Star as StarIcon, ListChecks, CheckCircle, RefreshCcw, Edit3, Loader2, Orbit, Trash2, Wand2, ShieldOff, Layers, Baseline, X, AlertTriangle, BrainCircuit, TestTube2, Eraser, Download, Upload, Cpu, AlertCircle, Moon, Sun, Sparkles, UserCheck, Zap, Diamond, Globe, Camera, Video, Play, StopCircle } from 'lucide-react';
+import { Star as StarIcon, ListChecks, CheckCircle, RefreshCcw, Edit3, Loader2, Orbit, Trash2, Wand2, ShieldOff, Layers, Baseline, X, AlertTriangle, BrainCircuit, TestTube2, Eraser, Download, Upload, Cpu, AlertCircle, Moon, Sun, Sparkles, UserCheck, Zap, Diamond, Globe, Camera, Video, Play, StopCircle, Puzzle } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
@@ -63,7 +64,7 @@ interface CalibrationFrameEntry {
 
 type PreviewFitMode = 'contain' | 'cover';
 type OutputFormat = 'png' | 'jpeg';
-type AlignmentMethod = 'standard' | 'consensus' | 'planetary';
+type AlignmentMethod = 'standard' | 'consensus' | 'planetary' | 'dumb';
 type StackingQuality = 'standard' | 'high';
 type StarDetectionMethod = 'general' | 'ai';
 
@@ -735,6 +736,13 @@ export default function AstroStackerPage() {
               addLog,
               setProgress: progressUpdate,
           });
+      } else if (alignmentMethod === 'dumb') {
+          stackedImageData = await dumbAlignAndStack({
+              imageEntries: calibratedLightFrames,
+              stackingMode,
+              addLog,
+              setProgress: progressUpdate,
+          });
       } else {
         const refImageForStandard = calibratedLightFrames[0];
         const refStarsForStandard = (manualSelectImageId === refImageForStandard.id && manualSelectedStars.length > 1) 
@@ -1270,6 +1278,7 @@ export default function AstroStackerPage() {
                     <div className="flex items-center space-x-1"><RadioGroupItem value="standard" id="align-standard" /><Label htmlFor="align-standard" className="flex items-center gap-1"><StarIcon className="h-4 w-4"/>Standard (Deep Sky)</Label></div>
                     <div className="flex items-center space-x-1"><RadioGroupItem value="consensus" id="align-consensus" /><Label htmlFor="align-consensus" className="flex items-center gap-1"><Sparkles className="h-4 w-4"/>Consensus (Deep Sky)</Label></div>
                     <div className="flex items-center space-x-1"><RadioGroupItem value="planetary" id="align-planetary" /><Label htmlFor="align-planetary" className="flex items-center gap-1"><Globe className="h-4 w-4"/>Planetary (Surface)</Label></div>
+                     <div className="flex items-center space-x-1"><RadioGroupItem value="dumb" id="align-dumb" /><Label htmlFor="align-dumb" className="flex items-center gap-1"><Puzzle className="h-4 w-4"/>Dumb (White Pixel)</Label></div>
                   </RadioGroup>
                    {alignmentMethod === 'planetary' && (
                     <div className="space-y-2 pl-2 pt-2 border-l-2 border-accent/50 ml-2">
@@ -1415,4 +1424,3 @@ export default function AstroStackerPage() {
     </div>
   );
 }
-
