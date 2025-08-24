@@ -1,6 +1,7 @@
 
 import { type ClassValue, clsx } from "clsx"
 import { twMerge } from "tailwind-merge"
+import { call } from 'wasm-imagemagick';
 
 declare const window: any;
 
@@ -24,41 +25,39 @@ const processWithFileReader = (file: File): Promise<string> => {
 };
 
 const processFileWithImageMagick = async (file: File): Promise<string> => {
-    const Module = window.ImageMagick;
+  try {
+    const buffer = await file.arrayBuffer();
+    const inputFiles = [{ name: file.name, content: new Uint8Array(buffer) }];
+    const outputName = 'output.png';
+
+    // Use [0] to ensure only the first frame of a multi-frame file (like GIF or some TIFFs) is processed
+    const command = ['convert', `${file.name}[0]`, outputName];
     
-    try {
-        const buffer = await file.arrayBuffer();
-        const name = file.name;
-        const inPath = '/' + name;
-        const outPath = '/output.png'; // Use PNG to preserve quality and transparency
+    const result = await call(inputFiles, command);
+    const outputFile = result.find(f => f.name === outputName);
 
-        try { Module.FS_unlink(inPath); } catch (e) {}
-        Module.FS_createDataFile('/', name, new Uint8Array(buffer), true, true);
-        
-        // Use [0] to ensure only the first frame of a multi-frame file (like GIF) is processed
-        const args = ['convert', `${inPath}[0]`, outPath];
-        Module.callMain(args);
-        
-        const outData = Module.FS_readFile(outPath);
-        const blob = new Blob([outData], { type: 'image/png' }); // Output as PNG
-        
-        return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = e => resolve(e.target?.result as string);
-            reader.onerror = e => reject(e);
-            reader.readAsDataURL(blob);
-        });
-
-    } catch (error) {
-        console.error("Error processing file with ImageMagick:", error);
-        // Fallback for standard types if Magick fails for some reason
-        if (['image/jpeg', 'image/png', 'image/gif'].includes(file.type)) {
-            return processWithFileReader(file);
-        }
-        throw new Error(`Failed to process file ${file.name} with ImageMagick.`);
+    if (!outputFile) {
+        throw new Error(`ImageMagick conversion failed to produce ${outputName}.`);
     }
-}
 
+    const blob = new Blob([outputFile.content], { type: 'image/png' });
+
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = e => resolve(e.target?.result as string);
+        reader.onerror = e => reject(e);
+        reader.readAsDataURL(blob);
+    });
+
+  } catch (error) {
+    console.error("Error processing file with ImageMagick:", error);
+    // Fallback for standard types if Magick fails for some reason
+    if (['image/jpeg', 'image/png', 'image/gif'].includes(file.type)) {
+      return processWithFileReader(file);
+    }
+    throw new Error(`Failed to process file ${file.name} with ImageMagick.`);
+  }
+};
 
 export const fileToDataURL = (file: File): Promise<string> => {
   const isStandardWebFormat = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'].includes(file.type);
@@ -69,16 +68,6 @@ export const fileToDataURL = (file: File): Promise<string> => {
   }
 
   // For non-standard formats (FITS, TIFF, RAW, etc.), use ImageMagick
-  return new Promise((resolve, reject) => {
-    // If ImageMagick is already loaded, use it immediately.
-    if (window.ImageMagick) {
-      processFileWithImageMagick(file).then(resolve).catch(reject);
-    } else {
-      // Otherwise, wait for the wasmReady event. This is crucial for the first time a non-standard file is loaded.
-      const handleWasmReady = () => {
-        processFileWithImageMagick(file).then(resolve).catch(reject);
-      };
-      document.addEventListener('wasmReady', handleWasmReady, { once: true });
-    }
-  });
+  // No need to check for `window.ImageMagick` as the `call` function from the wasm-imagemagick library handles it.
+  return processFileWithImageMagick(file);
 };
