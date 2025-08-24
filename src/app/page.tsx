@@ -33,6 +33,8 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/
 import { createMasterFrame, applyCalibration } from '@/lib/image-calibration';
 import { applyPostProcessing } from '@/lib/post-process';
 import { Input } from '@/components/ui/input';
+import { saveAs } from 'file-saver';
+
 
 export const dynamic = 'force-static';
 
@@ -140,6 +142,77 @@ export default function AstroStackerPage() {
       return [newLog, ...prevLogs].slice(0, 150);
     });
   }, []);
+
+  const fileToDataURL = useCallback(async (file: File): Promise<string> => {
+    const isStandardWebFormat = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'].includes(file.type);
+    
+    const processWithFileReader = (fileToRead: File): Promise<string> => {
+      addLog(`[FileReader] Processing standard web format for: ${fileToRead.name}`);
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          if (e.target?.result) {
+            addLog(`[FileReader] Successfully read ${fileToRead.name}`);
+            resolve(e.target.result as string);
+          } else {
+            addLog(`[FileReader] Failed to read file, event target result is null for ${fileToRead.name}.`);
+            reject(new Error(`FileReader failed for ${fileToRead.name}.`));
+          }
+        };
+        reader.onerror = (e) => {
+            addLog(`[FileReader] Error reading file ${fileToRead.name}: ${e}`);
+            reject(new Error(`Error reading file ${fileToRead.name}.`))
+        };
+        reader.readAsDataURL(fileToRead);
+      });
+    };
+
+    if (isStandardWebFormat) {
+      addLog(`[fileToDataURL] Using standard FileReader for ${file.name} (type: ${file.type})`);
+      return processWithFileReader(file);
+    }
+  
+    addLog(`[fileToDataURL] Using ImageMagick for ${file.name} (type: ${file.type})`);
+    try {
+        const { read, execute, getOutputFiles } = await import('wasm-imagemagick');
+        const buffer = await file.arrayBuffer();
+        const inputFiles = [{ name: file.name, content: new Uint8Array(buffer) }];
+        const command = ['convert', `${file.name}[0]`, 'output.png'];
+        
+        await read(inputFiles);
+        await execute({inputFiles, commands: [command]});
+        const output = await getOutputFiles();
+        
+        const outputFile = output.find(f => f.name === 'output.png');
+
+        if (!outputFile || !outputFile.blob) {
+            throw new Error(`ImageMagick conversion did not produce the expected output file: output.png.`);
+        }
+        addLog(`[ImageMagick] Successfully converted ${file.name} to PNG blob. Size: ${outputFile.blob.size} bytes.`);
+
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = e => {
+                if(e.target?.result){
+                    addLog(`[ImageMagick] Successfully converted Blob to Data URL for ${file.name}.`);
+                    resolve(e.target.result as string);
+                } else {
+                    reject(new Error("FileReader failed after ImageMagick conversion."));
+                }
+            }
+            reader.onerror = e => {
+                addLog(`[ImageMagick] FileReader error after conversion for ${file.name}: ${e}`);
+                reject(e);
+            }
+            reader.readAsDataURL(outputFile.blob);
+        });
+
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : 'Unknown error';
+      addLog(`[ERROR] Could not process ${file.name}: Failed to process file ${file.name} with ImageMagick. Reason: ${reason}`);
+      throw new Error(`Failed to process file ${file.name} with ImageMagick. Reason: ${reason}`);
+    }
+  }, [addLog]);
 
   useEffect(() => {
     try {
@@ -271,79 +344,6 @@ export default function AstroStackerPage() {
     }
     return finalUpdatedEntry;
   };
-
-  const fileToDataURL = useCallback(async (file: File): Promise<string> => {
-    const isStandardWebFormat = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'].includes(file.type);
-    
-    // Standard FileReader logic for common web formats
-    const processWithFileReader = (fileToRead: File): Promise<string> => {
-      addLog(`[FileReader] Processing standard web format for: ${fileToRead.name}`);
-      return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = (e) => {
-          if (e.target?.result) {
-            addLog(`[FileReader] Successfully read ${fileToRead.name}`);
-            resolve(e.target.result as string);
-          } else {
-            addLog(`[FileReader] Failed to read file, event target result is null for ${fileToRead.name}.`);
-            reject(new Error(`FileReader failed for ${fileToRead.name}.`));
-          }
-        };
-        reader.onerror = (e) => {
-            addLog(`[FileReader] Error reading file ${fileToRead.name}: ${e}`);
-            reject(new Error(`Error reading file ${fileToRead.name}.`))
-        };
-        reader.readAsDataURL(fileToRead);
-      });
-    };
-
-    if (isStandardWebFormat) {
-      addLog(`[fileToDataURL] Using standard FileReader for ${file.name} (type: ${file.type})`);
-      return processWithFileReader(file);
-    }
-  
-    // Dynamic import of ImageMagick for non-standard formats
-    addLog(`[fileToDataURL] Using ImageMagick for ${file.name} (type: ${file.type})`);
-    try {
-      const { call } = await import('wasm-imagemagick');
-      
-      const buffer = await file.arrayBuffer();
-      const inputFiles = [{ name: file.name, content: new Uint8Array(buffer) }];
-      const outputName = 'output.png';
-
-      const command = ['convert', `${file.name}[0]`, outputName];
-      addLog(`[ImageMagick] Executing command: ${command.join(' ')}`);
-      
-      const result = await call(inputFiles, command);
-      const outputFile = result.find(f => f.name === outputName);
-
-      if (!outputFile) {
-          throw new Error(`ImageMagick conversion did not produce the expected output file: ${outputName}.`);
-      }
-      addLog(`[ImageMagick] Successfully converted ${file.name} to ${outputName}. Size: ${outputFile.content.byteLength} bytes.`);
-
-      const blob = new Blob([outputFile.content], { type: 'image/png' });
-      addLog(`[ImageMagick] Created Blob from output file.`);
-
-      return new Promise((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = e => {
-              addLog(`[ImageMagick] Successfully converted Blob to Data URL for ${file.name}.`);
-              resolve(e.target?.result as string);
-          }
-          reader.onerror = e => {
-              addLog(`[ImageMagick] FileReader error after conversion for ${file.name}: ${e}`);
-              reject(e);
-          }
-          reader.readAsDataURL(blob);
-      });
-
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : 'Unknown error';
-      addLog(`[ERROR] Could not process ${file.name}: Failed to process file ${file.name} with ImageMagick. Reason: ${reason}`);
-      throw new Error(`Failed to process file ${file.name} with ImageMagick. Reason: ${reason}`);
-    }
-  }, [addLog]);
 
   const handleFilesAdded = useCallback(async (files: File[]) => {
     addLog(`Attempting to add ${files.length} file(s).`);
