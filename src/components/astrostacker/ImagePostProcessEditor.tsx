@@ -11,7 +11,7 @@ import { Download, Loader2, RotateCcw } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recharts';
 import { StarAnnotationCanvas } from './StarAnnotationCanvas';
-import { applyPostProcessing, calculateHistogram, detectStarsForRemoval } from '@/lib/post-process';
+import { applyPostProcessing, calculateHistogram } from '@/lib/post-process';
 import type { Star } from '@/lib/astro-align';
 import { ScrollArea } from '../ui/scroll-area';
 
@@ -26,7 +26,7 @@ interface HistogramSettings {
   whitePoint: number;
 }
 interface StarRemovalSettings {
-  strength: number;
+  strength: number; // This is now Radius
 }
 
 interface ImagePostProcessEditorProps {
@@ -66,7 +66,6 @@ export function ImagePostProcessEditor({
   onStarRemovalSettingsChange
 }: ImagePostProcessEditorProps) {
   const [histogramData, setHistogramData] = useState<any[]>([]);
-  const [starsForRemoval, setStarsForRemoval] = useState<Star[]>([]);
   
   useEffect(() => {
     if (!isOpen || !baseImageUrl) return;
@@ -78,21 +77,6 @@ export function ImagePostProcessEditor({
     generateHistogram();
   }, [isOpen, baseImageUrl]);
   
-  useEffect(() => {
-    if (!isOpen || !baseImageUrl || starRemovalSettings.strength === 0) {
-      setStarsForRemoval([]);
-      return;
-    };
-
-    const detectStars = async () => {
-      const stars = await detectStarsForRemoval(baseImageUrl, starRemovalSettings.strength);
-      setStarsForRemoval(stars);
-    };
-
-    const debounce = setTimeout(detectStars, 100);
-    return () => clearTimeout(debounce);
-  }, [isOpen, baseImageUrl, starRemovalSettings.strength]);
-
   const handleDownloadFinal = async () => {
     if (!baseImageUrl) return;
     const finalUrl = await applyPostProcessing(
@@ -137,7 +121,7 @@ export function ImagePostProcessEditor({
                     <StarAnnotationCanvas
                         imageUrl={editedImageUrl!}
                         allStars={[]}
-                        manualStars={starsForRemoval}
+                        manualStars={[]}
                         onCanvasClick={() => {}}
                         analysisWidth={0}
                         analysisHeight={0}
@@ -188,7 +172,7 @@ export function ImagePostProcessEditor({
                       </div>
                       <div className="space-y-3">
                          <Label>Midtones: {histogramSettings.midtones.toFixed(2)}</Label>
-                         <Slider value={[histogramSettings.midtones]} onValueChange={([v]) => onHistogramSettingsChange({...histogramSettings, midtones: v})} min={0} max={1} step={0.01} />
+                         <Slider value={[histogramSettings.midtones]} onValueChange={([v]) => onHistogramSettingsChange({...histogramSettings, midtones: v})} min={0.1} max={5} step={0.01} />
                       </div>
                       <div className="space-y-3">
                         <Label>White Point: {histogramSettings.whitePoint}</Label>
@@ -198,9 +182,9 @@ export function ImagePostProcessEditor({
 
                   <TabsContent value="stars" className="flex-grow p-1 space-y-4 mt-4">
                     <div className="space-y-3">
-                        <Label>Star Removal Strength: {starRemovalSettings.strength}</Label>
-                        <p className="text-xs text-muted-foreground">Adjust to select stars for removal. Detected: {starsForRemoval.length}. Final removal happens on download.</p>
-                        <Slider value={[starRemovalSettings.strength]} onValueChange={([v]) => onStarRemovalSettingsChange({strength: v})} min={0} max={100} step={1} />
+                        <Label>Star Removal Radius: {starRemovalSettings.strength}px</Label>
+                        <p className="text-xs text-muted-foreground">Reduces brightness of structures smaller than the radius. Set to 0 to disable.</p>
+                        <Slider value={[starRemovalSettings.strength]} onValueChange={([v]) => onStarRemovalSettingsChange({strength: v})} min={0} max={15} step={1} />
                       </div>
                   </TabsContent>
                 </Tabs>

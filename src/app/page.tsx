@@ -32,7 +32,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import NextImage from 'next/image';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { createMasterFrame, applyCalibration } from '@/lib/image-calibration';
-import { applyPostProcessing, calculateHistogram, detectStarsForRemoval } from '@/lib/post-process';
+import { applyPostProcessing, calculateHistogram } from '@/lib/post-process';
 import { Input } from '@/components/ui/input';
 
 
@@ -192,7 +192,7 @@ export default function AstroStackerPage() {
           imageForPostProcessing,
           { brightness, exposure, saturation },
           { blackPoint, midtones, whitePoint },
-          { strength: starRemovalStrength, apply: false },
+          { strength: starRemovalStrength, apply: starRemovalStrength > 0 },
           outputFormat,
           jpegQuality / 100
         );
