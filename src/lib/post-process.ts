@@ -36,154 +36,171 @@ async function getImageDataFromUrl(url: string): Promise<ImageData> {
     });
 }
 
-// --- Morphological Operations ---
-
-function makeCircularOffsets(radius: number): Int16Array[] {
-  const R = Math.max(1, Math.floor(radius));
-  const rows: Int16Array[] = [];
-  for (let dy = -R; dy <= R; dy++) {
-    const w = Math.floor(Math.sqrt(R * R - dy * dy));
-    const row: number[] = [];
-    for (let dx = -w; dx <= w; dx++) row.push(dx);
-    rows.push(Int16Array.from(row));
-  }
-  return rows;
-}
-
-function erodeGray(src: Uint8ClampedArray, width: number, height: number, circleRows: Int16Array[]): Uint8ClampedArray {
-  const dst = new Uint8ClampedArray(width * height);
-  const R = Math.floor(circleRows.length / 2);
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      let minVal = 255;
-      for (let r = -R; r <= R; r++) {
-        const yy = y + r;
-        if (yy < 0 || yy >= height) continue;
-        const row = circleRows[r + R];
-        for (let i = 0; i < row.length; i++) {
-          const dx = row[i];
-          const xx = x + dx;
-          if (xx < 0 || xx >= width) continue;
-          const v = src[yy * width + xx];
-          if (v < minVal) minVal = v;
-        }
-      }
-      dst[y * width + x] = minVal;
-    }
-  }
-  return dst;
-}
-
-function dilateGray(src: Uint8ClampedArray, width: number, height: number, circleRows: Int16Array[]): Uint8ClampedArray {
-  const dst = new Uint8ClampedArray(width * height);
-  const R = Math.floor(circleRows.length / 2);
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-      let maxVal = 0;
-      for (let r = -R; r <= R; r++) {
-        const yy = y + r;
-        if (yy < 0 || yy >= height) continue;
-        const row = circleRows[r + R];
-        for (let i = 0; i < row.length; i++) {
-          const dx = row[i];
-          const xx = x + dx;
-          if (xx < 0 || xx >= width) continue;
-          const v = src[yy * width + xx];
-          if (v > maxVal) maxVal = v;
-        }
-      }
-      dst[y * width + x] = maxVal;
-    }
-  }
-  return dst;
-}
-
-function openingGray(src: Uint8ClampedArray, width: number, height: number, circleRows: Int16Array[]): Uint8ClampedArray {
-  return dilateGray(erodeGray(src, width, height, circleRows), width, height, circleRows);
-}
-
-
 // --- Star Detection ---
-function detectBrightBlobs(
+function detectStarsForRemoval(
   imageData: ImageData,
   width: number,
   height: number,
-  threshold: number = 200
 ): Star[] {
     const { data } = imageData;
     const visited = new Uint8Array(width * height);
     const stars: Star[] = [];
-    const minSize = 3; 
-    const maxSize = 500;
-
-    const getNeighbors = (pos: number): number[] => {
-        const neighbors = [];
-        const x = pos % width;
-        const y = Math.floor(pos / width);
-        for (let dy = -1; dy <= 1; dy++) {
-            for (let dx = -1; dx <= 1; dx++) {
-                if (dx === 0 && dy === 0) continue;
-                const nx = x + dx;
-                const ny = y + dy;
-                if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
-                    neighbors.push(ny * width + nx);
-                }
-            }
-        }
-        return neighbors;
-    };
-    
-    const isPixelAboveThreshold = (idx: number) => {
-        const base = idx * 4;
-        return data[base] > threshold && data[base + 1] > threshold && data[base + 2] > threshold;
-    }
+    const minStarSize = 2; 
+    const maxStarSize = 200; // Filter out very large blobs
+    const threshold = 180; // Start with a high threshold for bright cores
 
     for (let i = 0; i < width * height; i++) {
-        if (visited[i] || !isPixelAboveThreshold(i)) continue;
+        const idx = i * 4;
+        const brightness = (data[idx] + data[idx+1] + data[idx+2]) / 3;
+        
+        if (visited[i] || brightness < threshold) continue;
 
         const queue = [i];
         visited[i] = 1;
-        const blobPixels: number[] = [];
+        const blobPixels: {x: number, y: number}[] = [];
         
         while (queue.length > 0) {
-            const p = queue.shift()!;
-            blobPixels.push(p);
+            const pIndex = queue.shift()!;
+            const px = pIndex % width;
+            const py = Math.floor(pIndex / width);
+            blobPixels.push({x: px, y: py});
 
-            for (const n of getNeighbors(p)) {
-                if (!visited[n] && isPixelAboveThreshold(n)) {
-                    visited[n] = 1;
-                    queue.push(n);
+            for(let dy = -1; dy <= 1; dy++) {
+              for(let dx = -1; dx <= 1; dx++) {
+                if (dx === 0 && dy === 0) continue;
+                const nx = px + dx;
+                const ny = py + dy;
+
+                if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+                  const nIndex = ny * width + nx;
+                  if(!visited[nIndex]) {
+                    const nBrightness = (data[nIndex*4] + data[nIndex*4+1] + data[nIndex*4+2]) / 3;
+                    if (nBrightness > threshold * 0.6) { // Lower threshold for blob growth
+                       visited[nIndex] = 1;
+                       queue.push(nIndex);
+                    }
+                  }
                 }
+              }
             }
         }
         
-        if (blobPixels.length < minSize || blobPixels.length > maxSize) continue;
+        if (blobPixels.length >= minStarSize && blobPixels.length <= maxStarSize) {
+            let totalBrightness = 0;
+            let weightedX = 0;
+            let weightedY = 0;
 
-        let totalBrightness = 0;
-        let weightedX = 0;
-        let weightedY = 0;
+            for (const {x, y} of blobPixels) {
+                const b_idx = (y * width + x) * 4;
+                const b = (data[b_idx] + data[b_idx+1] + data[b_idx+2]) / 3;
+                totalBrightness += b;
+                weightedX += x * b;
+                weightedY += y * b;
+            }
 
-        for (const p of blobPixels) {
-            const b_idx = p * 4;
-            const brightness = (data[b_idx] + data[b_idx+1] + data[b_idx+2]) / 3;
-            const x = p % width;
-            const y = Math.floor(p / width);
-            totalBrightness += brightness;
-            weightedX += x * brightness;
-            weightedY += y * brightness;
-        }
-
-        if (totalBrightness > 0) {
-            stars.push({
-                x: weightedX / totalBrightness,
-                y: weightedY / totalBrightness,
-                brightness: totalBrightness,
-                size: blobPixels.length,
-            });
+            if (totalBrightness > 0) {
+                stars.push({
+                    x: weightedX / totalBrightness,
+                    y: weightedY / totalBrightness,
+                    brightness: totalBrightness,
+                    size: blobPixels.length,
+                });
+            }
         }
     }
 
-    return stars.sort((a, b) => b.brightness - a.brightness);
+    return stars;
+}
+
+
+// --- Inpainting Logic ---
+
+function createStarMask(stars: Star[], width: number, height: number, radiusMultiplier: number): ImageData {
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) throw new Error("Could not create star mask context.");
+    
+    ctx.fillStyle = 'black';
+    ctx.fillRect(0, 0, width, height);
+
+    ctx.fillStyle = 'white';
+    for (const star of stars) {
+        // Use a radius based on the star's detected size for more accuracy
+        const radius = Math.sqrt(star.size / Math.PI) * radiusMultiplier;
+        ctx.beginPath();
+        ctx.arc(star.x, star.y, Math.max(2, radius), 0, Math.PI * 2);
+        ctx.fill();
+    }
+    return ctx.getImageData(0, 0, width, height);
+}
+
+
+/**
+ * Removes stars from an image using patch-based inpainting.
+ * Assumes you already have a binary mask (star = white, background = black).
+ */
+function inpaintStars(
+  ctx: CanvasRenderingContext2D,
+  starMask: ImageData,
+  iterations: number = 15
+) {
+  const { width, height } = starMask;
+  const imgData = ctx.getImageData(0, 0, width, height);
+  const data = imgData.data;
+  const mask = starMask.data;
+
+  // Utility: check if pixel is part of a star
+  const isStar = (idx: number) => mask[idx] > 128;
+
+  for (let iter = 0; iter < iterations; iter++) {
+    const copy = new Uint8ClampedArray(data); // Work on a copy for this iteration
+
+    for (let y = 1; y < height - 1; y++) {
+      for (let x = 1; x < width - 1; x++) {
+        const idx = (y * width + x) * 4;
+
+        if (isStar(idx)) {
+          let r = 0, g = 0, b = 0, a=0, wSum = 0;
+
+          // Weighted fill using surrounding non-star pixels
+          for (let dy = -3; dy <= 3; dy++) {
+            for (let dx = -3; dx <= 3; dx++) {
+              if (dx === 0 && dy === 0) continue;
+
+              const nx = x + dx;
+              const ny = y + dy;
+              // Boundary check is important
+              if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
+
+              const nIdx = (ny * width + nx) * 4;
+              if (!isStar(nIdx)) {
+                // Weight = closer pixels count more
+                const dist2 = dx * dx + dy * dy;
+                const w = 1 / (dist2 + 0.1);
+
+                r += copy[nIdx] * w;
+                g += copy[nIdx + 1] * w;
+                b += copy[nIdx + 2] * w;
+                a += copy[nIdx + 3] * w;
+                wSum += w;
+              }
+            }
+          }
+
+          if (wSum > 0) {
+            data[idx]     = r / wSum;
+            data[idx + 1] = g / wSum;
+            data[idx + 2] = b / wSum;
+            data[idx + 3] = a / wSum;
+          }
+        }
+      }
+    }
+  }
+
+  ctx.putImageData(imgData, 0, 0);
 }
 
 
@@ -205,65 +222,6 @@ export async function calculateHistogram(imageUrl: string) {
   return hist;
 }
 
-function createStarMask(stars: Star[], width: number, height: number, radiusMultiplier: number): ImageData {
-    const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
-    const ctx = canvas.getContext('2d')!;
-    ctx.fillStyle = 'black';
-    ctx.fillRect(0, 0, width, height);
-
-    ctx.fillStyle = 'white';
-    for (const star of stars) {
-        const radius = Math.sqrt(star.size / Math.PI) * radiusMultiplier;
-        ctx.beginPath();
-        ctx.arc(star.x, star.y, radius, 0, Math.PI * 2);
-        ctx.fill();
-    }
-    return ctx.getImageData(0, 0, width, height);
-}
-
-function applyStarRemoval(originalData: ImageData, starRemovalRadius: number): ImageData {
-    const { width, height, data: src } = originalData;
-
-    // 1. Create a grayscale luminance map of the original image
-    const L = new Uint8ClampedArray(width * height);
-    for (let i = 0, p = 0; i < src.length; i += 4, p++) {
-        L[p] = 0.2126 * src[i] + 0.7152 * src[i+1] + 0.0722 * src[i+2];
-    }
-    
-    // 2. Perform morphological opening on the luminance map
-    const circleRows = makeCircularOffsets(starRemovalRadius);
-    const L_opened = openingGray(L, width, height, circleRows);
-
-    // 3. Create a "starless" version of the image data
-    const starlessData = new Uint8ClampedArray(src.length);
-    for (let i = 0, p = 0; i < src.length; i += 4, p++) {
-      const scale = L[p] > 0 ? (L_opened[p] / L[p]) : 1;
-      starlessData[i] = src[i] * scale;
-      starlessData[i+1] = src[i+1] * scale;
-      starlessData[i+2] = src[i+2] * scale;
-      starlessData[i+3] = src[i+3];
-    }
-
-    // 4. Create a star mask
-    const stars = detectBrightBlobs(originalData, width, height, 150);
-    const starMaskData = createStarMask(stars, width, height, 1.5).data;
-
-    // 5. Blend the original and starless images using the mask
-    const finalData = new Uint8ClampedArray(src.length);
-    for(let i = 0; i < src.length; i+=4) {
-        const maskValue = starMaskData[i] / 255; // 0 for background, 1 for star
-        
-        finalData[i]   = src[i] * (1 - maskValue) + starlessData[i] * maskValue;
-        finalData[i+1] = src[i+1] * (1 - maskValue) + starlessData[i+1] * maskValue;
-        finalData[i+2] = src[i+2] * (1 - maskValue) + starlessData[i+2] * maskValue;
-        finalData[i+3] = src[i+3];
-    }
-
-    return new ImageData(finalData, width, height);
-}
-
 
 export async function applyPostProcessing(
     baseDataUrl: string,
@@ -273,14 +231,27 @@ export async function applyPostProcessing(
     outputFormat: 'png' | 'jpeg',
     jpegQuality: number
 ): Promise<string> {
-    let imageData = await getImageDataFromUrl(baseDataUrl);
-    const { width, height } = imageData;
+    const originalImageData = await getImageDataFromUrl(baseDataUrl);
+    const { width, height } = originalImageData;
+    
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error("Could not create canvas to finalize image.");
+    
+    ctx.putImageData(originalImageData, 0, 0);
 
-    // --- Star Removal ---
+    // --- Star Removal (Inpainting) ---
     if (starRemoval.apply && starRemoval.strength > 0) {
-        imageData = applyStarRemoval(imageData, starRemoval.strength);
+        // strength now controls iterations/quality
+        const stars = detectStarsForRemoval(originalImageData, width, height);
+        const starMask = createStarMask(stars, width, height, 1.2); // 1.2 multiplier for a small safety margin
+        inpaintStars(ctx, starMask, Math.round(starRemoval.strength / 5)); // Scale strength to iterations
     }
     
+    // Get the (potentially inpainted) image data back from the context
+    const imageData = ctx.getImageData(0, 0, width, height);
     const { data } = imageData;
 
     // --- Histogram Stretching LUT ---
@@ -327,11 +298,6 @@ export async function applyPostProcessing(
       data[i + 2] = b;
     }
     
-    const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error("Could not create canvas to finalize image.");
     ctx.putImageData(imageData, 0, 0);
 
     return canvas.toDataURL(outputFormat === 'jpeg' ? 'image/jpeg' : 'image/png', jpegQuality);

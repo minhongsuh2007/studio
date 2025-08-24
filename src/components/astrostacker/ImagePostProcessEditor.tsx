@@ -182,9 +182,9 @@ export function ImagePostProcessEditor({
 
                   <TabsContent value="stars" className="flex-grow p-1 space-y-4 mt-4">
                     <div className="space-y-3">
-                        <Label>Star Removal Radius: {starRemovalSettings.strength}px</Label>
-                        <p className="text-xs text-muted-foreground">Reduces brightness of structures smaller than the radius. Set to 0 to disable.</p>
-                        <Slider value={[starRemovalSettings.strength]} onValueChange={([v]) => onStarRemovalSettingsChange({strength: v})} min={0} max={15} step={1} />
+                        <Label>Star Removal Strength: {starRemovalSettings.strength}%</Label>
+                        <p className="text-xs text-muted-foreground">Adjusts the quality of the inpainting effect. Higher values are slower but smoother. Set to 0 to disable.</p>
+                        <Slider value={[starRemovalSettings.strength]} onValueChange={([v]) => onStarRemovalSettingsChange({strength: v})} min={0} max={100} step={5} />
                       </div>
                   </TabsContent>
                 </Tabs>
