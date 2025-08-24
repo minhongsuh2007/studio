@@ -1,9 +1,6 @@
 
 import { type ClassValue, clsx } from "clsx"
 import { twMerge } from "tailwind-merge"
-import { call } from 'wasm-imagemagick';
-
-declare const window: any;
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -26,6 +23,9 @@ const processWithFileReader = (file: File): Promise<string> => {
 
 const processFileWithImageMagick = async (file: File): Promise<string> => {
   try {
+    // Dynamically import wasm-imagemagick only on the client-side when needed.
+    const { call } = await import('wasm-imagemagick');
+    
     const buffer = await file.arrayBuffer();
     const inputFiles = [{ name: file.name, content: new Uint8Array(buffer) }];
     const outputName = 'output.png';
@@ -59,7 +59,7 @@ const processFileWithImageMagick = async (file: File): Promise<string> => {
   }
 };
 
-export const fileToDataURL = (file: File): Promise<string> => {
+export const fileToDataURL = async (file: File): Promise<string> => {
   const isStandardWebFormat = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'].includes(file.type);
 
   // Use the standard FileReader for common web formats as it's faster
@@ -68,6 +68,5 @@ export const fileToDataURL = (file: File): Promise<string> => {
   }
 
   // For non-standard formats (FITS, TIFF, RAW, etc.), use ImageMagick
-  // No need to check for `window.ImageMagick` as the `call` function from the wasm-imagemagick library handles it.
   return processFileWithImageMagick(file);
 };
