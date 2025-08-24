@@ -42,15 +42,19 @@ export function ImageUploadArea({
   const [isDragging, setIsDragging] = useState(false);
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
-    onFilesAdded(acceptedFiles);
+    if (acceptedFiles.length > 0) {
+        onFilesAdded(acceptedFiles);
+    }
     setIsDragging(false);
   }, [onFilesAdded]);
 
-  const { getRootProps, getInputProps, isDragActive } = useDropzone({
+  const { getRootProps, getInputProps, isDragActive, open } = useDropzone({
     onDrop,
     accept,
     multiple: multiple, 
     disabled: isProcessing,
+    noClick: true,
+    noKeyboard: true,
     onDragEnter: () => setIsDragging(true),
     onDragLeave: () => setIsDragging(false),
   });
@@ -84,13 +88,7 @@ export function ImageUploadArea({
             size="sm"
             className="mt-2"
             disabled={isProcessing}
-            onClick={(e) => {
-              const inputElement = e.currentTarget.parentElement?.previousElementSibling as HTMLInputElement | null;
-              if (inputElement) {
-                inputElement.click();
-              }
-              e.stopPropagation();
-            }}
+            onClick={open}
           >
           <ImageIcon className="mr-2 h-4 w-4" />
           {finalButtonText}
