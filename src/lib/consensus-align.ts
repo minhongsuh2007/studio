@@ -181,28 +181,26 @@ export async function consensusAlignAndStack({
   for (const [index, entry] of imageEntries.entries()) {
     if (!entry.imageData) continue;
 
-    let starsForAlignment: Star[] = entry.detectedStars; // Fallback to detected stars
+    let starsForAlignment: Star[] = [];
 
-    if (modelPackage && entry.aiVerifiedStars && entry.aiVerifiedStars.length > 1) {
-        starsForAlignment = entry.aiVerifiedStars;
-        addLog(`[CONSENSUS] Using ${starsForAlignment.length} AI-verified stars for ${entry.file.name}.`);
-    } else if (modelPackage) {
-        // If a model is provided but this image has no AI stars, try to find them now.
+    if (modelPackage) {
         const { data, width, height } = entry.imageData;
-        const { matchedStars } = await findMatchingStars({
+        const { rankedStars, logs } = await findMatchingStars({
             imageData: { data: Array.from(data), width, height },
             candidates: entry.detectedStars,
             model: modelPackage.model,
             normalization: modelPackage.normalization,
         });
-        if (matchedStars.length > 1) {
-            starsForAlignment = matchedStars;
-            addLog(`[CONSENSUS] Found ${starsForAlignment.length} AI-verified stars for ${entry.file.name} on-the-fly.`);
-        } else {
-            addLog(`[CONSENSUS] AI verification found < 2 stars for ${entry.file.name}. Falling back to ${entry.detectedStars.length} detected stars.`);
-        }
+        logs.forEach(logMsg => addLog(`[AI-DETECT] ${entry.file.name}: ${logMsg}`));
+
+        // Automatically take the top 10 most probable stars
+        starsForAlignment = rankedStars.slice(0, 10).map(rs => rs.star);
+        entry.aiVerifiedStars = starsForAlignment; // Store for potential display
+        addLog(`[CONSENSUS] Using top ${starsForAlignment.length} AI-verified stars for ${entry.file.name}.`);
+
     } else {
-         addLog(`[CONSENSUS] No AI model. Using ${entry.detectedStars.length} detected stars for ${entry.file.name}.`);
+        starsForAlignment = entry.detectedStars;
+        addLog(`[CONSENSUS] No AI model. Using ${entry.detectedStars.length} detected stars for ${entry.file.name}.`);
     }
     
     if (starsForAlignment.length > 1) {
@@ -303,4 +301,3 @@ export async function consensusAlignAndStack({
   addLog("[CONSENSUS] Stacking complete.");
   return stackedResult;
 }
-

@@ -203,42 +203,37 @@ export async function findMatchingStars({
   candidates,
   model,
   normalization,
-  probabilityThreshold = 0.5,
 }: {
   imageData: SimpleImageData,
   candidates: Star[],
   model: tf.LayersModel,
   normalization: { means: number[], stds: number[] },
-  probabilityThreshold?: number,
-}): Promise<{matchedStars: Star[], logs: string[]}> {
+}): Promise<{rankedStars: {star: Star, probability: number}[], logs: string[]}> {
     const logs: string[] = [];
     try {
         if (candidates.length === 0) {
             logs.push("No initial candidates provided.");
-            return { matchedStars: [], logs };
+            return { rankedStars: [], logs };
         }
 
         logs.push(`Received ${candidates.length} candidates to verify with AI.`);
 
-        // 1. Extract features for all candidates
         const allCharacteristics = (await extractCharacteristicsFromImage({ stars: candidates, imageData }))
             .map((char, index) => ({ char, star: candidates[index] }))
             .filter(item => item.char);
 
-        // 2. Predict with the model
-        const matchedStars: Star[] = [];
+        const rankedStars: {star: Star, probability: number}[] = [];
         for (const { char, star } of allCharacteristics) {
             const features = featuresFromCharacteristics(char!);
             const probability = predictSingle(model, normalization.means, normalization.stds, features);
-            if (probability > probabilityThreshold) {
-                matchedStars.push(star);
-            }
+            rankedStars.push({ star, probability });
         }
+        
+        rankedStars.sort((a, b) => b.probability - a.probability);
 
-        logs.push(`AI classified ${matchedStars.length} candidates as stars with >${(probabilityThreshold*100).toFixed(0)}% confidence.`);
+        logs.push(`AI ranked ${rankedStars.length} candidates by probability.`);
 
-        matchedStars.sort((a, b) => b.brightness - a.brightness);
-        return { matchedStars, logs };
+        return { rankedStars, logs };
 
     } catch (e) {
         const errorMessage = e instanceof Error ? e.message : String(e);
