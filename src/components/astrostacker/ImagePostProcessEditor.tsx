@@ -200,7 +200,7 @@ export function ImagePostProcessEditor({
                     <div className="space-y-3">
                         <Label>Star Removal Strength: {starRemovalSettings.strength}</Label>
                         <p className="text-xs text-muted-foreground">Adjust to select stars for removal. Detected: {starsForRemoval.length}. Final removal happens on download.</p>
-                        <Slider value={[starRemovalSettings.strength]} onValueChange={([v]) => onStarRemovalSettingsChange({strength: v})} min={0} max={255} step={1} />
+                        <Slider value={[starRemovalSettings.strength]} onValueChange={([v]) => onStarRemovalSettingsChange({strength: v})} min={0} max={100} step={1} />
                       </div>
                   </TabsContent>
                 </Tabs>
@@ -225,4 +225,3 @@ export function ImagePostProcessEditor({
     </Dialog>
   );
 }
-

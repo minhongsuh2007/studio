@@ -58,6 +58,9 @@ export async function detectStarsForRemoval(imageUrl: string, strength: number):
     const visited = new Uint8Array(width * height);
     const stars: Star[] = [];
 
+    const BRIGHT_AREA_THRESHOLD = 220; // Pixels in areas brighter than this won't be considered stars to remove
+    const BRIGHT_AREA_CHECK_RADIUS = 10;
+
     for (let i = 0; i < width * height; i++) {
         const idx = i * 4;
         const brightness = (data[idx] + data[idx+1] + data[idx+2]) / 3;
@@ -94,7 +97,29 @@ export async function detectStarsForRemoval(imageUrl: string, strength: number):
                 }
             }
              if (blob.length > 0 && sumBrightness > 0) {
-                stars.push({ x: sumX / sumBrightness, y: sumY / sumBrightness, brightness: sumBrightness, size: blob.length });
+                const starX = sumX / sumBrightness;
+                const starY = sumY / sumBrightness;
+
+                // Check average brightness of the surrounding area to avoid removing nebula cores
+                let surroundingBrightness = 0;
+                let surroundingCount = 0;
+                const startCheckX = Math.max(0, Math.round(starX) - BRIGHT_AREA_CHECK_RADIUS);
+                const endCheckX = Math.min(width, Math.round(starX) + BRIGHT_AREA_CHECK_RADIUS);
+                const startCheckY = Math.max(0, Math.round(starY) - BRIGHT_AREA_CHECK_RADIUS);
+                const endCheckY = Math.min(height, Math.round(starY) + BRIGHT_AREA_CHECK_RADIUS);
+
+                for(let y = startCheckY; y < endCheckY; y++) {
+                  for(let x = startCheckX; x < endCheckX; x++) {
+                    const checkIdx = (y * width + x) * 4;
+                    surroundingBrightness += (data[checkIdx] + data[checkIdx+1] + data[checkIdx+2]) / 3;
+                    surroundingCount++;
+                  }
+                }
+                const avgSurroundingBrightness = surroundingCount > 0 ? surroundingBrightness / surroundingCount : 0;
+
+                if (avgSurroundingBrightness < BRIGHT_AREA_THRESHOLD) {
+                    stars.push({ x: starX, y: starY, brightness: sumBrightness, size: blob.length });
+                }
             }
         }
     }
