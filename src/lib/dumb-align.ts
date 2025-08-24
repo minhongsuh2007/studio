@@ -41,10 +41,14 @@ function detectBrightestPixels(imageData: ImageData, addLog: (message: string) =
 /**
  * Calculates the transformation required to align two point sets.
  */
-function getTransformFromStarPair(refStar1: Star, refStar2: Star, targetStar1: Star, targetStar2: Star): Transform | null {
-    if (!refStar1 || !refStar2 || !targetStar1 || !targetStar2) {
-        return null;
-    }
+function getTransform(refPoints: Star[], targetPoints: Star[]): Transform | null {
+    if (refPoints.length < 2 || targetPoints.length < 2) return null;
+    
+    // Use the first two points to get an initial transform
+    const refStar1 = refPoints[0];
+    const refStar2 = refPoints[1];
+    const targetStar1 = targetPoints[0];
+    const targetStar2 = targetPoints[1];
 
     const refVec = { x: refStar2.x - refStar1.x, y: refStar2.y - refStar1.y };
     const targetVec = { x: targetStar2.x - targetStar1.x, y: targetStar2.y - targetStar1.y };
@@ -72,85 +76,118 @@ function getTransformFromStarPair(refStar1: Star, refStar2: Star, targetStar1: S
     return { dx, dy, angle: -angle, scale };
 }
 
+// Generates a scale-invariant signature for a quadrilateral.
+function getQuadSignature(p1: Star, p2: Star, p3: Star, p4: Star): number[] | null {
+    const d = (a: Star, b: Star) => Math.hypot(b.x - a.x, b.y - a.y);
+    const sides = [d(p1, p2), d(p2, p3), d(p3, p4), d(p4, p1)];
+    const diagonals = [d(p1, p3), d(p2, p4)];
+    
+    const allLengths = [...sides, ...diagonals].sort((a,b)=>a-b);
+    const primaryLength = allLengths[allLengths.length - 1]; // Use longest length for normalization
+    if (primaryLength < 1e-6) return null;
+
+    return allLengths.map(len => len / primaryLength);
+}
+
+
 /**
- * Finds the most common pair of bright pixels across all images.
+ * Finds the most common pattern of 4 bright pixels across all images.
  */
-function findBestGlobalPair(
+function findBestGlobalPattern(
     allImageStars: { imageId: string; stars: Star[] }[],
     addLog: (message: string) => void
-): { refPair: Star[]; targetPairs: Record<string, Star[]>; imageIds: string[] } | null {
+): { refPattern: Star[]; targetPatterns: Record<string, Star[]>; imageIds: string[] } | null {
     if (allImageStars.length < 2) {
-        addLog("[DUMB-ALIGN] Need at least 2 images to find a global pair.");
+        addLog("[DUMB-ALIGN] Need at least 2 images to find a global pattern.");
         return null;
     }
 
-    const refImageStars = allImageStars[0].stars;
-    if (refImageStars.length < 2) {
-        addLog("[DUMB-ALIGN] Reference image has fewer than 2 bright pixels.");
+    const refImage = allImageStars.find(img => img.stars.length >= 4);
+    if (!refImage) {
+        addLog("[DUMB-ALIGN] No image has at least 4 bright pixels to form a reference pattern.");
         return null;
     }
+    
+    const refStars = refImage.stars;
+    addLog(`[DUMB-ALIGN] Using ${refImage.imageId} as reference with ${refStars.length} candidates.`);
 
-    let bestPairInfo = {
-        refPair: null as Star[] | null,
-        targetPairs: {} as Record<string, Star[]>,
-        count: 0
+    let bestMatch = {
+        count: 0,
+        refPattern: null as Star[] | null,
+        targetPatterns: {} as Record<string, Star[]>,
     };
 
-    const DIST_TOLERANCE = 5; // 5 pixels tolerance for distance mismatch
+    const SIGNATURE_TOLERANCE = 0.05; // 5% tolerance
+    const MAX_REF_PATTERNS = 100; // Limit iterations to prevent freezing
 
-    for (let i = 0; i < refImageStars.length; i++) {
-        for (let j = i + 1; j < refImageStars.length; j++) {
-            const currentRefPair = [refImageStars[i], refImageStars[j]];
-            const refDist = Math.hypot(currentRefPair[1].x - currentRefPair[0].x, currentRefPair[1].y - currentRefPair[0].y);
-            if (refDist < 5) continue; // Ignore pairs that are too close
+    // Iterate through a limited number of possible patterns in the reference image
+    for (let i = 0; i < Math.min(refStars.length, MAX_REF_PATTERNS); i++) {
+        for (let j = i + 1; j < refStars.length; j++) {
+            for (let k = j + 1; k < refStars.length; k++) {
+                for (let l = k + 1; l < refStars.length; l++) {
+                    
+                    const refPattern = [refStars[i], refStars[j], refStars[k], refStars[l]];
+                    const refSignature = getQuadSignature(...refPattern);
+                    if (!refSignature) continue;
 
-            let currentTargetPairs: Record<string, Star[]> = { [allImageStars[0].imageId]: currentRefPair };
-            let matchCount = 1;
+                    let currentMatchCount = 1;
+                    const currentTargetPatterns: Record<string, Star[]> = { [refImage.imageId]: refPattern };
 
-            for (let k = 1; k < allImageStars.length; k++) {
-                const targetImage = allImageStars[k];
-                if (targetImage.stars.length < 2) continue;
+                    // Check this pattern against all other images
+                    for (const targetImage of allImageStars) {
+                        if (targetImage.imageId === refImage.imageId) continue;
+                        if (targetImage.stars.length < 4) continue;
 
-                let bestTargetMatch: { pair: Star[], error: number } | null = null;
+                        let bestTargetMatch: { pattern: Star[], error: number } | null = null;
+                        
+                        // Find the best matching pattern in the target image
+                        for (let ti = 0; ti < targetImage.stars.length; ti++) {
+                        for (let tj = ti + 1; tj < targetImage.stars.length; tj++) {
+                        for (let tk = tj + 1; tk < targetImage.stars.length; tk++) {
+                        for (let tl = tk + 1; tl < targetImage.stars.length; tl++) {
+                            const targetPattern = [targetImage.stars[ti], targetImage.stars[tj], targetImage.stars[tk], targetImage.stars[tl]];
+                            const targetSignature = getQuadSignature(...targetPattern);
+                            if (!targetSignature) continue;
 
-                for (let m = 0; m < targetImage.stars.length; m++) {
-                    for (let n = m + 1; n < targetImage.stars.length; n++) {
-                        const targetPair = [targetImage.stars[m], targetImage.stars[n]];
-                        const targetDist = Math.hypot(targetPair[1].x - targetPair[0].x, targetPair[1].y - targetPair[0].y);
+                            const error = refSignature.reduce((sum, val, idx) => sum + Math.abs(val - targetSignature[idx]), 0);
 
-                        const distError = Math.abs(targetDist - refDist);
-
-                        if (distError < DIST_TOLERANCE) {
-                            if (!bestTargetMatch || distError < bestTargetMatch.error) {
-                                bestTargetMatch = { pair: targetPair, error: distError };
+                            if (error / refSignature.length < SIGNATURE_TOLERANCE) {
+                                if (!bestTargetMatch || error < bestTargetMatch.error) {
+                                    bestTargetMatch = { pattern: targetPattern, error: error };
+                                }
                             }
+                        }}}}
+
+                        if (bestTargetMatch) {
+                            currentTargetPatterns[targetImage.imageId] = bestTargetMatch.pattern;
+                            currentMatchCount++;
                         }
                     }
+                    
+                    if (currentMatchCount > bestMatch.count) {
+                        bestMatch = {
+                            count: currentMatchCount,
+                            refPattern: refPattern,
+                            targetPatterns: currentTargetPatterns
+                        };
+                    }
                 }
-
-                if (bestTargetMatch) {
-                    currentTargetPairs[targetImage.imageId] = bestTargetMatch.pair;
-                    matchCount++;
-                }
-            }
-
-            if (matchCount > bestPairInfo.count) {
-                bestPairInfo = { refPair: currentRefPair, targetPairs: currentTargetPairs, count: matchCount };
             }
         }
     }
 
-    if (bestPairInfo.count < 2) {
-        addLog("[DUMB-ALIGN] Could not find a bright pixel pair shared by at least 2 images.");
+
+    if (bestMatch.count < 2) {
+        addLog("[DUMB-ALIGN] Could not find a 4-pixel pattern shared by at least 2 images.");
         return null;
     }
 
-    const imageIdsWithPair = Object.keys(bestPairInfo.targetPairs);
-    addLog(`[DUMB-ALIGN] Found best pair, shared across ${bestPairInfo.count} images.`);
+    const imageIdsWithPattern = Object.keys(bestMatch.targetPatterns);
+    addLog(`[DUMB-ALIGN] Found best pattern of 4 pixels, shared across ${bestMatch.count} images.`);
     return {
-        refPair: bestPairInfo.refPair!,
-        targetPairs: bestPairInfo.targetPairs,
-        imageIds: imageIdsWithPair
+        refPattern: bestMatch.refPattern!,
+        targetPatterns: bestMatch.targetPatterns,
+        imageIds: imageIdsWithPattern
     };
 }
 
@@ -178,27 +215,27 @@ export async function dumbAlignAndStack({
         const brightPixels = detectBrightestPixels(entry.imageData, addLog, entry.file.name);
         setProgress(0.3 * ((index + 1) / imageEntries.length));
         return { imageId: entry.id, stars: brightPixels };
-    }).filter(data => data.stars.length >= 2);
+    }).filter(data => data.stars.length >= 4);
 
     if (allImageBrightPixels.length < 2) {
-        throw new Error("Fewer than two images have enough bright pixels for alignment.");
+        throw new Error("Fewer than two images have at least 4 bright pixels for alignment.");
     }
 
-    addLog("[DUMB-ALIGN] Step 2: Finding the most common bright pixel pair...");
-    const globalPair = findBestGlobalPair(allImageBrightPixels, addLog);
+    addLog("[DUMB-ALIGN] Step 2: Finding the most common bright pixel pattern (4 pixels)...");
+    const globalPattern = findBestGlobalPattern(allImageBrightPixels, addLog);
 
-    if (!globalPair) {
-        throw new Error("Dumb alignment failed: Could not find a reliable bright pixel pair shared across multiple images.");
+    if (!globalPattern) {
+        throw new Error("Dumb alignment failed: Could not find a reliable 4-pixel pattern shared across multiple images.");
     }
 
-    const { refPair, targetPairs, imageIds } = globalPair;
+    const { refPattern, targetPatterns, imageIds } = globalPattern;
     const refImageId = imageIds[0];
     const refEntry = imageEntries.find(e => e.id === refImageId)!;
     const { width, height } = refEntry.analysisDimensions;
 
     setProgress(0.5);
 
-    addLog(`[DUMB-ALIGN] Step 3: Aligning ${imageIds.length} images that contain the common pair.`);
+    addLog(`[DUMB-ALIGN] Step 3: Aligning ${imageIds.length} images that contain the common pattern.`);
     const alignedImageDatas: (Uint8ClampedArray | null)[] = [];
 
     for (let i = 0; i < imageEntries.length; i++) {
@@ -217,7 +254,7 @@ export async function dumbAlignAndStack({
             continue;
         }
 
-        const transform = getTransformFromStarPair(refPair[0], refPair[1], targetPairs[entry.id][0], targetPairs[entry.id][1]);
+        const transform = getTransform(refPattern, targetPatterns[entry.id]);
 
         if (!transform) {
             alignedImageDatas.push(null);
@@ -258,3 +295,5 @@ export async function dumbAlignAndStack({
     addLog("[DUMB-ALIGN] Stacking complete.");
     return stackedResult;
 }
+
+    
