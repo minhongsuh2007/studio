@@ -63,95 +63,109 @@ function getTransformFromStarPair(refStar1: Star, refStar2: Star, targetStar1: S
     return { dx, dy, angle: -angle, scale };
 }
 
+function getTriangleSignature(p1: Star, p2: Star, p3: Star) {
+    const d12 = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+    const d23 = Math.hypot(p3.x - p2.x, p3.y - p2.y);
+    const d31 = Math.hypot(p1.x - p3.x, p1.y - p3.y);
+    const sides = [d12, d23, d31].sort((a,b)=>a-b);
+    if(sides[0] < 1e-6) return null;
+    // Return ratio of sides to make it scale-invariant
+    return [sides[1] / sides[0], sides[2] / sides[0]];
+}
+
+
 /**
- * Given sets of stars from multiple images, finds the pair of stars that is most commonly shared.
+ * Finds the most consistent geometric pattern (triangle) of stars across multiple images.
  */
-function findBestGlobalPair(
-  allImageStars: { imageId: string; stars: Star[] }[],
-  addLog: (message: string) => void
+function findGeometricConsensus(
+    allImageRankedStars: { imageId: string; rankedStars: { star: Star; probability: number; }[] }[],
+    addLog: (message: string) => void
 ): { refPair: Star[]; targetPairs: Record<string, Star[]>; imageIds: string[] } | null {
-    if (allImageStars.length < 2) {
-        addLog("[CONSENSUS] Need at least 2 images to find a global pair.");
+    if (allImageRankedStars.length < 2) {
+        addLog("[CONSENSUS] Need at least 2 images to find a consensus.");
         return null;
     }
 
-    const refImage = allImageStars[0];
-    const refImageStars = refImage.stars.sort((a,b) => b.brightness - a.brightness).slice(0, 50);
-
-    if (refImageStars.length < 2) {
-        addLog("[CONSENSUS] Reference image has fewer than 2 candidate stars.");
+    const refImage = allImageRankedStars[0];
+    const refStars = refImage.rankedStars.map(rs => rs.star);
+    if (refStars.length < 3) {
+        addLog(`[CONSENSUS] Reference image '${refImage.imageId}' has fewer than 3 AI-verified stars.`);
         return null;
     }
-    
-    let bestPairInfo = {
-        refPair: null as Star[] | null,
-        targetPairs: {} as Record<string, Star[]>,
-        count: 0
+
+    let bestMatch = {
+        count: 0,
+        refTriangle: null as Star[] | null,
+        targetTriangles: {} as Record<string, Star[]>
     };
 
-    const DIST_TOLERANCE = 0.05; // 5% tolerance for distance mismatch
+    const SIGNATURE_TOLERANCE = 0.05; // 5% tolerance for side ratios
 
-    // Iterate through all possible pairs in the reference image
-    for (let i = 0; i < refImageStars.length; i++) {
-        for (let j = i + 1; j < refImageStars.length; j++) {
-            const currentRefPair = [refImageStars[i], refImageStars[j]];
-            const refDist = Math.hypot(currentRefPair[1].x - currentRefPair[0].x, currentRefPair[1].y - currentRefPair[0].y);
+    // Iterate through all possible triangles in the reference image
+    for (let i = 0; i < refStars.length; i++) {
+        for (let j = i + 1; j < refStars.length; j++) {
+            for (let k = j + 1; k < refStars.length; k++) {
+                const refTriangle = [refStars[i], refStars[j], refStars[k]];
+                const refSignature = getTriangleSignature(...refTriangle);
+                if (!refSignature) continue;
 
-            let currentTargetPairs: Record<string, Star[]> = { [refImage.imageId]: currentRefPair };
-            let matchCount = 1;
+                let currentMatchCount = 1;
+                const currentTargetTriangles: Record<string, Star[]> = { [refImage.imageId]: refTriangle };
 
-            // Check this pair against all other images
-            for (let k = 1; k < allImageStars.length; k++) {
-                const targetImage = allImageStars[k];
-                const targetStars = targetImage.stars.sort((a,b) => b.brightness - a.brightness).slice(0, 50);
+                // Look for this triangle in other images
+                for (let imgIdx = 1; imgIdx < allImageRankedStars.length; imgIdx++) {
+                    const targetImage = allImageRankedStars[imgIdx];
+                    const targetStars = targetImage.rankedStars.map(rs => rs.star);
+                    if (targetStars.length < 3) continue;
 
-                if (targetStars.length < 2) continue;
-                
-                let bestTargetMatch: { pair: Star[], error: number } | null = null;
+                    let foundMatchInImage = false;
+                    for (let ti = 0; ti < targetStars.length && !foundMatchInImage; ti++) {
+                        for (let tj = ti + 1; tj < targetStars.length && !foundMatchInImage; tj++) {
+                            for (let tk = tj + 1; tk < targetStars.length && !foundMatchInImage; tk++) {
+                                const targetTriangle = [targetStars[ti], targetStars[tj], targetStars[tk]];
+                                const targetSignature = getTriangleSignature(...targetTriangle);
+                                if (!targetSignature) continue;
 
-                // Find the best matching pair in the target image
-                for (let m = 0; m < targetStars.length; m++) {
-                    for (let n = m + 1; n < targetStars.length; n++) {
-                        // Check both orderings of the pair
-                        const checkPairs: [Star, Star][] = [ [targetStars[m], targetStars[n]], [targetStars[n], targetStars[m]] ];
-                        
-                        for (const targetPair of checkPairs) {
-                            const targetDist = Math.hypot(targetPair[1].x - targetPair[0].x, targetPair[1].y - targetPair[0].y);
-                            const distError = Math.abs(targetDist - refDist) / refDist;
+                                const error1 = Math.abs(refSignature[0] - targetSignature[0]);
+                                const error2 = Math.abs(refSignature[1] - targetSignature[1]);
 
-                            if (distError < DIST_TOLERANCE) {
-                                if (!bestTargetMatch || distError < bestTargetMatch.error) {
-                                    bestTargetMatch = { pair: targetPair, error: distError };
+                                if (error1 < SIGNATURE_TOLERANCE && error2 < SIGNATURE_TOLERANCE) {
+                                    currentMatchCount++;
+                                    currentTargetTriangles[targetImage.imageId] = targetTriangle;
+                                    foundMatchInImage = true;
                                 }
                             }
                         }
                     }
                 }
-
-                if (bestTargetMatch) {
-                    currentTargetPairs[targetImage.imageId] = bestTargetMatch.pair;
-                    matchCount++;
+                
+                if (currentMatchCount > bestMatch.count) {
+                    bestMatch = {
+                        count: currentMatchCount,
+                        refTriangle: refTriangle,
+                        targetTriangles: currentTargetTriangles
+                    };
                 }
-            }
-            
-            if (matchCount > bestPairInfo.count) {
-                bestPairInfo = { refPair: currentRefPair, targetPairs: currentTargetPairs, count: matchCount };
             }
         }
     }
 
-    if (bestPairInfo.count < 2) {
-        addLog(`[CONSENSUS] Could not find a star pair shared by at least 2 images. Aborting.`);
+    if (bestMatch.count < 2) {
+        addLog("[CONSENSUS] Could not find a common geometric pattern across at least 2 images.");
         return null;
     }
+
+    addLog(`[CONSENSUS] Found a common pattern of 3 stars across ${bestMatch.count} images.`);
     
-    const imageIdsWithPair = Object.keys(bestPairInfo.targetPairs);
-    addLog(`[CONSENSUS] Found best pair, shared across ${bestPairInfo.count} images.`);
-    return {
-        refPair: bestPairInfo.refPair!,
-        targetPairs: bestPairInfo.targetPairs,
-        imageIds: imageIdsWithPair
-    };
+    // Convert the triangles back to pairs for the existing transform logic
+    const imageIds = Object.keys(bestMatch.targetTriangles);
+    const refPair = [bestMatch.refTriangle![0], bestMatch.refTriangle![1]];
+    const targetPairs: Record<string, Star[]> = {};
+    for (const id of imageIds) {
+        targetPairs[id] = [bestMatch.targetTriangles[id][0], bestMatch.targetTriangles[id][1]];
+    }
+
+    return { refPair, targetPairs, imageIds };
 }
 
 
@@ -174,75 +188,72 @@ export async function consensusAlignAndStack({
     throw new Error("Consensus stacking requires at least two images.");
   }
   
-  // 1. Get stars for all images. Prioritize AI-verified stars if available.
-  addLog("[CONSENSUS] Verifying stars for alignment...");
-  let allImageStars: { imageId: string, stars: Star[] }[] = [];
+  // 1. Get AI-ranked stars for all images
+  addLog("[CONSENSUS] Step 1: Getting AI-ranked star candidates for all images...");
+  const allImageRankedStars: { imageId: string; rankedStars: { star: Star; probability: number; }[] }[] = [];
 
   for (const [index, entry] of imageEntries.entries()) {
     if (!entry.imageData) continue;
 
-    let starsForAlignment: Star[] = [];
+    let starsToConsider: Star[] = entry.detectedStars;
 
     if (modelPackage) {
         const { data, width, height } = entry.imageData;
         const { rankedStars, logs } = await findMatchingStars({
             imageData: { data: Array.from(data), width, height },
-            candidates: entry.detectedStars,
+            candidates: starsToConsider,
             model: modelPackage.model,
             normalization: modelPackage.normalization,
         });
         logs.forEach(logMsg => addLog(`[AI-DETECT] ${entry.file.name}: ${logMsg}`));
 
-        // Automatically take the top 10 most probable stars
-        starsForAlignment = rankedStars.slice(0, 10).map(rs => rs.star);
-        entry.aiVerifiedStars = starsForAlignment; // Store for potential display
-        addLog(`[CONSENSUS] Using top ${starsForAlignment.length} AI-verified stars for ${entry.file.name}.`);
-
+        if (rankedStars && rankedStars.length > 0) {
+            allImageRankedStars.push({ imageId: entry.id, rankedStars });
+        } else {
+            addLog(`[AI-DETECT] No probable stars found for ${entry.file.name}.`);
+        }
     } else {
-        starsForAlignment = entry.detectedStars;
+        // If no AI model, create a dummy ranking based on brightness
+        const rankedStars = entry.detectedStars
+            .sort((a, b) => b.brightness - a.brightness)
+            .map(star => ({ star, probability: star.brightness / 1000 })); // Normalize brightness as pseudo-probability
+        allImageRankedStars.push({ imageId: entry.id, rankedStars });
         addLog(`[CONSENSUS] No AI model. Using ${entry.detectedStars.length} detected stars for ${entry.file.name}.`);
     }
     
-    if (starsForAlignment.length > 1) {
-        allImageStars.push({ imageId: entry.id, stars: starsForAlignment });
-    }
-    setProgress(0.2 * ((index + 1) / imageEntries.length));
+    setProgress(0.3 * ((index + 1) / imageEntries.length));
   }
 
-  if (allImageStars.length < 2) {
-      throw new Error("Fewer than two images have enough detected stars for consensus alignment.");
-  }
-
-  
-  // 2. Find the best globally shared pair of stars
-  addLog("[CONSENSUS] Finding the most common star pair across all images...");
-  const globalPairInfo = findBestGlobalPair(allImageStars, addLog);
-
-  if (!globalPairInfo) {
-      throw new Error("Consensus alignment failed: Could not find a reliable star pair shared across multiple images.");
+  if (allImageRankedStars.length < 2) {
+      throw new Error("Fewer than two images have enough stars for consensus alignment.");
   }
   
-  const { refPair, targetPairs, imageIds } = globalPairInfo;
+  // 2. Find the best geometrically consistent set of stars
+  addLog("[CONSENSUS] Step 2: Finding the most common geometric star pattern...");
+  const globalConsensus = findGeometricConsensus(allImageRankedStars, addLog);
+
+  if (!globalConsensus) {
+      throw new Error("Consensus alignment failed: Could not find a reliable star pattern shared across multiple images.");
+  }
+  
+  const { refPair, targetPairs, imageIds } = globalConsensus;
   
   const refImageId = Object.keys(targetPairs)[0];
   const refEntry = imageEntries.find(e => e.id === refImageId)!;
   const { width, height } = refEntry.analysisDimensions;
 
-  setProgress(0.4);
+  setProgress(0.5);
 
-  // 3. Align and collect image data for the images that share the global pair
-  addLog(`[CONSENSUS] Aligning ${imageIds.length} images that contain the global star pair.`);
+  // 3. Align and collect image data for the images that were part of the consensus
+  addLog(`[CONSENSUS] Step 3: Aligning ${imageIds.length} images that contain the common pattern.`);
   const alignedImageDatas: (Uint8ClampedArray | null)[] = [];
 
   for (let i = 0; i < imageEntries.length; i++) {
     const entry = imageEntries[i];
-    const progress = 0.4 + (0.5 * (i + 1) / imageEntries.length);
+    const progress = 0.5 + (0.4 * (i + 1) / imageEntries.length);
     
-    // Ensure the image is part of the consensus set and has valid data
     if (!imageIds.includes(entry.id) || !entry.imageData || !entry.imageData.data) {
-        if (imageIds.includes(entry.id)) {
-             addLog(`[CONSENSUS] Discarding ${entry.file.name}: does not have valid image data despite being in consensus set.`);
-        }
+        addLog(`[CONSENSUS] Excluding ${entry.file.name}: Not part of the geometric consensus.`);
         alignedImageDatas.push(null);
         setProgress(progress);
         continue;
@@ -274,11 +285,12 @@ export async function consensusAlignAndStack({
   }
 
   // 4. Stack the aligned images
-  addLog(`[CONSENSUS] Stacking ${alignedImageDatas.filter(d => d !== null).length} images with mode: ${stackingMode}.`);
+  const validImagesToStack = alignedImageDatas.filter(d => d !== null);
+  addLog(`[CONSENSUS] Step 4: Stacking ${validImagesToStack.length} images with mode: ${stackingMode}.`);
   setProgress(0.99);
 
-  if (alignedImageDatas.filter(d => d !== null).length < 2) {
-      throw new Error("Consensus Stacking failed: Fewer than 2 images remained after filtering for the global pair.");
+  if (validImagesToStack.length < 2) {
+      throw new Error("Consensus Stacking failed: Fewer than 2 images remained after filtering for the common pattern.");
   }
 
   let stackedResult;
