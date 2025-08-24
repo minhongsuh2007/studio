@@ -1,29 +1,42 @@
+
 'use client';
 
 import type { Star, StackingMode, Transform, ImageQueueEntry } from '@/lib/astro-align';
 import { warpImage, stackImagesAverage, stackImagesMedian, stackImagesSigmaClip, stackImagesLaplacian } from '@/lib/astro-align';
 
 /**
- * Detects pixels that are pure white (255, 255, 255).
+ * Detects the brightest pixels in an image. Starts with a threshold of 255
+ * and lowers it until at least 25 pixels are found.
  */
-function detectWhitePixels(imageData: ImageData): Star[] {
+function detectBrightestPixels(imageData: ImageData, addLog: (message: string) => void, fileName: string): Star[] {
     const { data, width } = imageData;
-    const stars: Star[] = [];
+    let stars: Star[] = [];
+    let threshold = 255;
+    const minThreshold = 200; // Stop if threshold gets too low to avoid performance issues
 
-    for (let i = 0; i < data.length; i += 4) {
-        if (data[i] === 255 && data[i + 1] === 255 && data[i + 2] === 255) {
-            const x = (i / 4) % width;
-            const y = Math.floor((i / 4) / width);
-            stars.push({
-                x,
-                y,
-                brightness: 255,
-                size: 1,
-            });
+    while (stars.length < 25 && threshold >= minThreshold) {
+        stars = []; // Reset for each new threshold attempt
+        for (let i = 0; i < data.length; i += 4) {
+            if (data[i] >= threshold && data[i + 1] >= threshold && data[i + 2] >= threshold) {
+                const x = (i / 4) % width;
+                const y = Math.floor((i / 4) / width);
+                stars.push({
+                    x,
+                    y,
+                    brightness: (data[i] + data[i+1] + data[i+2])/3,
+                    size: 1,
+                });
+            }
+        }
+        
+        if (stars.length < 25) {
+            threshold--;
         }
     }
+    addLog(`[DUMB-DETECT] Found ${stars.length} pixels in ${fileName} at threshold ${threshold}.`);
     return stars;
 }
+
 
 /**
  * Calculates the transformation required to align two point sets.
@@ -60,7 +73,7 @@ function getTransformFromStarPair(refStar1: Star, refStar2: Star, targetStar1: S
 }
 
 /**
- * Finds the most common pair of white pixels across all images.
+ * Finds the most common pair of bright pixels across all images.
  */
 function findBestGlobalPair(
     allImageStars: { imageId: string; stars: Star[] }[],
@@ -73,7 +86,7 @@ function findBestGlobalPair(
 
     const refImageStars = allImageStars[0].stars;
     if (refImageStars.length < 2) {
-        addLog("[DUMB-ALIGN] Reference image has fewer than 2 white pixels.");
+        addLog("[DUMB-ALIGN] Reference image has fewer than 2 bright pixels.");
         return null;
     }
 
@@ -128,7 +141,7 @@ function findBestGlobalPair(
     }
 
     if (bestPairInfo.count < 2) {
-        addLog("[DUMB-ALIGN] Could not find a white pixel pair shared by at least 2 images.");
+        addLog("[DUMB-ALIGN] Could not find a bright pixel pair shared by at least 2 images.");
         return null;
     }
 
@@ -154,29 +167,28 @@ export async function dumbAlignAndStack({
     addLog: (message: string) => void;
     setProgress: (progress: number) => void;
 }): Promise<Uint8ClampedArray> {
-    addLog("[DUMB-ALIGN] Starting dumb alignment based on white pixels.");
+    addLog("[DUMB-ALIGN] Starting dumb alignment based on brightest pixels.");
     if (imageEntries.length < 2) {
         throw new Error("Dumb stacking requires at least two images.");
     }
 
-    addLog("[DUMB-ALIGN] Step 1: Detecting white pixels in all images...");
-    const allImageWhitePixels = imageEntries.map((entry, index) => {
+    addLog("[DUMB-ALIGN] Step 1: Detecting brightest pixels in all images...");
+    const allImageBrightPixels = imageEntries.map((entry, index) => {
         if (!entry.imageData) return { imageId: entry.id, stars: [] };
-        const whitePixels = detectWhitePixels(entry.imageData);
-        addLog(`[DUMB-ALIGN] Found ${whitePixels.length} white pixels in ${entry.file.name}.`);
+        const brightPixels = detectBrightestPixels(entry.imageData, addLog, entry.file.name);
         setProgress(0.3 * ((index + 1) / imageEntries.length));
-        return { imageId: entry.id, stars: whitePixels };
+        return { imageId: entry.id, stars: brightPixels };
     }).filter(data => data.stars.length >= 2);
 
-    if (allImageWhitePixels.length < 2) {
-        throw new Error("Fewer than two images have enough white pixels for alignment.");
+    if (allImageBrightPixels.length < 2) {
+        throw new Error("Fewer than two images have enough bright pixels for alignment.");
     }
 
-    addLog("[DUMB-ALIGN] Step 2: Finding the most common white pixel pair...");
-    const globalPair = findBestGlobalPair(allImageWhitePixels, addLog);
+    addLog("[DUMB-ALIGN] Step 2: Finding the most common bright pixel pair...");
+    const globalPair = findBestGlobalPair(allImageBrightPixels, addLog);
 
     if (!globalPair) {
-        throw new Error("Dumb alignment failed: Could not find a reliable white pixel pair shared across multiple images.");
+        throw new Error("Dumb alignment failed: Could not find a reliable bright pixel pair shared across multiple images.");
     }
 
     const { refPair, targetPairs, imageIds } = globalPair;
