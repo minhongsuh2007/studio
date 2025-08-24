@@ -65,6 +65,8 @@ type PreviewFitMode = 'contain' | 'cover';
 type OutputFormat = 'png' | 'jpeg';
 type AlignmentMethod = 'standard' | 'consensus' | 'planetary';
 type StackingQuality = 'standard' | 'high';
+type StarDetectionMethod = 'general' | 'ai';
+
 
 const MIN_VALID_DATA_URL_LENGTH = 100;
 const IS_LARGE_IMAGE_THRESHOLD_MP = 12;
@@ -79,6 +81,7 @@ export default function AstroStackerPage() {
   const [isTrainingModel, setIsTrainingModel] = useState(false);
   const [stackingMode, setStackingMode] = useState<StackingMode>('median');
   const [alignmentMethod, setAlignmentMethod] = useState<AlignmentMethod>('standard');
+  const [starDetectionMethod, setStarDetectionMethod] = useState<StarDetectionMethod>('general');
   const [stackingQuality, setStackingQuality] = useState<StackingQuality>('standard');
   const [planetaryStackingQuality, setPlanetaryStackingQuality] = useState<number>(50);
   const [previewFitMode, setPreviewFitMode] = useState<PreviewFitMode>('contain');
@@ -719,10 +722,16 @@ export default function AstroStackerPage() {
             planetaryStackingQuality
         );
       } else if (alignmentMethod === 'consensus') {
+          const shouldUseAi = starDetectionMethod === 'ai' && trainedModel && modelNormalization;
+          if (shouldUseAi) {
+            addLog("[CONSENSUS] Using AI-powered star detection for alignment.");
+          } else {
+            addLog("[CONSENSUS] Using general brightness-based star detection for alignment.");
+          }
           stackedImageData = await consensusAlignAndStack({
               imageEntries: calibratedLightFrames,
               stackingMode,
-              modelPackage: trainedModel && modelNormalization ? { model: trainedModel, normalization: modelNormalization } : undefined,
+              modelPackage: shouldUseAi ? { model: trainedModel, normalization: modelNormalization } : undefined,
               addLog,
               setProgress: progressUpdate,
           });
@@ -1262,6 +1271,14 @@ export default function AstroStackerPage() {
                     </div>
                   )}
                 </div>
+
+                <div className="space-y-2"><Label className="text-base font-semibold text-foreground">Star Detection Method</Label>
+                  <RadioGroup value={starDetectionMethod} onValueChange={(v) => setStarDetectionMethod(v as StarDetectionMethod)} className="flex space-x-4" disabled={isUiDisabled || alignmentMethod !== 'consensus'}>
+                      <div className="flex items-center space-x-2"><RadioGroupItem value="general" id="detect-general" /><Label htmlFor="detect-general" className="flex items-center gap-1"><ShieldOff className="h-4 w-4"/>General</Label></div>
+                      <div className="flex items-center space-x-2"><RadioGroupItem value="ai" id="detect-ai" disabled={!trainedModel} /><Label htmlFor="detect-ai" className={`flex items-center gap-1 ${!trainedModel ? 'text-muted-foreground' : ''}`}><BrainCircuit className="h-4 w-4"/>AI {!trainedModel && '(Train model first)'}</Label></div>
+                  </RadioGroup>
+                </div>
+
                  <div className="space-y-2"><Label className="text-base font-semibold text-foreground">Stacking Quality</Label>
                   <RadioGroup value={stackingQuality} onValueChange={(v) => setStackingQuality(v as StackingQuality)} className="flex space-x-2" disabled={isUiDisabled}>
                     <div className="flex items-center space-x-1"><RadioGroupItem value="standard" id="quality-standard" /><Label htmlFor="quality-standard" className="flex items-center gap-1"><Zap className="h-4 w-4"/>Standard (Fast)</Label></div>
@@ -1391,3 +1408,5 @@ export default function AstroStackerPage() {
     </div>
   );
 }
+
+    
