@@ -52,79 +52,95 @@ export async function calculateHistogram(imageUrl: string) {
 }
 
 export async function detectStarsForRemoval(imageUrl: string, strength: number): Promise<Star[]> {
+    if (strength === 0) return [];
     const imageData = await getImageDataFromUrl(imageUrl);
     const { data, width, height } = imageData;
-    const threshold = strength;
+    const threshold = strength; 
     const visited = new Uint8Array(width * height);
     const stars: Star[] = [];
+    const maxStarSize = 500; // Do not remove blobs larger than this
 
-    const BRIGHT_AREA_THRESHOLD = 220; // Pixels in areas brighter than this won't be considered stars to remove
-    const BRIGHT_AREA_CHECK_RADIUS = 10;
+    const getNeighbors = (pos: number): number[] => {
+        const neighbors: number[] = [];
+        const x = pos % width;
+        const y = Math.floor(pos / width);
+        for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+                if (dx === 0 && dy === 0) continue;
+                const nx = x + dx;
+                const ny = y + dy;
+                if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+                    neighbors.push(ny * width + nx);
+                }
+            }
+        }
+        return neighbors;
+    };
+    
+    const isPixelAboveThreshold = (idx: number) => {
+        const base = idx * 4;
+        return (data[base] + data[base + 1] + data[base + 2]) / 3 > threshold;
+    };
 
     for (let i = 0; i < width * height; i++) {
-        const idx = i * 4;
-        const brightness = (data[idx] + data[idx+1] + data[idx+2]) / 3;
-        if (!visited[i] && brightness > threshold) {
-            const blob: number[] = [];
-            const queue = [i];
-            visited[i] = 1;
-            let sumX = 0; let sumY = 0; let sumBrightness = 0;
+        if (visited[i] || !isPixelAboveThreshold(i)) continue;
 
-            while (queue.length > 0) {
-                const current = queue.shift()!;
-                blob.push(current);
-                const x = current % width;
-                const y = Math.floor(current / width);
-                const bIdx = current * 4;
-                const bVal = (data[bIdx] + data[bIdx+1] + data[bIdx+2]) / 3;
+        const blobPixels: number[] = [];
+        const borderPixels: {x: number, y: number}[] = [];
+        const queue: number[] = [i];
+        visited[i] = 1;
+        
+        let sumX = 0, sumY = 0, sumBrightness = 0;
 
-                sumX += x * bVal;
-                sumY += y * bVal;
-                sumBrightness += bVal;
+        while (queue.length > 0) {
+            const p = queue.shift()!;
+            blobPixels.push(p);
 
-                for (let dy = -1; dy <= 1; dy++) {
-                    for (let dx = -1; dx <= 1; dx++) {
-                        const nx = x + dx; const ny = y + dy;
-                        if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
-                            const neighborIdx = ny * width + nx;
-                            const neighborBrightness = (data[neighborIdx*4] + data[neighborIdx*4+1] + data[neighborIdx*4+2]) / 3;
-                            if (!visited[neighborIdx] && neighborBrightness > threshold) {
-                                visited[neighborIdx] = 1;
-                                queue.push(neighborIdx);
-                            }
-                        }
+            const x = p % width;
+            const y = Math.floor(p / width);
+            const brightness = (data[p * 4] + data[p * 4 + 1] + data[p * 4 + 2]) / 3;
+            sumX += x * brightness;
+            sumY += y * brightness;
+            sumBrightness += brightness;
+
+            let isBorder = false;
+            const neighbors = getNeighbors(p);
+            for (const n of neighbors) {
+                if (!visited[n]) {
+                     if (isPixelAboveThreshold(n)) {
+                        visited[n] = 1;
+                        queue.push(n);
+                    } else {
+                        isBorder = true; 
                     }
                 }
             }
-             if (blob.length > 0 && sumBrightness > 0) {
-                const starX = sumX / sumBrightness;
-                const starY = sumY / sumBrightness;
-
-                // Check average brightness of the surrounding area to avoid removing nebula cores
-                let surroundingBrightness = 0;
-                let surroundingCount = 0;
-                const startCheckX = Math.max(0, Math.round(starX) - BRIGHT_AREA_CHECK_RADIUS);
-                const endCheckX = Math.min(width, Math.round(starX) + BRIGHT_AREA_CHECK_RADIUS);
-                const startCheckY = Math.max(0, Math.round(starY) - BRIGHT_AREA_CHECK_RADIUS);
-                const endCheckY = Math.min(height, Math.round(starY) + BRIGHT_AREA_CHECK_RADIUS);
-
-                for(let y = startCheckY; y < endCheckY; y++) {
-                  for(let x = startCheckX; x < endCheckX; x++) {
-                    const checkIdx = (y * width + x) * 4;
-                    surroundingBrightness += (data[checkIdx] + data[checkIdx+1] + data[checkIdx+2]) / 3;
-                    surroundingCount++;
-                  }
-                }
-                const avgSurroundingBrightness = surroundingCount > 0 ? surroundingBrightness / surroundingCount : 0;
-
-                if (avgSurroundingBrightness < BRIGHT_AREA_THRESHOLD) {
-                    stars.push({ x: starX, y: starY, brightness: sumBrightness, size: blob.length });
-                }
+            if (isBorder) {
+              borderPixels.push({x, y});
             }
+        }
+        
+        const blobSize = blobPixels.length;
+        if (blobSize === 0 || blobSize > maxStarSize) continue;
+
+        const centerX = sumX / sumBrightness;
+        const centerY = sumY / sumBrightness;
+        
+        // Circularity check: Compare blob area to the area of a circle defined by its perimeter
+        const perimeter = borderPixels.length;
+        if (perimeter === 0) continue;
+
+        const circularity = 4 * Math.PI * (blobSize / (perimeter * perimeter));
+
+        // A perfect circle has circularity of 1. Stars should be mostly circular.
+        // Nebulosity will be irregular and have low circularity.
+        if (circularity > 0.4) {
+             stars.push({ x: centerX, y: centerY, brightness: sumBrightness, size: blobSize });
         }
     }
     return stars;
 }
+
 
 function createStarMask(width: number, height: number, stars: Star[]): Uint8Array {
     const mask = new Uint8Array(width * height).fill(0); // 0 = background, 1 = star
@@ -159,73 +175,47 @@ function inpaint(imageData: ImageData, mask: Uint8Array): void {
         }
     }
     
-    // Sort pixels from edge to center - a simple approximation
-    toFill.sort((a, b) => {
-        const ax = a % width, ay = Math.floor(a / width);
-        const bx = b % width, by = Math.floor(b / width);
-        
-        const distToCenterA = Math.hypot(ax - width/2, ay - height/2);
-        const distToCenterB = Math.hypot(bx - width/2, by - height/2);
+    // Iteratively fill pixels. This is a simple but effective approach.
+    let changed = true;
+    while(changed) {
+        changed = false;
+        for (let i = toFill.length - 1; i >= 0; i--) {
+            const pixelIndex = toFill[i];
+            const x = pixelIndex % width;
+            const y = Math.floor(pixelIndex / width);
 
-        let minBorderDistA = Infinity;
-        let minBorderDistB = Infinity;
+            let sumR = 0, sumG = 0, sumB = 0;
+            let count = 0;
 
-        for(let y = ay - 3; y <= ay + 3; y++) {
-             for(let x = ax - 3; x <= ax + 3; x++) {
-                 if (x >= 0 && x < width && y >= 0 && y < height && mask[y * width + x] === 0) {
-                     minBorderDistA = Math.min(minBorderDistA, Math.hypot(x-ax, y-ay));
-                 }
-             }
-        }
-        for(let y = by - 3; y <= by + 3; y++) {
-             for(let x = bx - 3; x <= bx + 3; x++) {
-                 if (x >= 0 && x < width && y >= 0 && y < height && mask[y * width + x] === 0) {
-                     minBorderDistB = Math.min(minBorderDistB, Math.hypot(x-bx, y-by));
-                 }
-             }
-        }
-        
-        if(minBorderDistA !== minBorderDistB) return minBorderDistA - minBorderDistB;
-        return distToCenterA - distToCenterB;
-    });
+            // Check 8 neighbors
+            for (let dy = -1; dy <= 1; dy++) {
+                for (let dx = -1; dx <= 1; dx++) {
+                    if (dx === 0 && dy === 0) continue;
+                    const nx = x + dx;
+                    const ny = y + dy;
 
-    for(const pixelIndex of toFill) {
-        const x = pixelIndex % width;
-        const y = Math.floor(pixelIndex / width);
-
-        let sumR = 0, sumG = 0, sumB = 0;
-        let totalWeight = 0;
-
-        const searchRadius = 5;
-
-        for(let dy = -searchRadius; dy <= searchRadius; dy++) {
-            for(let dx = -searchRadius; dx <= searchRadius; dx++) {
-                if(dx === 0 && dy === 0) continue;
-                const nx = x + dx;
-                const ny = y + dy;
-
-                if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
-                    const neighborIndex = ny * width + nx;
-                    if(mask[neighborIndex] === 0) { // Is a valid background pixel
-                        const distSq = dx*dx + dy*dy;
-                        const weight = 1 / (distSq + 0.1);
-                        const dataIndex = neighborIndex * 4;
-
-                        sumR += data[dataIndex] * weight;
-                        sumG += data[dataIndex + 1] * weight;
-                        sumB += data[dataIndex + 2] * weight;
-                        totalWeight += weight;
+                    if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+                        const neighborIndex = ny * width + nx;
+                        if (mask[neighborIndex] === 0) { // Is a valid background pixel
+                            const dataIndex = neighborIndex * 4;
+                            sumR += data[dataIndex];
+                            sumG += data[dataIndex + 1];
+                            sumB += data[dataIndex + 2];
+                            count++;
+                        }
                     }
                 }
             }
-        }
 
-        if(totalWeight > 0) {
-            const dataIndex = pixelIndex * 4;
-            data[dataIndex] = sumR / totalWeight;
-            data[dataIndex + 1] = sumG / totalWeight;
-            data[dataIndex + 2] = sumB / totalWeight;
-            mask[pixelIndex] = 0; // Mark as filled
+            if (count > 0) {
+                const dataIndex = pixelIndex * 4;
+                data[dataIndex] = sumR / count;
+                data[dataIndex + 1] = sumG / count;
+                data[dataIndex + 2] = sumB / count;
+                mask[pixelIndex] = 0; // Mark as filled
+                toFill.splice(i, 1);
+                changed = true;
+            }
         }
     }
 }
