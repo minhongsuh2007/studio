@@ -5,7 +5,6 @@ import type React from 'react';
 import { useState, useEffect, useRef, useCallback }from 'react';
 import * as tf from '@tensorflow/tfjs';
 import { Button } from '@/components/ui/button';
-import { fileToDataURL } from '@/lib/utils';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { alignAndStack, detectBrightBlobs, type Star, type StackingMode } from '@/lib/astro-align';
 import { consensusAlignAndStack } from '@/lib/consensus-align';
@@ -124,6 +123,94 @@ export default function AstroStackerPage() {
   const [trainedModel, setTrainedModel] = useState<tf.LayersModel | null>(null);
   const [modelNormalization, setModelNormalization] = useState<{ means: number[], stds: number[] } | null>(null);
 
+  // --- Client-side only functions ---
+  const [fileToDataURL, setFileToDataURL] = useState<((file: File) => Promise<string>) | null>(null);
+
+  useEffect(() => {
+    // Define these functions inside useEffect to ensure they are only created on the client side.
+    const processWithFileReader = (file: File): Promise<string> => {
+      console.log(`[FileReader] Processing standard web format for: ${file.name}`);
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          if (e.target?.result) {
+            console.log(`[FileReader] Successfully read ${file.name}`);
+            resolve(e.target.result as string);
+          } else {
+            console.error(`[FileReader] Failed to read file, event target result is null for ${file.name}.`);
+            reject(new Error(`FileReader failed for ${file.name}.`));
+          }
+        };
+        reader.onerror = (e) => {
+            console.error(`[FileReader] Error reading file ${file.name}:`, e);
+            reject(new Error(`Error reading file ${file.name}.`))
+        };
+        reader.readAsDataURL(file);
+      });
+    };
+
+    const processFileWithImageMagick = async (file: File): Promise<string> => {
+      console.log(`[ImageMagick] Starting conversion process for: ${file.name}`);
+      try {
+        const { call } = await import('wasm-imagemagick');
+        
+        const buffer = await file.arrayBuffer();
+        const inputFiles = [{ name: file.name, content: new Uint8Array(buffer) }];
+        const outputName = 'output.png';
+
+        const command = ['convert', `${file.name}[0]`, outputName];
+        console.log(`[ImageMagick] Executing command:`, command.join(' '));
+        
+        const result = await call(inputFiles, command);
+        const outputFile = result.find(f => f.name === outputName);
+
+        if (!outputFile) {
+            throw new Error(`ImageMagick conversion did not produce the expected output file: ${outputName}.`);
+        }
+        console.log(`[ImageMagick] Successfully converted ${file.name} to ${outputName}. Size: ${outputFile.content.byteLength} bytes.`);
+
+        const blob = new Blob([outputFile.content], { type: 'image/png' });
+        console.log(`[ImageMagick] Created Blob from output file.`);
+
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = e => {
+                console.log(`[ImageMagick] Successfully converted Blob to Data URL for ${file.name}.`);
+                resolve(e.target?.result as string);
+            }
+            reader.onerror = e => {
+                console.error(`[ImageMagick] FileReader error after conversion for ${file.name}:`, e);
+                reject(e);
+            }
+            reader.readAsDataURL(blob);
+        });
+
+      } catch (error) {
+        console.error(`[ImageMagick] CRITICAL ERROR during conversion of ${file.name}:`, error);
+        // Fallback for standard types if Magick fails for some reason
+        if (['image/jpeg', 'image/png', 'image/gif'].includes(file.type)) {
+          console.warn(`[ImageMagick] Fallback to FileReader for ${file.name}.`);
+          return processWithFileReader(file);
+        }
+        throw new Error(`Failed to process file ${file.name} with ImageMagick. Reason: ${error instanceof Error ? error.message : 'Unknown'}`);
+      }
+    };
+    
+    const converter = async (file: File): Promise<string> => {
+      const isStandardWebFormat = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'].includes(file.type);
+
+      if (isStandardWebFormat) {
+        console.log(`[fileToDataURL] Using standard FileReader for ${file.name} (type: ${file.type})`);
+        return processWithFileReader(file);
+      }
+
+      console.log(`[fileToDataURL] Using ImageMagick for ${file.name} (type: ${file.type})`);
+      return processFileWithImageMagick(file);
+    };
+
+    setFileToDataURL(() => converter);
+
+  }, []);
 
   const addLog = useCallback((message: string) => {
     setLogs(prevLogs => {
@@ -267,7 +354,11 @@ export default function AstroStackerPage() {
     return finalUpdatedEntry;
   };
 
-  const handleFilesAdded = async (files: File[]) => {
+  const handleFilesAdded = useCallback(async (files: File[]) => {
+    if (!fileToDataURL) {
+      addLog("[ERROR] File processing function not ready yet. Please wait a moment and try again.");
+      return;
+    }
     addLog(`Attempting to add ${files.length} file(s).`);
   
     const newEntriesPromises = files.map(async (file): Promise<ImageQueueEntry | null> => {
@@ -336,12 +427,16 @@ export default function AstroStackerPage() {
         analyzeImageForStars(entry);
       }
     }
-  };
+  }, [addLog, fileToDataURL]);
 
-  const handleCalibrationFilesAdded = async (
+  const handleCalibrationFilesAdded = useCallback(async (
     files: File[],
     type: 'dark' | 'flat' | 'bias'
   ) => {
+      if (!fileToDataURL) {
+        addLog("[ERROR] File processing function not ready yet. Please wait a moment and try again.");
+        return;
+      }
       addLog(`[CALIBRATION] Loading ${files.length} ${type} frame(s)...`);
       const setters = {
           dark: setDarkFrames,
@@ -383,7 +478,7 @@ export default function AstroStackerPage() {
       if (newEntries.length > 0) {
         setState(prev => [...prev, ...newEntries]);
       }
-  };
+  }, [addLog, fileToDataURL]);
   
   const handleRemoveImage = (idToRemove: string) => {
     setAllImageStarData(prev => prev.filter(item => item.id !== idToRemove));
@@ -744,8 +839,12 @@ export default function AstroStackerPage() {
     setBlackPoint(0); setMidtones(1); setWhitePoint(255);
   };
   
-  const handleTestFileAdded = async (files: File[]) => {
+  const handleTestFileAdded = useCallback(async (files: File[]) => {
     if (files.length === 0) return;
+    if (!fileToDataURL) {
+      addLog("[ERROR] File processing function not ready yet. Please wait a moment and try again.");
+      return;
+    }
     const file = files[0];
     addLog(`Loading test image: ${file.name}`);
     setTestImage(null);
@@ -774,7 +873,7 @@ export default function AstroStackerPage() {
     } else {
         addLog(`[ERROR] Failed to load test image ${file.name}.`);
     }
-  };
+  }, [addLog, fileToDataURL]);
 
   const runPatternTest = async () => {
     if (!testImage || !testImage.imageData) {
@@ -858,7 +957,7 @@ export default function AstroStackerPage() {
     addLog("Exported all learned patterns to astrostacker_patterns.json");
   };
 
-  const handleImportPatterns = (files: File[]) => {
+  const handleImportPatterns = useCallback((files: File[]) => {
     if (files.length === 0) return;
     const file = files[0];
     const reader = new FileReader();
@@ -910,7 +1009,7 @@ export default function AstroStackerPage() {
       window.alert(t('patternImportFailed'));
     };
     reader.readAsText(file);
-  };
+  }, [t]);
   
 
   type Sample = {
@@ -1056,7 +1155,7 @@ export default function AstroStackerPage() {
                 <CardDescription className="text-sm max-h-32 overflow-y-auto">{t('cardDescription')}</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <ImageUploadArea onFilesAdded={handleFilesAdded} isProcessing={isUiDisabled} multiple={true} />
+                <ImageUploadArea onFilesAdded={handleFilesAdded} isProcessing={isUiDisabled || !fileToDataURL} multiple={true} />
 
                 <Accordion type="multiple" className="w-full">
                   <AccordionItem value="darks">
@@ -1074,7 +1173,7 @@ export default function AstroStackerPage() {
                         <Switch id="use-darks" checked={useDarks} onCheckedChange={setUseDarks} disabled={isUiDisabled || darkFrames.length === 0} />
                         <Label htmlFor="use-darks">{t('useDarkFramesLabel')}</Label>
                       </div>
-                      <ImageUploadArea onFilesAdded={(f) => handleCalibrationFilesAdded(f, 'dark')} isProcessing={isUiDisabled} multiple={true} />
+                      <ImageUploadArea onFilesAdded={(f) => handleCalibrationFilesAdded(f, 'dark')} isProcessing={isUiDisabled || !fileToDataURL} multiple={true} />
                       {darkFrames.length > 0 && 
                         <ScrollArea className="h-32">
                           <div className="grid grid-cols-2 gap-2 p-1">
@@ -1104,7 +1203,7 @@ export default function AstroStackerPage() {
                         <Switch id="use-flats" checked={useFlats} onCheckedChange={setUseFlats} disabled={isUiDisabled || flatFrames.length === 0} />
                         <Label htmlFor="use-flats">{t('useFlatFramesLabel')}</Label>
                       </div>
-                      <ImageUploadArea onFilesAdded={(f) => handleCalibrationFilesAdded(f, 'flat')} isProcessing={isUiDisabled} multiple={true} />
+                      <ImageUploadArea onFilesAdded={(f) => handleCalibrationFilesAdded(f, 'flat')} isProcessing={isUiDisabled || !fileToDataURL} multiple={true} />
                       {flatFrames.length > 0 && 
                         <ScrollArea className="h-32">
                           <div className="grid grid-cols-2 gap-2 p-1">
@@ -1134,7 +1233,7 @@ export default function AstroStackerPage() {
                         <Switch id="use-bias" checked={useBias} onCheckedChange={setUseBias} disabled={isUiDisabled || biasFrames.length === 0} />
                         <Label htmlFor="use-bias">{t('useBiasFramesLabel')}</Label>
                       </div>
-                      <ImageUploadArea onFilesAdded={(f) => handleCalibrationFilesAdded(f, 'bias')} isProcessing={isUiDisabled} multiple={true} />
+                      <ImageUploadArea onFilesAdded={(f) => handleCalibrationFilesAdded(f, 'bias')} isProcessing={isUiDisabled || !fileToDataURL} multiple={true} />
                       {biasFrames.length > 0 && 
                         <ScrollArea className="h-32">
                           <div className="grid grid-cols-2 gap-2 p-1">
@@ -1309,7 +1408,7 @@ export default function AstroStackerPage() {
               <Card>
                   <CardHeader><CardTitle className="flex items-center"><TestTube2 className="mr-2 h-5 w-5" />{t('learnTestCardTitle')}</CardTitle><CardDescription>{t('learnTestCardDescription')}</CardDescription></CardHeader>
                   <CardContent className="space-y-4">
-                      <ImageUploadArea onFilesAdded={handleTestFileAdded} isProcessing={isAnalyzingTestImage || isUiDisabled} multiple={false} />
+                      <ImageUploadArea onFilesAdded={handleTestFileAdded} isProcessing={isAnalyzingTestImage || isUiDisabled || !fileToDataURL} multiple={false} />
                       <Button onClick={runPatternTest} disabled={isAnalyzingTestImage || isUiDisabled || !testImage} className="w-full">
                           {isAnalyzingTestImage ? <><Loader2 className="mr-2 h-4 w-4 animate-spin"/>{t('analyzingTestImageProgress')}</> : <>{t('runPatternTestButton')}</>}
                       </Button>

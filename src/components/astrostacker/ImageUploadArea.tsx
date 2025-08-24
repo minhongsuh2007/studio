@@ -22,14 +22,13 @@ export const ALL_ACCEPTED_FORMATS: Accept = {
   'image/png': ['.png'],
   'image/gif': ['.gif'],
   'image/webp': ['.webp'],
-  // Temporarily disabled RAW formats until worker issue is resolved.
-  // 'image/tiff': ['.tif', '.tiff'],
-  // 'image/fits': ['.fit', '.fits'],
-  // 'image/x-canon-cr2': ['.cr2'],
-  // 'image/x-nikon-nef': ['.nef'],
-  // 'image/x-sony-arw': ['.arw'],
-  // 'image/x-adobe-dng': ['.dng'],
-  // 'image/x-raw': ['.raw'],
+  'image/tiff': ['.tif', '.tiff'],
+  'image/fits': ['.fit', '.fits'],
+  'image/x-canon-cr2': ['.cr2'],
+  'image/x-nikon-nef': ['.nef'],
+  'image/x-sony-arw': ['.arw'],
+  'image/x-adobe-dng': ['.dng'],
+  'image/x-raw': ['.raw'],
 };
 
 
