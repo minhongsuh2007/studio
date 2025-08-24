@@ -32,9 +32,10 @@ import { Checkbox } from "@/components/ui/checkbox";
 import NextImage from 'next/image';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { createMasterFrame, applyCalibration } from '@/lib/image-calibration';
-import { applyPostProcessing, calculateHistogram } from '@/lib/post-process';
+import { applyPostProcessing } from '@/lib/post-process';
 import { Input } from '@/components/ui/input';
 
+export const dynamic = 'force-static';
 
 interface ImageQueueEntry {
   id: string;

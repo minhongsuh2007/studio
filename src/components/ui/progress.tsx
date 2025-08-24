@@ -4,7 +4,7 @@ import * as React from "react"
 import { cn } from "@/lib/utils"
 
 interface ProgressProps extends React.HTMLAttributes<HTMLDivElement> {
-  value?: number | null;
+  value?: number;
 }
 
 const Progress = React.forwardRef<HTMLDivElement, ProgressProps>(

@@ -6,7 +6,6 @@ import { useCallback, useState } from 'react';
 import { useDropzone, type Accept } from 'react-dropzone';
 import { UploadCloud, Image as ImageIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 
 interface ImageUploadAreaProps {
   onFilesAdded: (files: File[]) => void;
