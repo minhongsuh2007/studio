@@ -100,7 +100,6 @@ export default function AstroStackerPage() {
   const [blackPoint, setBlackPoint] = useState(0);
   const [midtones, setMidtones] = useState(1);
   const [whitePoint, setWhitePoint] = useState(255);
-  const [starRemovalStrength, setStarRemovalStrength] = useState(0);
   const [isApplyingAdjustments, setIsApplyingAdjustments] = useState(false);
   const [isTutorialOpen, setIsTutorialOpen] = useState(false);
 
@@ -192,7 +191,6 @@ export default function AstroStackerPage() {
           imageForPostProcessing,
           { brightness, exposure, saturation },
           { blackPoint, midtones, whitePoint },
-          { strength: starRemovalStrength, apply: starRemovalStrength > 0 },
           outputFormat,
           jpegQuality / 100
         );
@@ -208,7 +206,7 @@ export default function AstroStackerPage() {
     return () => clearTimeout(debounceTimeout);
   }, [
     imageForPostProcessing, brightness, exposure, saturation, 
-    blackPoint, midtones, whitePoint, starRemovalStrength,
+    blackPoint, midtones, whitePoint,
     showPostProcessEditor, outputFormat, jpegQuality
   ]);
 
@@ -743,7 +741,6 @@ export default function AstroStackerPage() {
   const handleResetAdjustments = () => {
     setBrightness(100); setExposure(0); setSaturation(100);
     setBlackPoint(0); setMidtones(1); setWhitePoint(255);
-    setStarRemovalStrength(0);
   };
   
   const handleTestFileAdded = async (files: File[]) => {
@@ -1347,10 +1344,6 @@ export default function AstroStackerPage() {
             setBlackPoint(blackPoint);
             setMidtones(midtones);
             setWhitePoint(whitePoint);
-          }}
-          starRemovalSettings={{ strength: starRemovalStrength }}
-          onStarRemovalSettingsChange={({ strength }) => {
-            setStarRemovalStrength(strength);
           }}
         />
       )}

@@ -25,9 +25,6 @@ interface HistogramSettings {
   midtones: number;
   whitePoint: number;
 }
-interface StarRemovalSettings {
-  strength: number; // This is now Radius
-}
 
 interface ImagePostProcessEditorProps {
   isOpen: boolean;
@@ -44,9 +41,6 @@ interface ImagePostProcessEditorProps {
   
   histogramSettings: HistogramSettings;
   onHistogramSettingsChange: (settings: HistogramSettings) => void;
-  
-  starRemovalSettings: StarRemovalSettings;
-  onStarRemovalSettingsChange: (settings: StarRemovalSettings) => void;
 }
 
 export function ImagePostProcessEditor({
@@ -62,8 +56,6 @@ export function ImagePostProcessEditor({
   onBasicSettingsChange,
   histogramSettings,
   onHistogramSettingsChange,
-  starRemovalSettings,
-  onStarRemovalSettingsChange
 }: ImagePostProcessEditorProps) {
   const [histogramData, setHistogramData] = useState<any[]>([]);
   
@@ -83,7 +75,6 @@ export function ImagePostProcessEditor({
       baseImageUrl,
       basicSettings,
       histogramSettings,
-      { strength: starRemovalSettings.strength, apply: starRemovalSettings.strength > 0 },
       outputFormat,
       jpegQuality / 100
     );
@@ -132,10 +123,9 @@ export function ImagePostProcessEditor({
               
               <div className="md:col-span-1 flex flex-col">
                 <Tabs defaultValue="basic" className="w-full flex-grow flex flex-col">
-                  <TabsList className="grid w-full grid-cols-3">
+                  <TabsList className="grid w-full grid-cols-2">
                     <TabsTrigger value="basic">Basic</TabsTrigger>
                     <TabsTrigger value="histogram">Histogram</TabsTrigger>
-                    <TabsTrigger value="stars">Stars</TabsTrigger>
                   </TabsList>
                   
                   <TabsContent value="basic" className="flex-grow p-1 space-y-6 mt-4">
@@ -177,14 +167,6 @@ export function ImagePostProcessEditor({
                       <div className="space-y-3">
                         <Label>White Point: {histogramSettings.whitePoint}</Label>
                         <Slider value={[histogramSettings.whitePoint]} onValueChange={([v]) => onHistogramSettingsChange({...histogramSettings, whitePoint: v})} min={128} max={255} step={1} />
-                      </div>
-                  </TabsContent>
-
-                  <TabsContent value="stars" className="flex-grow p-1 space-y-4 mt-4">
-                    <div className="space-y-3">
-                        <Label>Star Removal Strength: {starRemovalSettings.strength}%</Label>
-                        <p className="text-xs text-muted-foreground">Adjusts the quality of the inpainting effect. Higher values are slower but smoother. Set to 0 to disable.</p>
-                        <Slider value={[starRemovalSettings.strength]} onValueChange={([v]) => onStarRemovalSettingsChange({strength: v})} min={0} max={100} step={5} />
                       </div>
                   </TabsContent>
                 </Tabs>
