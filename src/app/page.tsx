@@ -714,6 +714,9 @@ export default function AstroStackerPage() {
       let stackedImageData;
       const progressUpdate = (p: number) => setProgressPercent(20 + p * 80);
 
+      const shouldUseAi = starDetectionMethod === 'ai' && trainedModel && modelNormalization;
+      const modelPackage = shouldUseAi ? { model: trainedModel, normalization: modelNormalization } : undefined;
+
       if (alignmentMethod === 'planetary') {
         stackedImageData = await planetaryAlignAndStack(
             calibratedLightFrames,
@@ -723,7 +726,6 @@ export default function AstroStackerPage() {
             planetaryStackingQuality
         );
       } else if (alignmentMethod === 'consensus') {
-          const shouldUseAi = starDetectionMethod === 'ai' && trainedModel && modelNormalization;
           if (shouldUseAi) {
             addLog("[CONSENSUS] Using AI-powered star detection for alignment.");
           } else {
@@ -732,14 +734,20 @@ export default function AstroStackerPage() {
           stackedImageData = await consensusAlignAndStack({
               imageEntries: calibratedLightFrames,
               stackingMode,
-              modelPackage: shouldUseAi ? { model: trainedModel, normalization: modelNormalization } : undefined,
+              modelPackage,
               addLog,
               setProgress: progressUpdate,
           });
       } else if (alignmentMethod === 'dumb') {
+          if (shouldUseAi) {
+            addLog("[DUMB-STACK] Using AI-powered candidate selection for dumb alignment.");
+          } else {
+            addLog("[DUMB-STACK] Using brightest pixel detection for dumb alignment.");
+          }
           stackedImageData = await dumbAlignAndStack({
               imageEntries: calibratedLightFrames,
               stackingMode,
+              modelPackage,
               addLog,
               setProgress: progressUpdate,
           });
@@ -1289,7 +1297,7 @@ export default function AstroStackerPage() {
                 </div>
 
                 <div className="space-y-2"><Label className="text-base font-semibold text-foreground">Star Detection Method</Label>
-                  <RadioGroup value={starDetectionMethod} onValueChange={(v) => setStarDetectionMethod(v as StarDetectionMethod)} className="flex space-x-4" disabled={isUiDisabled || alignmentMethod !== 'consensus'}>
+                  <RadioGroup value={starDetectionMethod} onValueChange={(v) => setStarDetectionMethod(v as StarDetectionMethod)} className="flex space-x-4" disabled={isUiDisabled || (alignmentMethod !== 'consensus' && alignmentMethod !== 'dumb')}>
                       <div className="flex items-center space-x-2"><RadioGroupItem value="general" id="detect-general" /><Label htmlFor="detect-general" className="flex items-center gap-1"><ShieldOff className="h-4 w-4"/>General</Label></div>
                       <div className="flex items-center space-x-2"><RadioGroupItem value="ai" id="detect-ai" disabled={!trainedModel} /><Label htmlFor="detect-ai" className={`flex items-center gap-1 ${!trainedModel ? 'text-muted-foreground' : ''}`}><BrainCircuit className="h-4 w-4"/>AI {!trainedModel && '(Train model first)'}</Label></div>
                   </RadioGroup>

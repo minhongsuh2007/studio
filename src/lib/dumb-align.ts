@@ -3,6 +3,17 @@
 
 import type { Star, StackingMode, Transform, ImageQueueEntry } from '@/lib/astro-align';
 import { warpImage, stackImagesAverage, stackImagesMedian, stackImagesSigmaClip, stackImagesLaplacian } from '@/lib/astro-align';
+import type * as tf from '@tensorflow/tfjs';
+import { findMatchingStars } from './ai-star-matcher';
+
+interface ModelPackage {
+    model: tf.LayersModel;
+    normalization: {
+        means: number[];
+        stds: number[];
+    };
+}
+
 
 /**
  * Detects the brightest pixels in an image. Starts with a threshold of 255
@@ -191,16 +202,91 @@ function findBestGlobalPattern(
     };
 }
 
+async function getAiVerifiedPixels(
+    entry: ImageQueueEntry,
+    modelPackage: ModelPackage,
+    addLog: (msg: string) => void
+): Promise<Star[]> {
+    if (!entry.imageData) return [];
+    
+    addLog(`[DUMB-AI] AI verifying pixels for ${entry.file.name}...`);
+    
+    // 1. Get initial bright pixel candidates
+    const candidates = detectBrightestPixels(entry.imageData, addLog, entry.file.name);
+    if (candidates.length === 0) return [];
+
+    // 2. Group nearby pixels into clusters
+    const clusters: Star[][] = [];
+    const visited = new Set<Star>();
+    const CLUSTER_RADIUS = 5;
+
+    for (const cand of candidates) {
+        if (visited.has(cand)) continue;
+
+        const cluster = [cand];
+        visited.add(cand);
+
+        for (const otherCand of candidates) {
+            if (!visited.has(otherCand)) {
+                const dist = Math.hypot(cand.x - otherCand.x, cand.y - otherCand.y);
+                if (dist < CLUSTER_RADIUS) {
+                    cluster.push(otherCand);
+                    visited.add(otherCand);
+                }
+            }
+        }
+        clusters.push(cluster);
+    }
+    addLog(`[DUMB-AI] Grouped ${candidates.length} pixels into ${clusters.length} local clusters.`);
+
+    // 3. For each cluster, ask AI to pick the best one
+    const aiVerifiedStars: Star[] = [];
+    const {data, width, height} = entry.imageData;
+
+    for (const cluster of clusters) {
+        if (cluster.length === 1) {
+            // If only one pixel in cluster, still verify it with AI
+            const { rankedStars } = await findMatchingStars({
+                imageData: { data: Array.from(data), width, height },
+                candidates: cluster,
+                model: modelPackage.model,
+                normalization: modelPackage.normalization,
+            });
+            if (rankedStars && rankedStars.length > 0 && rankedStars[0].probability > 0.1) {
+                aiVerifiedStars.push(rankedStars[0].star);
+            }
+
+        } else {
+             const { rankedStars } = await findMatchingStars({
+                imageData: { data: Array.from(data), width, height },
+                candidates: cluster,
+                model: modelPackage.model,
+                normalization: modelPackage.normalization,
+            });
+
+            // Add the top-ranked star from the cluster if it exists
+            if (rankedStars && rankedStars.length > 0) {
+                aiVerifiedStars.push(rankedStars[0].star);
+            }
+        }
+    }
+    
+    addLog(`[DUMB-AI] AI selected ${aiVerifiedStars.length} final candidates from clusters.`);
+    return aiVerifiedStars;
+}
+
 
 // --- MAIN DUMB ALIGNMENT & STACKING FUNCTION ---
 export async function dumbAlignAndStack({
     imageEntries,
     stackingMode,
+    modelPackage,
     addLog,
     setProgress,
 }: {
     imageEntries: ImageQueueEntry[];
     stackingMode: StackingMode;
+    modelPackage?: ModelPackage;
     addLog: (message: string) => void;
     setProgress: (progress: number) => void;
 }): Promise<Uint8ClampedArray> {
@@ -209,16 +295,29 @@ export async function dumbAlignAndStack({
         throw new Error("Dumb stacking requires at least two images.");
     }
 
-    addLog("[DUMB-ALIGN] Step 1: Detecting brightest pixels in all images...");
-    const allImageBrightPixels = imageEntries.map((entry, index) => {
-        if (!entry.imageData) return { imageId: entry.id, stars: [] };
-        const brightPixels = detectBrightestPixels(entry.imageData, addLog, entry.file.name);
+    addLog("[DUMB-ALIGN] Step 1: Detecting candidate pixels in all images...");
+    const allImageBrightPixels: { imageId: string; stars: Star[] }[] = [];
+
+    for(const [index, entry] of imageEntries.entries()) {
+        let pixels: Star[];
+        if (modelPackage) {
+            pixels = await getAiVerifiedPixels(entry, modelPackage, addLog);
+        } else {
+            if (!entry.imageData) {
+                 pixels = [];
+            } else {
+                 pixels = detectBrightestPixels(entry.imageData, addLog, entry.file.name);
+            }
+        }
+        if (pixels.length >= 4) {
+            allImageBrightPixels.push({ imageId: entry.id, stars: pixels });
+        }
         setProgress(0.3 * ((index + 1) / imageEntries.length));
-        return { imageId: entry.id, stars: brightPixels };
-    }).filter(data => data.stars.length >= 4);
+    }
+
 
     if (allImageBrightPixels.length < 2) {
-        throw new Error("Fewer than two images have at least 4 bright pixels for alignment.");
+        throw new Error("Fewer than two images have at least 4 candidate pixels for alignment.");
     }
 
     addLog("[DUMB-ALIGN] Step 2: Finding the most common bright pixel pattern (4 pixels)...");
@@ -295,5 +394,3 @@ export async function dumbAlignAndStack({
     addLog("[DUMB-ALIGN] Stacking complete.");
     return stackedResult;
 }
-
-    
