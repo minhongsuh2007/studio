@@ -1,3 +1,4 @@
+
 {
   "name": "nextn",
   "version": "0.1.0",
@@ -44,7 +45,6 @@
     "tailwind-merge": "^2.3.0",
     "tailwindcss-animate": "^1.0.7",
     "tiff.js": "^1.0.0",
-    "wasm-imagemagick": "^1.2.8",
     "zod": "^3.23.8"
   },
   "devDependencies": {
@@ -56,3 +56,5 @@
     "typescript": "^5"
   }
 }
+
+    

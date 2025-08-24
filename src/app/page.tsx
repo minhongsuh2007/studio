@@ -143,76 +143,20 @@ export default function AstroStackerPage() {
     });
   }, []);
 
-  const fileToDataURL = useCallback(async (file: File): Promise<string> => {
-    const isStandardWebFormat = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'].includes(file.type);
-    
-    const processWithFileReader = (fileToRead: File): Promise<string> => {
-      addLog(`[FileReader] Processing standard web format for: ${fileToRead.name}`);
-      return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = (e) => {
-          if (e.target?.result) {
-            addLog(`[FileReader] Successfully read ${fileToRead.name}`);
-            resolve(e.target.result as string);
-          } else {
-            addLog(`[FileReader] Failed to read file, event target result is null for ${fileToRead.name}.`);
-            reject(new Error(`FileReader failed for ${fileToRead.name}.`));
-          }
-        };
-        reader.onerror = (e) => {
-            addLog(`[FileReader] Error reading file ${fileToRead.name}: ${e}`);
-            reject(new Error(`Error reading file ${fileToRead.name}.`))
-        };
-        reader.readAsDataURL(fileToRead);
-      });
-    };
-
-    if (isStandardWebFormat) {
-      addLog(`[fileToDataURL] Using standard FileReader for ${file.name} (type: ${file.type})`);
-      return processWithFileReader(file);
-    }
-  
-    addLog(`[fileToDataURL] Using ImageMagick for ${file.name} (type: ${file.type})`);
-    try {
-        const { read, execute, getOutputFiles } = await import('wasm-imagemagick');
-        const buffer = await file.arrayBuffer();
-        const inputFiles = [{ name: file.name, content: new Uint8Array(buffer) }];
-        const command = ['convert', `${file.name}[0]`, 'output.png'];
-        
-        await read(inputFiles);
-        await execute({inputFiles, commands: [command]});
-        const output = await getOutputFiles();
-        
-        const outputFile = output.find(f => f.name === 'output.png');
-
-        if (!outputFile || !outputFile.blob) {
-            throw new Error(`ImageMagick conversion did not produce the expected output file: output.png.`);
+  const fileToDataURL = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        if (e.target?.result) {
+          resolve(e.target.result as string);
+        } else {
+          reject(new Error(`FileReader failed for ${file.name}.`));
         }
-        addLog(`[ImageMagick] Successfully converted ${file.name} to PNG blob. Size: ${outputFile.blob.size} bytes.`);
-
-        return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = e => {
-                if(e.target?.result){
-                    addLog(`[ImageMagick] Successfully converted Blob to Data URL for ${file.name}.`);
-                    resolve(e.target.result as string);
-                } else {
-                    reject(new Error("FileReader failed after ImageMagick conversion."));
-                }
-            }
-            reader.onerror = e => {
-                addLog(`[ImageMagick] FileReader error after conversion for ${file.name}: ${e}`);
-                reject(e);
-            }
-            reader.readAsDataURL(outputFile.blob);
-        });
-
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : 'Unknown error';
-      addLog(`[ERROR] Could not process ${file.name}: Failed to process file ${file.name} with ImageMagick. Reason: ${reason}`);
-      throw new Error(`Failed to process file ${file.name} with ImageMagick. Reason: ${reason}`);
-    }
-  }, [addLog]);
+      };
+      reader.onerror = (e) => reject(new Error(`Error reading file ${file.name}.`));
+      reader.readAsDataURL(file);
+    });
+  };
 
   useEffect(() => {
     try {
@@ -1034,7 +978,7 @@ export default function AstroStackerPage() {
 
       const split = Math.floor(norm.length * 0.8);
       const [xTrain, xTest] = [xs.slice([0, 0], [split, xs.shape[1]]), xs.slice([split, 0], [xs.shape[0] - split, xs.shape[1]])];
-      const [yTrain, yTest] = [ys.slice([0, 0], [split, 1]), ys.slice([split, 0], [ys.shape[0] - split, 1])];
+      const [yTrain, yTest] = [ys.slice([0, 0], [split, 1]), ys.slice([split, 0], [ys.shape[0] - split, 1]])];
 
       const model = buildModel();
       model.compile({ optimizer: tf.train.adam(0.001), loss: 'binaryCrossentropy', metrics: ['accuracy'] });
@@ -1429,5 +1373,7 @@ export default function AstroStackerPage() {
     </div>
   );
 }
+
+    
 
     

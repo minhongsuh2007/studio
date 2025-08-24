@@ -16,19 +16,12 @@ interface ImageUploadAreaProps {
   buttonText?: string;
 }
 
-// Temporarily restrict to standard web formats to avoid wasm-imagemagick worker issues.
+// Restrict to standard web formats to avoid wasm-imagemagick worker issues.
 export const ALL_ACCEPTED_FORMATS: Accept = {
   'image/jpeg': ['.jpeg', '.jpg'],
   'image/png': ['.png'],
   'image/gif': ['.gif'],
   'image/webp': ['.webp'],
-  'image/tiff': ['.tif', '.tiff'],
-  'image/fits': ['.fit', '.fits'],
-  'image/x-canon-cr2': ['.cr2'],
-  'image/x-nikon-nef': ['.nef'],
-  'image/x-sony-arw': ['.arw'],
-  'image/x-adobe-dng': ['.dng'],
-  'image/x-raw': ['.raw'],
 };
 
 
@@ -98,3 +91,5 @@ export function ImageUploadArea({
     </div>
   );
 }
+
+    
