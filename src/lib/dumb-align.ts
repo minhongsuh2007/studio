@@ -47,7 +47,18 @@ function detectBrightestPixels(imageData: ImageData, addLog: (message: string) =
     return stars;
 }
 
-function findBestGlobalLines(
+
+function getTriangleSignature(p1: Star, p2: Star, p3: Star): number[] | null {
+    const d12 = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+    const d23 = Math.hypot(p3.x - p2.x, p3.y - p2.y);
+    const d31 = Math.hypot(p1.x - p3.x, p1.y - p3.y);
+    const sides = [d12, d23, d31].sort((a, b) => a - b);
+    if (sides[0] < 1e-6) return null;
+    return [sides[1] / sides[0], sides[2] / sides[0]];
+}
+
+
+function findBestGlobalPatterns(
     allImagePixels: { imageId: string; stars: Star[] }[],
     addLog: (message: string) => void
 ): { refPoints: Star[]; targetPoints: Record<string, Star[]>; imageIds: string[] } | null {
@@ -56,63 +67,56 @@ function findBestGlobalLines(
         return null;
     }
 
-    const findBestLine = (candidates: { imageId: string; stars: Star[] }[]) => {
-        const refImage = candidates.find(c => c.stars.length > 1);
+    const findBestTriangle = (candidates: { imageId: string; stars: Star[] }[]) => {
+        const refImage = candidates.find(c => c.stars.length >= 3);
         if (!refImage) return null;
 
-        const refPixels = refImage.stars;
-        let bestMatch = {
-            count: 0,
-            refPair: null as Star[] | null,
-            targetPairs: {} as Record<string, Star[]>,
-            length: 0,
-        };
+        let bestMatch = { count: 0, refTriangle: null as Star[] | null, targetTriangles: {} as Record<string, Star[]> };
+        const SIGNATURE_TOLERANCE = 0.05;
 
-        const DISTANCE_TOLERANCE = 5; // Pixel distance tolerance
+        const refStars = refImage.stars;
+        for (let i = 0; i < refStars.length; i++) {
+            for (let j = i + 1; j < refStars.length; j++) {
+                for (let k = j + 1; k < refStars.length; k++) {
+                    const refTriangle = [refStars[i], refStars[j], refStars[k]];
+                    const refSignature = getTriangleSignature(...refTriangle);
+                    if (!refSignature) continue;
 
-        for (let i = 0; i < refPixels.length; i++) {
-            for (let j = i + 1; j < refPixels.length; j++) {
-                const refPair = [refPixels[i], refPixels[j]];
-                const refDist = Math.hypot(refPair[1].x - refPair[0].x, refPair[1].y - refPair[0].y);
+                    let currentMatchCount = 1;
+                    const currentTargetTriangles: Record<string, Star[]> = { [refImage.imageId]: refTriangle };
 
-                let currentMatchCount = 1;
-                const currentTargetPairs: Record<string, Star[]> = { [refImage.imageId]: refPair };
+                    for (const targetImage of candidates) {
+                        if (targetImage.imageId === refImage.imageId) continue;
+                        const targetStars = targetImage.stars;
+                        if (targetStars.length < 3) continue;
 
-                for (const targetImage of candidates) {
-                    if (targetImage.imageId === refImage.imageId) continue;
-                    const targetPixels = targetImage.stars;
-                    if (targetPixels.length < 2) continue;
+                        let bestTargetTriangle: Star[] | null = null;
+                        let minError = Infinity;
 
-                    let bestTargetPair: Star[] | null = null;
-                    let minError = Infinity;
-
-                    for (let ti = 0; ti < targetPixels.length; ti++) {
-                        for (let tj = ti + 1; tj < targetPixels.length; tj++) {
-                            const targetPair = [targetPixels[ti], targetPixels[tj]];
-                            const targetDist = Math.hypot(targetPair[1].x - targetPair[0].x, targetPair[1].y - targetPair[0].y);
-                            const distError = Math.abs(refDist - targetDist);
-                            
-                            if (distError < DISTANCE_TOLERANCE && distError < minError) {
-                                minError = distError;
-                                bestTargetPair = targetPair;
+                        for (let ti = 0; ti < targetStars.length; ti++) {
+                            for (let tj = ti + 1; tj < targetStars.length; tj++) {
+                                for (let tk = tj + 1; tk < targetStars.length; tk++) {
+                                    const targetTriangle = [targetStars[ti], targetStars[tj], targetStars[tk]];
+                                    const targetSignature = getTriangleSignature(...targetTriangle);
+                                    if (!targetSignature) continue;
+                                    
+                                    const error = Math.hypot(refSignature[0] - targetSignature[0], refSignature[1] - targetSignature[1]);
+                                    if (error < SIGNATURE_TOLERANCE && error < minError) {
+                                        minError = error;
+                                        bestTargetTriangle = targetTriangle;
+                                    }
+                                }
                             }
+                        }
+                        if (bestTargetTriangle) {
+                            currentTargetTriangles[targetImage.imageId] = bestTargetTriangle;
+                            currentMatchCount++;
                         }
                     }
 
-                    if (bestTargetPair) {
-                        currentTargetPairs[targetImage.imageId] = bestTargetPair;
-                        currentMatchCount++;
+                    if (currentMatchCount > bestMatch.count) {
+                        bestMatch = { count: currentMatchCount, refTriangle, targetTriangles: currentTargetTriangles };
                     }
-                }
-                
-                // Prioritize pairs found in more images, then by length
-                if (currentMatchCount > bestMatch.count || (currentMatchCount === bestMatch.count && refDist > bestMatch.length)) {
-                    bestMatch = {
-                        count: currentMatchCount,
-                        refPair,
-                        targetPairs: currentTargetPairs,
-                        length: refDist,
-                    };
                 }
             }
         }
@@ -120,53 +124,102 @@ function findBestGlobalLines(
         return bestMatch;
     };
 
-    const firstLineMatch = findBestLine(allImagePixels);
-    if (!firstLineMatch) {
-        addLog(`[DUMB-PATTERN] Could not find a common line pattern.`);
+    const findBestLine = (candidates: { imageId: string; stars: Star[] }[]) => {
+        const refImage = candidates.find(c => c.stars.length >= 2);
+        if (!refImage) return null;
+
+        let bestMatch = { count: 0, refPair: null as Star[] | null, targetPairs: {} as Record<string, Star[]>, length: 0 };
+        const DISTANCE_TOLERANCE_PX = 10;
+
+        const refStars = refImage.stars;
+        for (let i = 0; i < refStars.length; i++) {
+            for (let j = i + 1; j < refStars.length; j++) {
+                const refPair = [refStars[i], refStars[j]];
+                const refDist = Math.hypot(refPair[1].x - refPair[0].x, refPair[1].y - refPair[0].y);
+
+                let currentMatchCount = 1;
+                const currentTargetPairs: Record<string, Star[]> = { [refImage.imageId]: refPair };
+
+                for (const targetImage of candidates) {
+                    if (targetImage.imageId === refImage.imageId) continue;
+                    const targetStars = targetImage.stars;
+                    if (targetStars.length < 2) continue;
+                    
+                    let bestTargetPair: Star[] | null = null;
+                    let minError = Infinity;
+
+                    for(let ti=0; ti<targetStars.length; ti++) {
+                        for(let tj=ti+1; tj<targetStars.length; tj++) {
+                            const targetPair = [targetStars[ti], targetStars[tj]];
+                            const targetDist = Math.hypot(targetPair[1].x - targetPair[0].x, targetPair[1].y - targetPair[0].y);
+                            const error = Math.abs(refDist - targetDist);
+                            if(error < DISTANCE_TOLERANCE_PX && error < minError) {
+                                minError = error;
+                                bestTargetPair = targetPair;
+                            }
+                        }
+                    }
+
+                    if(bestTargetPair) {
+                        currentTargetPairs[targetImage.imageId] = bestTargetPair;
+                        currentMatchCount++;
+                    }
+                }
+                
+                if (currentMatchCount > bestMatch.count || (currentMatchCount === bestMatch.count && refDist > bestMatch.length)) {
+                    bestMatch = { count: currentMatchCount, refPair, targetPairs: currentTargetPairs, length: refDist };
+                }
+            }
+        }
+        if (bestMatch.count < 2) return null;
+        return bestMatch;
+    };
+
+    const triangleMatch = findBestTriangle(allImagePixels);
+    if (!triangleMatch) {
+        addLog(`[DUMB-PATTERN] Could not find a common triangle pattern.`);
         return null;
     }
-    addLog(`[DUMB-PATTERN] Found first common line across ${firstLineMatch.count} images.`);
+    addLog(`[DUMB-PATTERN] Found first common triangle across ${triangleMatch.count} images.`);
     
-    const imageIdsWithFirstLine = Object.keys(firstLineMatch.targetPairs);
+    const imageIdsWithTriangle = Object.keys(triangleMatch.targetTriangles);
     
     // --- Find second, independent line ---
     const remainingCandidates = allImagePixels
-        .filter(p => imageIdsWithFirstLine.includes(p.imageId))
+        .filter(p => imageIdsWithTriangle.includes(p.imageId))
         .map(p => {
-            const usedStars = new Set(firstLineMatch.targetPairs[p.imageId]);
+            const usedStars = new Set(triangleMatch.targetTriangles[p.imageId]);
             return {
                 imageId: p.imageId,
                 stars: p.stars.filter(s => !usedStars.has(s)),
             };
         });
 
-    const secondLineMatch = findBestLine(remainingCandidates);
+    const lineMatch = findBestLine(remainingCandidates);
     
-    const finalRefPoints: Star[] = [...firstLineMatch.refPair!];
+    const finalRefPoints: Star[] = [...triangleMatch.refTriangle!];
     const finalTargetPoints: Record<string, Star[]> = {};
-    for (const id of imageIdsWithFirstLine) {
-        finalTargetPoints[id] = [...firstLineMatch.targetPairs[id]];
+    for (const id of imageIdsWithTriangle) {
+        finalTargetPoints[id] = [...triangleMatch.targetTriangles[id]];
     }
 
-    let finalImageIds = imageIdsWithFirstLine;
+    let finalImageIds = imageIdsWithTriangle;
 
-    if (secondLineMatch) {
-        addLog(`[DUMB-PATTERN] Found second independent line across ${secondLineMatch.count} images.`);
-        finalRefPoints.push(...secondLineMatch.refPair!);
+    if (lineMatch) {
+        addLog(`[DUMB-PATTERN] Found second independent line across ${lineMatch.count} images.`);
+        finalRefPoints.push(...lineMatch.refPair!);
         
-        finalImageIds = Object.keys(secondLineMatch.targetPairs).filter(id => imageIdsWithFirstLine.includes(id));
+        // Final images must have both patterns
+        finalImageIds = Object.keys(lineMatch.targetPairs).filter(id => imageIdsWithTriangle.includes(id));
         
         for (const id of finalImageIds) {
-            finalTargetPoints[id].push(...secondLineMatch.targetPairs[id]);
+            finalTargetPoints[id].push(...lineMatch.targetPairs[id]);
         }
 
     } else {
-        addLog(`[DUMB-PATTERN] Could not find a second independent line. Proceeding with one.`);
+        addLog(`[DUMB-PATTERN] Could not find a second independent line. Proceeding with triangle only.`);
     }
 
-    if (finalRefPoints.length < 4) {
-        addLog(`[DUMB-PATTERN] Fewer than 4 common points found. Falling back to 2-point alignment.`);
-    }
      if (finalImageIds.length < 2) {
         addLog(`[DUMB-PATTERN] Fewer than 2 images share a common pattern. Aborting.`);
         return null;
@@ -181,41 +234,50 @@ function findBestGlobalLines(
 
 
 function getTransform(refPoints: Star[], targetPoints: Star[]): Transform | null {
-    if (refPoints.length < 2 || targetPoints.length < 2) return null;
+     if (refPoints.length < 2 || targetPoints.length < 2) return null;
     
-    // Using RANSAC or a more robust method for multiple points would be ideal,
-    // but for simplicity and performance, we'll use the first pair.
-    // If 4 points are available, we could average two transforms, but that's also complex.
-    // So let's stick to the most reliable pair (the first line found).
-    const refStar1 = refPoints[0];
-    const refStar2 = refPoints[1];
-    const targetStar1 = targetPoints[0];
-    const targetStar2 = targetPoints[1];
-
-    const refVec = { x: refStar2.x - refStar1.x, y: refStar2.y - refStar1.y };
-    const targetVec = { x: targetStar2.x - targetStar1.x, y: targetStar2.y - targetStar1.y };
-
-    const refAngle = Math.atan2(refVec.y, refVec.x);
-    const targetAngle = Math.atan2(targetVec.y, targetVec.x);
-    let angle = targetAngle - refAngle;
-
-    const refDist = Math.hypot(refVec.x, refVec.y);
-    const targetDist = Math.hypot(targetVec.x, targetVec.y);
-
-    if (refDist === 0) return null;
-    let scale = targetDist / refDist;
-    if (scale === 0) return null;
-
-    const cosAngle = Math.cos(-angle);
-    const sinAngle = Math.sin(-angle);
+    // Using least squares to solve for the similarity transform parameters
+    // A * [scale*cos(angle), scale*sin(angle), tx, ty]' = B
+    // Where A is a matrix of target points, B is a matrix of ref points
     
-    const rotatedTargetX = targetStar1.x * cosAngle - targetStar1.y * sinAngle;
-    const rotatedTargetY = targetStar1.x * sinAngle + targetStar1.y * cosAngle;
+    const n = Math.min(refPoints.length, targetPoints.length);
+    if (n < 2) return null;
+    
+    let sum_xt = 0, sum_yt = 0, sum_xt_sq = 0, sum_yt_sq = 0;
+    let sum_xt_xr = 0, sum_yt_yr = 0, sum_xt_yr = 0, sum_yt_xr = 0;
 
-    const dx = refStar1.x - rotatedTargetX * scale;
-    const dy = refStar1.y - rotatedTargetY * scale;
+    for(let i=0; i<n; i++) {
+        const xr = refPoints[i].x;
+        const yr = refPoints[i].y;
+        const xt = targetPoints[i].x;
+        const yt = targetPoints[i].y;
+        
+        sum_xt += xt;
+        sum_yt += yt;
+        sum_xt_sq += xt*xt;
+        sum_yt_sq += yt*yt;
+        sum_xt_xr += xt*xr;
+        sum_yt_yr += yt*yr;
+        sum_xt_yr += xt*yr;
+        sum_yt_xr += yt*xr;
+    }
 
-    return { dx, dy, angle: -angle, scale };
+    const D = n * (sum_xt_sq + sum_yt_sq) - (sum_xt*sum_xt + sum_yt*sum_yt);
+    if (Math.abs(D) < 1e-6) return null; // Avoid division by zero, points are likely collinear
+
+    const a_num = n * (sum_xt_xr + sum_yt_yr) - (sum_xt * refPoints.reduce((s,p)=>s+p.x,0) + sum_yt * refPoints.reduce((s,p)=>s+p.y,0));
+    const a = a_num / D;
+
+    const b_num = n * (sum_yt_xr - sum_xt_yr) + (sum_xt * refPoints.reduce((s,p)=>s+p.y,0) - sum_yt * refPoints.reduce((s,p)=>s+p.x,0));
+    const b = b_num / D;
+    
+    const tx = (1/n) * (refPoints.reduce((s,p)=>s+p.x,0) - a*sum_xt - b*sum_yt);
+    const ty = (1/n) * (refPoints.reduce((s,p)=>s+p.y,0) + b*sum_xt - a*sum_yt);
+    
+    const scale = Math.hypot(a, b);
+    const angle = Math.atan2(b, a);
+
+    return { dx: tx, dy: ty, angle: -angle, scale };
 }
 
 async function getAiVerifiedPixels(
@@ -320,7 +382,7 @@ export async function dumbAlignAndStack({
                  pixels = detectBrightestPixels(entry.imageData, addLog, entry.file.name);
             }
         }
-        if (pixels.length >= 4) { // Need at least 4 points for two lines
+        if (pixels.length >= 5) { // Need at least 5 points for triangle + line
             allImageBrightPixels.push({ imageId: entry.id, stars: pixels });
         }
         setProgress(0.3 * ((index + 1) / imageEntries.length));
@@ -328,11 +390,11 @@ export async function dumbAlignAndStack({
 
 
     if (allImageBrightPixels.length < 2) {
-        throw new Error("Fewer than two images have at least 4 candidate pixels for alignment.");
+        throw new Error("Fewer than two images have at least 5 candidate pixels for alignment.");
     }
     
-    addLog(`[DUMB-ALIGN] Step 2: Finding common line patterns...`);
-    const globalPattern = findBestGlobalLines(allImageBrightPixels, addLog);
+    addLog(`[DUMB-ALIGN] Step 2: Finding common patterns (triangle + line)...`);
+    const globalPattern = findBestGlobalPatterns(allImageBrightPixels, addLog);
 
     if (!globalPattern) {
         throw new Error("Could not find a common pattern. Try using the 'Consensus' method.");
