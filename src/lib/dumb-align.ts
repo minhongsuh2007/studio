@@ -1,4 +1,3 @@
-
 'use client';
 
 import type { Star, StackingMode, Transform, ImageQueueEntry } from '@/lib/astro-align';
@@ -49,13 +48,100 @@ function detectBrightestPixels(imageData: ImageData, addLog: (message: string) =
 }
 
 
-/**
- * Calculates the transformation required to align two point sets.
- */
+function getTriangleSignature(p1: Star, p2: Star, p3: Star) {
+    const d12 = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+    const d23 = Math.hypot(p3.x - p2.x, p3.y - p2.y);
+    const d31 = Math.hypot(p1.x - p3.x, p1.y - p3.y);
+    const sides = [d12, d23, d31].sort((a,b)=>a-b);
+    if(sides[0] < 1e-6) return null;
+    return [sides[1] / sides[0], sides[2] / sides[0]];
+}
+
+function findBestGlobalTriangle(
+    allImagePixels: { imageId: string; stars: Star[] }[],
+    addLog: (message: string) => void
+): { refTriangle: Star[]; targetTriangles: Record<string, Star[]>; imageIds: string[] } | null {
+    if (allImagePixels.length < 2) return null;
+    const refImage = allImagePixels[0];
+    const refPixels = refImage.stars;
+    if (refPixels.length < 3) return null;
+
+    let bestMatch = {
+        count: 0,
+        refTriangle: null as Star[] | null,
+        targetTriangles: {} as Record<string, Star[]>
+    };
+
+    const SIGNATURE_TOLERANCE = 0.05;
+
+    for (let i = 0; i < refPixels.length; i++) {
+        for (let j = i + 1; j < refPixels.length; j++) {
+            for (let k = j + 1; k < refPixels.length; k++) {
+                const refTriangle = [refPixels[i], refPixels[j], refPixels[k]];
+                const refSignature = getTriangleSignature(...refTriangle);
+                if (!refSignature) continue;
+
+                let currentMatchCount = 1;
+                const currentTargetTriangles: Record<string, Star[]> = { [refImage.imageId]: refTriangle };
+
+                for (let imgIdx = 1; imgIdx < allImagePixels.length; imgIdx++) {
+                    const targetImage = allImagePixels[imgIdx];
+                    const targetPixels = targetImage.stars;
+                    if (targetPixels.length < 3) continue;
+
+                    let bestTargetTriangle: Star[] | null = null;
+                    let minError = Infinity;
+
+                    for (let ti = 0; ti < targetPixels.length; ti++) {
+                        for (let tj = ti + 1; tj < targetPixels.length; tj++) {
+                            for (let tk = tj + 1; tk < targetPixels.length; tk++) {
+                                const targetTriangle = [targetPixels[ti], targetPixels[tj], targetPixels[tk]];
+                                const targetSignature = getTriangleSignature(...targetTriangle);
+                                if (!targetSignature) continue;
+
+                                const error = Math.abs(refSignature[0] - targetSignature[0]) + Math.abs(refSignature[1] - targetSignature[1]);
+                                if (error < minError) {
+                                    minError = error;
+                                    bestTargetTriangle = targetTriangle;
+                                }
+                            }
+                        }
+                    }
+
+                    if (bestTargetTriangle && minError < SIGNATURE_TOLERANCE * 2) {
+                        currentMatchCount++;
+                        currentTargetTriangles[targetImage.imageId] = bestTargetTriangle;
+                    }
+                }
+
+                if (currentMatchCount > bestMatch.count) {
+                    bestMatch = {
+                        count: currentMatchCount,
+                        refTriangle: refTriangle,
+                        targetTriangles: currentTargetTriangles
+                    };
+                }
+            }
+        }
+    }
+    
+    if (bestMatch.count < 2) {
+        addLog(`[DUMB-PATTERN] Could not find a common triangle pattern across at least 2 images.`);
+        return null;
+    }
+
+    addLog(`[DUMB-PATTERN] Found a common triangle pattern across ${bestMatch.count} images.`);
+    return {
+        refTriangle: bestMatch.refTriangle!,
+        targetTriangles: bestMatch.targetTriangles,
+        imageIds: Object.keys(bestMatch.targetTriangles)
+    };
+}
+
+
 function getTransform(refPoints: Star[], targetPoints: Star[]): Transform | null {
     if (refPoints.length < 2 || targetPoints.length < 2) return null;
     
-    // Use the first two points to get an initial transform
     const refStar1 = refPoints[0];
     const refStar2 = refPoints[1];
     const targetStar1 = targetPoints[0];
@@ -96,11 +182,9 @@ async function getAiVerifiedPixels(
     
     addLog(`[DUMB-AI] AI verifying pixels for ${entry.file.name}...`);
     
-    // 1. Get initial bright pixel candidates
     const candidates = detectBrightestPixels(entry.imageData, addLog, entry.file.name);
     if (candidates.length === 0) return [];
 
-    // 2. Group nearby pixels into clusters
     const clusters: Star[][] = [];
     const visited = new Set<Star>();
     const CLUSTER_RADIUS = 5;
@@ -124,13 +208,11 @@ async function getAiVerifiedPixels(
     }
     addLog(`[DUMB-AI] Grouped ${candidates.length} pixels into ${clusters.length} local clusters.`);
 
-    // 3. For each cluster, ask AI to pick the best one
     const aiVerifiedStars: Star[] = [];
     const {data, width, height} = entry.imageData;
 
     for (const cluster of clusters) {
         if (cluster.length === 1) {
-            // If only one pixel in cluster, still verify it with AI
             const { rankedStars } = await findMatchingStars({
                 imageData: { data: Array.from(data), width, height },
                 candidates: cluster,
@@ -149,7 +231,6 @@ async function getAiVerifiedPixels(
                 normalization: modelPackage.normalization,
             });
 
-            // Add the top-ranked star from the cluster if it exists
             if (rankedStars && rankedStars.length > 0) {
                 aiVerifiedStars.push(rankedStars[0].star);
             }
@@ -194,7 +275,7 @@ export async function dumbAlignAndStack({
                  pixels = detectBrightestPixels(entry.imageData, addLog, entry.file.name);
             }
         }
-        if (pixels.length >= 2) { // Need at least 2 points for basic transform
+        if (pixels.length >= 3) { // Need at least 3 points for triangle pattern
             allImageBrightPixels.push({ imageId: entry.id, stars: pixels });
         }
         setProgress(0.3 * ((index + 1) / imageEntries.length));
@@ -202,31 +283,44 @@ export async function dumbAlignAndStack({
 
 
     if (allImageBrightPixels.length < 2) {
-        throw new Error("Fewer than two images have at least 2 candidate pixels for alignment.");
+        throw new Error("Fewer than two images have at least 3 candidate pixels for alignment.");
     }
+    
+    addLog(`[DUMB-ALIGN] Step 2: Finding a common triangle pattern...`);
+    const globalPattern = findBestGlobalTriangle(allImageBrightPixels, addLog);
 
-    const refImage = allImageBrightPixels[0];
-    const refEntry = imageEntries.find(e => e.id === refImage.imageId)!;
+    if (!globalPattern) {
+        throw new Error("Could not find a common pattern. Try using the 'Consensus' method.");
+    }
+    
+    const { refTriangle, targetTriangles, imageIds } = globalPattern;
+    const refImageId = imageIds[0];
+    const refEntry = imageEntries.find(e => e.id === refImageId)!;
     const { width, height } = refEntry.analysisDimensions;
 
     setProgress(0.5);
 
-    addLog(`[DUMB-ALIGN] Step 2: Aligning ${allImageBrightPixels.length} images to reference.`);
-    const alignedImageDatas: (Uint8ClampedArray | null)[] = [refEntry.imageData!.data];
+    addLog(`[DUMB-ALIGN] Step 3: Aligning ${imageIds.length} images to reference based on the pattern.`);
+    const alignedImageDatas: (Uint8ClampedArray | null)[] = [];
 
 
-    for (let i = 1; i < allImageBrightPixels.length; i++) {
-        const targetImage = allImageBrightPixels[i];
-        const entry = imageEntries.find(e => e.id === targetImage.imageId)!;
-        const progress = 0.5 + (0.4 * (i + 1) / allImageBrightPixels.length);
+    for (const [index, entry] of imageEntries.entries()) {
+        const progress = 0.5 + (0.4 * (index + 1) / imageEntries.length);
 
-        if (!entry.imageData) {
+        if (!imageIds.includes(entry.id) || !entry.imageData) {
             alignedImageDatas.push(null);
             setProgress(progress);
             continue;
         }
+        
+        if (entry.id === refImageId) {
+            alignedImageDatas.push(entry.imageData.data);
+            setProgress(progress);
+            continue;
+        }
 
-        const transform = getTransform(refImage.stars, targetImage.stars);
+        const targetTriangle = targetTriangles[entry.id];
+        const transform = getTransform(refTriangle, targetTriangle);
 
         if (!transform) {
             alignedImageDatas.push(null);
@@ -240,7 +334,7 @@ export async function dumbAlignAndStack({
     }
 
     const validImagesToStack = alignedImageDatas.filter(d => d !== null);
-    addLog(`[DUMB-ALIGN] Step 3: Stacking ${validImagesToStack.length} images with mode: ${stackingMode}.`);
+    addLog(`[DUMB-ALIGN] Step 4: Stacking ${validImagesToStack.length} images with mode: ${stackingMode}.`);
     setProgress(0.99);
 
     if (validImagesToStack.length < 2) {
@@ -267,5 +361,3 @@ export async function dumbAlignAndStack({
     addLog("[DUMB-ALIGN] Stacking complete.");
     return stackedResult;
 }
-
-    
