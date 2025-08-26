@@ -57,84 +57,129 @@ function getTriangleSignature(p1: Star, p2: Star, p3: Star) {
     return [sides[1] / sides[0], sides[2] / sides[0]];
 }
 
-function findBestGlobalTriangle(
+function findBestGlobalTriangles(
     allImagePixels: { imageId: string; stars: Star[] }[],
     addLog: (message: string) => void
-): { refTriangle: Star[]; targetTriangles: Record<string, Star[]>; imageIds: string[] } | null {
+): { refTriangles: Star[][]; targetTriangles: Record<string, Star[][]>; imageIds: string[] } | null {
     if (allImagePixels.length < 2) return null;
-    const refImage = allImagePixels[0];
-    const refPixels = refImage.stars;
-    if (refPixels.length < 3) return null;
+    
+    const findBestTriangle = (currentCandidates: { imageId: string; stars: Star[] }[]) => {
+        const refImage = currentCandidates[0];
+        const refPixels = refImage.stars;
+        if (refPixels.length < 3) return null;
 
-    let bestMatch = {
-        count: 0,
-        refTriangle: null as Star[] | null,
-        targetTriangles: {} as Record<string, Star[]>
-    };
+        let bestMatch = {
+            count: 0,
+            refTriangle: null as Star[] | null,
+            targetTriangles: {} as Record<string, Star[]>
+        };
+        const SIGNATURE_TOLERANCE = 0.05;
 
-    const SIGNATURE_TOLERANCE = 0.05;
+        for (let i = 0; i < refPixels.length; i++) {
+            for (let j = i + 1; j < refPixels.length; j++) {
+                for (let k = j + 1; k < refPixels.length; k++) {
+                    const refTriangle = [refPixels[i], refPixels[j], refPixels[k]];
+                    const refSignature = getTriangleSignature(...refTriangle);
+                    if (!refSignature) continue;
 
-    for (let i = 0; i < refPixels.length; i++) {
-        for (let j = i + 1; j < refPixels.length; j++) {
-            for (let k = j + 1; k < refPixels.length; k++) {
-                const refTriangle = [refPixels[i], refPixels[j], refPixels[k]];
-                const refSignature = getTriangleSignature(...refTriangle);
-                if (!refSignature) continue;
+                    let currentMatchCount = 1;
+                    const currentTargetTriangles: Record<string, Star[]> = { [refImage.imageId]: refTriangle };
 
-                let currentMatchCount = 1;
-                const currentTargetTriangles: Record<string, Star[]> = { [refImage.imageId]: refTriangle };
+                    for (let imgIdx = 1; imgIdx < currentCandidates.length; imgIdx++) {
+                        const targetImage = currentCandidates[imgIdx];
+                        const targetPixels = targetImage.stars;
+                        if (targetPixels.length < 3) continue;
 
-                for (let imgIdx = 1; imgIdx < allImagePixels.length; imgIdx++) {
-                    const targetImage = allImagePixels[imgIdx];
-                    const targetPixels = targetImage.stars;
-                    if (targetPixels.length < 3) continue;
+                        let bestTargetTriangle: Star[] | null = null;
+                        let minError = Infinity;
 
-                    let bestTargetTriangle: Star[] | null = null;
-                    let minError = Infinity;
+                        for (let ti = 0; ti < targetPixels.length; ti++) {
+                            for (let tj = ti + 1; tj < targetPixels.length; tj++) {
+                                for (let tk = tj + 1; tk < targetPixels.length; tk++) {
+                                    const targetTriangle = [targetPixels[ti], targetPixels[tj], targetPixels[tk]];
+                                    const targetSignature = getTriangleSignature(...targetTriangle);
+                                    if (!targetSignature) continue;
 
-                    for (let ti = 0; ti < targetPixels.length; ti++) {
-                        for (let tj = ti + 1; tj < targetPixels.length; tj++) {
-                            for (let tk = tj + 1; tk < targetPixels.length; tk++) {
-                                const targetTriangle = [targetPixels[ti], targetPixels[tj], targetPixels[tk]];
-                                const targetSignature = getTriangleSignature(...targetTriangle);
-                                if (!targetSignature) continue;
-
-                                const error = Math.abs(refSignature[0] - targetSignature[0]) + Math.abs(refSignature[1] - targetSignature[1]);
-                                if (error < minError) {
-                                    minError = error;
-                                    bestTargetTriangle = targetTriangle;
+                                    const error = Math.abs(refSignature[0] - targetSignature[0]) + Math.abs(refSignature[1] - targetSignature[1]);
+                                    if (error < minError) {
+                                        minError = error;
+                                        bestTargetTriangle = targetTriangle;
+                                    }
                                 }
                             }
                         }
+                        if (bestTargetTriangle && minError < SIGNATURE_TOLERANCE * 2) {
+                             if (!currentTargetTriangles[targetImage.imageId]) {
+                                currentMatchCount++;
+                                currentTargetTriangles[targetImage.imageId] = bestTargetTriangle;
+                            }
+                        }
                     }
-
-                    if (bestTargetTriangle && minError < SIGNATURE_TOLERANCE * 2) {
-                        currentMatchCount++;
-                        currentTargetTriangles[targetImage.imageId] = bestTargetTriangle;
+                     if (currentMatchCount > bestMatch.count) {
+                        bestMatch = {
+                            count: currentMatchCount,
+                            refTriangle: refTriangle,
+                            targetTriangles: currentTargetTriangles
+                        };
                     }
-                }
-
-                if (currentMatchCount > bestMatch.count) {
-                    bestMatch = {
-                        count: currentMatchCount,
-                        refTriangle: refTriangle,
-                        targetTriangles: currentTargetTriangles
-                    };
                 }
             }
         }
+        if (bestMatch.count < 2) return null;
+        return bestMatch;
+    };
+
+    const firstTriangleMatch = findBestTriangle(allImagePixels);
+    if (!firstTriangleMatch) {
+        addLog(`[DUMB-PATTERN] Could not find a common triangle pattern.`);
+        return null;
     }
+    addLog(`[DUMB-PATTERN] Found first common triangle pattern across ${firstTriangleMatch.count} images.`);
     
-    if (bestMatch.count < 2) {
-        addLog(`[DUMB-PATTERN] Could not find a common triangle pattern across at least 2 images.`);
+    // --- Find second, independent triangle ---
+    const imageIdsWithFirstTriangle = Object.keys(firstTriangleMatch.targetTriangles);
+    const remainingCandidates = allImagePixels
+        .filter(p => imageIdsWithFirstTriangle.includes(p.imageId))
+        .map(p => {
+            const usedStars = new Set(firstTriangleMatch.targetTriangles[p.imageId]);
+            return {
+                imageId: p.imageId,
+                stars: p.stars.filter(s => !usedStars.has(s)),
+            };
+        });
+
+    const secondTriangleMatch = findBestTriangle(remainingCandidates);
+    
+    const finalRefTriangles = [firstTriangleMatch.refTriangle!];
+    const finalTargetTriangles: Record<string, Star[][]> = {};
+     for(const id of imageIdsWithFirstTriangle) {
+        finalTargetTriangles[id] = [firstTriangleMatch.targetTriangles[id]];
+    }
+
+    if (secondTriangleMatch) {
+        addLog(`[DUMB-PATTERN] Found second independent triangle pattern across ${secondTriangleMatch.count} images.`);
+        finalRefTriangles.push(secondTriangleMatch.refTriangle!);
+        const imageIdsWithSecondTriangle = Object.keys(secondTriangleMatch.targetTriangles);
+        for(const id of imageIdsWithSecondTriangle){
+            if(finalTargetTriangles[id]){
+                finalTargetTriangles[id].push(secondTriangleMatch.targetTriangles[id]);
+            }
+        }
+    } else {
+        addLog(`[DUMB-PATTERN] Could not find a second independent triangle. Proceeding with one.`);
+    }
+
+    const finalImageIds = Object.keys(finalTargetTriangles).filter(id => finalTargetTriangles[id].length === finalRefTriangles.length);
+
+    if(finalImageIds.length < 2) {
+        addLog(`[DUMB-PATTERN] Fewer than 2 images share all required patterns. Aborting.`);
         return null;
     }
 
-    addLog(`[DUMB-PATTERN] Found a common triangle pattern across ${bestMatch.count} images.`);
     return {
-        refTriangle: bestMatch.refTriangle!,
-        targetTriangles: bestMatch.targetTriangles,
-        imageIds: Object.keys(bestMatch.targetTriangles)
+        refTriangles: finalRefTriangles,
+        targetTriangles: finalTargetTriangles,
+        imageIds: finalImageIds,
     };
 }
 
@@ -275,7 +320,7 @@ export async function dumbAlignAndStack({
                  pixels = detectBrightestPixels(entry.imageData, addLog, entry.file.name);
             }
         }
-        if (pixels.length >= 3) { // Need at least 3 points for triangle pattern
+        if (pixels.length >= 6) { // Need at least 6 points for two triangles
             allImageBrightPixels.push({ imageId: entry.id, stars: pixels });
         }
         setProgress(0.3 * ((index + 1) / imageEntries.length));
@@ -283,17 +328,19 @@ export async function dumbAlignAndStack({
 
 
     if (allImageBrightPixels.length < 2) {
-        throw new Error("Fewer than two images have at least 3 candidate pixels for alignment.");
+        throw new Error("Fewer than two images have at least 6 candidate pixels for alignment.");
     }
     
-    addLog(`[DUMB-ALIGN] Step 2: Finding a common triangle pattern...`);
-    const globalPattern = findBestGlobalTriangle(allImageBrightPixels, addLog);
+    addLog(`[DUMB-ALIGN] Step 2: Finding common triangle patterns...`);
+    const globalPattern = findBestGlobalTriangles(allImageBrightPixels, addLog);
 
     if (!globalPattern) {
         throw new Error("Could not find a common pattern. Try using the 'Consensus' method.");
     }
     
-    const { refTriangle, targetTriangles, imageIds } = globalPattern;
+    const { refTriangles, targetTriangles, imageIds } = globalPattern;
+    const refPoints = refTriangles.flat();
+    
     const refImageId = imageIds[0];
     const refEntry = imageEntries.find(e => e.id === refImageId)!;
     const { width, height } = refEntry.analysisDimensions;
@@ -319,8 +366,8 @@ export async function dumbAlignAndStack({
             continue;
         }
 
-        const targetTriangle = targetTriangles[entry.id];
-        const transform = getTransform(refTriangle, targetTriangle);
+        const targetPoints = targetTriangles[entry.id].flat();
+        const transform = getTransform(refPoints, targetPoints);
 
         if (!transform) {
             alignedImageDatas.push(null);
@@ -361,3 +408,5 @@ export async function dumbAlignAndStack({
     addLog("[DUMB-ALIGN] Stacking complete.");
     return stackedResult;
 }
+
+    
