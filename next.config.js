@@ -30,6 +30,9 @@ const nextConfig = {
             fs: false, 
         };
     }
+    config.externals.push({
+      '@tensorflow/tfjs-node': 'commonjs @tensorflow/tfjs-node',
+    });
     return config;
   },
   env: {
