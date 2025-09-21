@@ -112,7 +112,7 @@ export async function POST(request: NextRequest) {
         };
 
         return new NextResponse(JSON.stringify(responsePayload), {
-            status. 200,
+            status: 200,
             headers: { 'Content-Type': 'application/json' },
         });
 
