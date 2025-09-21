@@ -132,7 +132,7 @@ export async function POST(request: NextRequest) {
 
         const responsePayload = {
             message: `Successfully stacked ${imageEntries.length} images.`,
-            stackedImageBase64: outputBuffer.toString('base64'),
+            stackedImageUrl: `data:image/png;base64,${outputBuffer.toString('base64')}`,
             width,
             height,
         };

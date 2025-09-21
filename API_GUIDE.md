@@ -54,13 +54,13 @@ API를 사용하려면 API 키를 통한 인증이 필요합니다. `.env` 파�
 ```json
 {
   "message": "Successfully stacked 3 images.",
-  "stackedImageBase64": "iVBORw0KGgoAAAANSUhEUgA...",
+  "stackedImageUrl": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgA...",
   "width": 1920,
   "height": 1080
 }
 ```
 
-- **`stackedImageBase64`**: 최종 스태킹된 이미지를 **Base64**로 인코딩한 문자열입니다. 이 데이터를 디코딩하여 이미지 파일로 저장할 수 있습니다.
+- **`stackedImageUrl`**: 최종 스태킹된 이미지를 **Data URI** 형식으로 포함한 URL 링크입니다. 이 링크는 웹 브라우저에서 직접 열거나 `<img>` 태그의 `src`로 바로 사용할 수 있습니다.
 - **`width` / `height`**: 결과 이미지의 가로/세로 크기입니다.
 
 ## 오류 응답 (Error Response)
@@ -88,4 +88,4 @@ curl -X POST https://YOUR_PUBLIC_APP_URL/api/stack \
 }'
 ```
 
-이 요청은 2개의 이미지를 `standard` 정렬과 `median` 모드로 스태킹한 후, 결과 이미지의 Base64 데이터를 반환합니다.
+이 요청은 2개의 이미지를 `standard` 정렬과 `median` 모드로 스태킹한 후, 결과 이미지의 Data URI가 포함된 URL 링크를 반환합니다.
