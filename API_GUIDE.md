@@ -71,11 +71,11 @@ API를 사용하려면 API 키를 통한 인증이 필요합니다. `.env` 파�
 
 ## 사용 예시 (`curl` 사용)
 
-터미널에서 아래 명령어를 실행하여 API를 테스트할 수 있습니다.
+터미널에서 아래 명령어를 실행하여 API를 테스트할 수 있습니다. `https://YOUR_PUBLIC_APP_URL` 부분을 현재 개발 환경의 실제 공개 URL로, `YOUR_API_KEY`를 `.env` 파일에 설정한 키로, 그리고 이미지 URL을 실제 값으로 바꾸세요.
 
 ```bash
-# YOUR_API_KEY와 실제 이미지 URL을 자신의 값으로 바꾸세요.
-curl -X POST http://localhost:9002/api/stack \
+# YOUR_PUBLIC_APP_URL과 YOUR_API_KEY, 실제 이미지 URL을 자신의 값으로 바꾸세요.
+curl -X POST https://YOUR_PUBLIC_APP_URL/api/stack \
 -H "Content-Type: application/json" \
 -H "Authorization: Bearer YOUR_API_KEY" \
 -d '{
