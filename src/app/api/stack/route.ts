@@ -47,7 +47,7 @@ export async function POST(request: NextRequest) {
     const token = authHeader?.split(' ')[1];
     
     // .env 파일에 정의된 API 키 목록
-    const validApiKeys = (process.env.ASTROMETRY_API_KEYS || '').split(',').filter(k => k.trim());
+    const validApiKeys = (process.env.ASTROSTACKER_API_KEYS || '').split(',').filter(k => k.trim());
 
     if (validApiKeys.length === 0) {
         return new NextResponse(JSON.stringify({ error: 'API keys are not configured on the server.' }), {

@@ -14,7 +14,7 @@ API를 사용하려면 API 키를 통한 인증이 필요합니다. `.env` 파�
 
 - **Header:** `Authorization: Bearer YOUR_API_KEY`
 
-`YOUR_API_KEY` 부분을 `.env` 파일의 `ASTROMETRY_API_KEYS`에 설정된 값으로 교체하세요.
+`YOUR_API_KEY` 부분을 `.env` 파일의 `ASTROSTACKER_API_KEYS`에 설정된 값으로 교체하세요.
 
 ## 요청 본문 (Request Body)
 
