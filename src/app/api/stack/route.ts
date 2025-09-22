@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import sharp from 'sharp';
 import type { StackingMode } from '@/lib/astro-align';
-import { alignAndStack, detectBrightBlobs, type ImageQueueEntry, type Star } from '@/lib/astro-align';
+import { alignAndStack, detectBrightBlobs, type Star } from '@/lib/astro-align';
 import { consensusAlignAndStack } from '@/lib/consensus-align';
 import { planetaryAlignAndStack } from '@/lib/planetary-align';
 import { dumbAlignAndStack } from '@/lib/dumb-align';
@@ -15,6 +15,14 @@ interface ServerImageData {
     height: number;
 }
 
+// 서버 환경에서 사용할 ImageQueueEntry 타입. browser `File` 객체 제외.
+interface ServerImageQueueEntry {
+  id: string;
+  imageData: ServerImageData;
+  detectedStars: Star[];
+  analysisDimensions: { width: number; height: number };
+}
+
 // URL로부터 이미지를 다운로드하고 sharp를 사용해 픽셀 데이터로 변환하는 함수
 async function urlToImageData(url: string): Promise<ServerImageData> {
     const response = await fetch(url);
@@ -22,20 +30,14 @@ async function urlToImageData(url: string): Promise<ServerImageData> {
         throw new Error(`Failed to fetch image from ${url}: ${response.statusText}`);
     }
     const arrayBuffer = await response.arrayBuffer();
-    const image = sharp(Buffer.from(arrayBuffer));
-    const { data, info } = await image.raw().toBuffer({ resolveWithObject: true });
     
-    // sharp는 RGB 순서의 raw buffer를 반환하므로, RGBA로 변환해줍니다.
-    const rgbaData = new Uint8ClampedArray(info.width * info.height * 4);
-    for (let i = 0; i < info.width * info.height; i++) {
-        rgbaData[i * 4] = data[i * info.channels];
-        rgbaData[i * 4 + 1] = data[i * info.channels + 1];
-        rgbaData[i * 4 + 2] = data[i * info.channels + 2];
-        rgbaData[i * 4 + 3] = info.channels === 4 ? data[i * info.channels + 3] : 255;
-    }
+    const image = sharp(Buffer.from(arrayBuffer));
+    
+    // Ensure the image is in a format we can work with (RGBA)
+    const { data, info } = await image.ensureAlpha().raw().toBuffer({ resolveWithObject: true });
 
     return {
-        data: rgbaData,
+        data: new Uint8ClampedArray(data),
         width: info.width,
         height: info.height,
     };
@@ -77,23 +79,23 @@ export async function POST(request: NextRequest) {
         
         console.log(`[API] Received stack request for ${imageUrls.length} images. Method: ${alignmentMethod}, Mode: ${stackingMode}`);
 
-        const imageEntries: ImageQueueEntry[] = [];
+        const imageEntries: ServerImageQueueEntry[] = [];
         for (const url of imageUrls) {
             console.log(`[API] Processing image: ${url}`);
             const imageData = await urlToImageData(url);
-            // ImageData 타입이 호환되지 않으므로, 서버용 타입으로 캐스팅합니다.
-            const browserImageData = {
+            
+            // `detectBrightBlobs`는 브라우저의 ImageData 형식을 기대하므로, 필요한 속성을 가진 객체를 전달합니다.
+            const browserCompatibleImageData = {
                 data: imageData.data,
                 width: imageData.width,
                 height: imageData.height,
-                colorSpace: 'srgb'
-            } as ImageData;
-            const detectedStars = detectBrightBlobs(browserImageData, browserImageData.width, browserImageData.height);
+            } as ImageData; // 서버에서는 타입스크립트의 타입 단언으로 처리
+
+            const detectedStars = detectBrightBlobs(browserCompatibleImageData, browserCompatibleImageData.width, browserCompatibleImageData.height);
             
             imageEntries.push({
                 id: url,
-                file: new File([], 'server-file.png'), // Mock file, 서버에서는 사용되지 않음
-                imageData: browserImageData,
+                imageData: imageData,
                 detectedStars: detectedStars,
                 analysisDimensions: { width: imageData.width, height: imageData.height },
             });
@@ -104,22 +106,34 @@ export async function POST(request: NextRequest) {
         const mockSetProgress = () => {}; // 서버에서는 진행률 보고가 필요 없음
         const addLog = (msg: string) => console.log(`[API STACK LOG] ${msg}`);
 
+        // ImageQueueEntry 타입을 서버용으로 변환 (File 객체 제거)
+        const serverEntries = imageEntries.map(e => ({
+            ...e,
+            imageData: {
+                ...e.imageData,
+                colorSpace: 'srgb'
+            } as ImageData, // align 함수들이 ImageData 타입을 기대하므로 캐스팅
+            file: null // 서버에서는 file 객체 불필요
+        }));
+
         // alignmentMethod에 따라 적절한 스태킹 함수 호출
-        // 주의: AI 관련 로직은 클라이언트 측 모델에 의존하므로 여기서는 standard, dumb, planetary만 지원합니다.
         switch (alignmentMethod) {
             case 'planetary':
-                stackedImageData = await planetaryAlignAndStack(imageEntries, stackingMode as StackingMode, addLog, mockSetProgress, 50);
+                stackedImageData = await planetaryAlignAndStack(serverEntries as any, stackingMode as StackingMode, addLog, mockSetProgress, 50);
                 break;
             case 'dumb':
-                 stackedImageData = await dumbAlignAndStack({imageEntries, stackingMode: stackingMode as StackingMode, addLog, setProgress: mockSetProgress });
+                 stackedImageData = await dumbAlignAndStack({imageEntries: serverEntries as any, stackingMode: stackingMode as StackingMode, addLog, setProgress: mockSetProgress });
                  break;
             case 'consensus':
-                stackedImageData = await consensusAlignAndStack({imageEntries, stackingMode: stackingMode as StackingMode, addLog, setProgress: mockSetProgress });
+                // 서버 환경에서는 AI 모델을 사용할 수 없으므로, standard로 대체
+                addLog("[API] 'consensus' method on server falls back to 'standard' as AI model is client-side only.");
+                 if (serverEntries[0].detectedStars.length < 2) throw new Error("Reference image for alignment has less than 2 stars.");
+                stackedImageData = await alignAndStack(serverEntries as any, serverEntries[0].detectedStars, stackingMode as StackingMode, mockSetProgress);
                 break;
             case 'standard':
             default:
-                if (imageEntries[0].detectedStars.length < 2) throw new Error("Reference image for 'standard' alignment has less than 2 stars.");
-                stackedImageData = await alignAndStack(imageEntries, imageEntries[0].detectedStars, stackingMode as StackingMode, mockSetProgress);
+                if (serverEntries[0].detectedStars.length < 2) throw new Error("Reference image for 'standard' alignment has less than 2 stars.");
+                stackedImageData = await alignAndStack(serverEntries as any, serverEntries[0].detectedStars, stackingMode as StackingMode, mockSetProgress);
                 break;
         }
 
