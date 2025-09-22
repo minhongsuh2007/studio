@@ -13,7 +13,7 @@ export async function GET(request: NextRequest) {
         const response = await fetch(url);
 
         if (!response.ok) {
-            throw new Error(`Failed to fetch: ${response.status} ${response.statusText}`);
+            throw new Error(`Failed to fetch from ${url}: ${response.status} ${response.statusText}`);
         }
 
         const contentType = response.headers.get('content-type');
@@ -27,7 +27,7 @@ export async function GET(request: NextRequest) {
                 // Fetch the actual image from the og:image URL
                 const imageResponse = await fetch(ogImageUrl);
                 if (!imageResponse.ok) {
-                    throw new Error(`Failed to fetch og:image: ${imageResponse.status}`);
+                    throw new Error(`Failed to fetch og:image from ${ogImageUrl}: ${imageResponse.statusText}`);
                 }
                 const imageBody = await imageResponse.arrayBuffer();
                 const imageContentType = imageResponse.headers.get('content-type') || 'image/jpeg';
@@ -36,7 +36,7 @@ export async function GET(request: NextRequest) {
                     headers: { 'Content-Type': imageContentType },
                 });
             } else {
-                 return NextResponse.json({ error: 'URL did not point to an image and no og:image found.' }, { status: 400 });
+                 return NextResponse.json({ error: 'URL did not point to a direct image and no og:image meta tag was found.' }, { status: 400 });
             }
         }
 
