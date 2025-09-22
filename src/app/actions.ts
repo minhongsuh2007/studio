@@ -1,0 +1,198 @@
+'use server';
+
+import {
+  alignAndStack,
+  consensusAlignAndStack,
+  dumbAlignAndStack,
+  planetaryAlignAndStack,
+  type AlignmentMethod,
+  type ImageQueueEntry,
+  type StackingMode,
+} from '@/lib/server-align';
+import sharp from 'sharp';
+
+// Helper to create an ImageData-like object that the alignment functions expect.
+interface ServerImageData {
+  data: Uint8ClampedArray;
+  width: number;
+  height: number;
+}
+
+async function fetchAndDecodeImage(
+  url: string,
+  id: string,
+  log: (msg: string) => void
+): Promise<ImageQueueEntry | null> {
+  try {
+    log(`[FETCH] Downloading: ${url}`);
+    // Use a more robust User-Agent
+    const response = await fetch(url, {
+        headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+    });
+    if (!response.ok) {
+      throw new Error(
+        `Failed to fetch image. Status: ${response.status} ${response.statusText}`
+      );
+    }
+    const buffer = await response.arrayBuffer();
+
+    log(`[DECODE] Processing image from ${url}`);
+    const image = sharp(Buffer.from(buffer));
+    const metadata = await image.metadata();
+    const { width, height } = metadata;
+
+    if (!width || !height) {
+      throw new Error('Could not get image dimensions.');
+    }
+
+    // Ensure the image has an alpha channel and get raw pixel data
+    const rawData = await image.ensureAlpha().raw().toBuffer();
+
+    const imageData: ServerImageData = {
+      data: new Uint8ClampedArray(rawData),
+      width,
+      height,
+    };
+
+    return {
+      id,
+      // @ts-ignore - We are creating a server-side stand-in for the browser's ImageData
+      imageData: imageData,
+      detectedStars: [], // Star detection will happen in the alignment function
+      analysisDimensions: { width, height },
+    };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    log(`[ERROR] Failed to process URL ${url}: ${errorMessage}`);
+    return null;
+  }
+}
+
+export async function stackImagesWithUrls(prevState: any, formData: FormData) {
+  const logs: string[] = [];
+  const addLog = (message: string) => {
+    logs.push(`[${new Date().toISOString()}] ${message}`);
+    console.log(message);
+  };
+
+  addLog('Server Action `stackImagesWithUrls` invoked.');
+
+  try {
+    const rawUrls = formData.get('imageUrls') as string;
+    const alignmentMethod = (formData.get('alignmentMethod') as AlignmentMethod) || 'standard';
+    const stackingMode = (formData.get('stackingMode') as StackingMode) || 'median';
+
+    const imageUrls = rawUrls.split('\n').filter(url => url.trim() !== '');
+
+    addLog(`Received ${imageUrls.length} URLs. Alignment: ${alignmentMethod}, Mode: ${stackingMode}.`);
+    if (!imageUrls || imageUrls.length < 2) {
+      return {
+        success: false,
+        message: 'At least two image URLs are required.',
+        logs,
+      };
+    }
+
+    addLog('Starting image download and decoding process...');
+    const imagePromises = imageUrls.map((url, index) =>
+      fetchAndDecodeImage(url, `image_${index}`, addLog)
+    );
+    const resolvedImages = await Promise.all(imagePromises);
+    const imageEntries = resolvedImages.filter(
+      (entry): entry is ImageQueueEntry => entry !== null
+    );
+
+    if (imageEntries.length < 2) {
+      return {
+        success: false,
+        message: 'Could not process enough images to perform stacking.',
+        details: 'Fewer than two images were successfully downloaded and decoded.',
+        logs,
+      };
+    }
+    addLog(
+      `Successfully processed ${imageEntries.length} out of ${imageUrls.length} images.`
+    );
+
+    let stackedImageBuffer: Uint8ClampedArray;
+    const setProgress = (p: number) => {
+      addLog(`Stacking progress: ${Math.round(p * 100)}%`);
+    };
+
+    switch (alignmentMethod) {
+      case 'consensus':
+        stackedImageBuffer = await consensusAlignAndStack({
+          imageEntries,
+          stackingMode,
+          addLog,
+          setProgress,
+        });
+        break;
+      case 'planetary':
+        stackedImageBuffer = await planetaryAlignAndStack(
+          imageEntries,
+          stackingMode,
+          addLog,
+          setProgress,
+          80
+        );
+        break;
+      case 'dumb':
+        stackedImageBuffer = await dumbAlignAndStack({
+          imageEntries,
+          stackingMode,
+          addLog,
+          setProgress,
+        });
+        break;
+      case 'standard':
+      default:
+        stackedImageBuffer = await alignAndStack(
+          imageEntries,
+          [],
+          stackingMode,
+          setProgress,
+          addLog
+        );
+        break;
+    }
+    addLog('Alignment and stacking complete.');
+
+    const { width, height } = imageEntries[0].analysisDimensions;
+    const finalImage = await sharp(Buffer.from(stackedImageBuffer), {
+      raw: {
+        width: width,
+        height: height,
+        channels: 4,
+      },
+    })
+      .png()
+      .toBuffer();
+
+    const stackedImageUrl = `data:image/png;base64,${finalImage.toString('base64')}`;
+
+    addLog('Final image encoded successfully.');
+    return {
+      success: true,
+      message: `Successfully stacked ${imageEntries.length} images.`,
+      stackedImageUrl,
+      width,
+      height,
+      logs,
+    };
+  } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : 'An unknown error occurred.';
+    addLog(`[FATAL_ERROR] ${errorMessage}`);
+    console.error(error);
+
+    return {
+      success: false,
+      message: 'An unexpected error occurred during the stacking process.',
+      details: errorMessage,
+      logs,
+    };
+  }
+}

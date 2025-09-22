@@ -2,6 +2,7 @@
 
 import type React from 'react';
 import { useState, useEffect, useRef, useCallback }from 'react';
+import { useFormState } from 'react-dom';
 import * as tf from '@tensorflow/tfjs';
 import { Button } from '@/components/ui/button';
 import { useLanguage } from '@/contexts/LanguageContext';
@@ -17,7 +18,7 @@ import { ImagePreview } from '@/components/astrostacker/ImagePreview';
 import { ImagePostProcessEditor } from '@/components/astrostacker/ImagePostProcessEditor';
 import { TutorialDialog } from '@/components/astrostacker/TutorialDialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Star as StarIcon, Link, ListChecks, CheckCircle, RefreshCcw, Edit3, Loader2, Orbit, Trash2, Wand2, ShieldOff, Layers, Baseline, X, AlertTriangle, BrainCircuit, TestTube2, Eraser, Download, Upload, Cpu, AlertCircle, Moon, Sun, Sparkles, UserCheck, Zap, Diamond, Globe, Camera, Video, Play, StopCircle, Puzzle } from 'lucide-react';
+import { Star as StarIcon, Link, ListChecks, CheckCircle, RefreshCcw, Edit3, Loader2, Orbit, Trash2, Wand2, ShieldOff, Layers, Baseline, X, AlertTriangle, BrainCircuit, TestTube2, Eraser, Download, Upload, Cpu, AlertCircle, Moon, Sun, Sparkles, UserCheck, Zap, Diamond, Globe, Camera, Video, Play, StopCircle, Puzzle, Server } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
@@ -32,7 +33,9 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/
 import { createMasterFrame, applyCalibration } from '@/lib/image-calibration';
 import { applyPostProcessing } from '@/lib/post-process';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { saveAs } from 'file-saver';
+import { stackImagesWithUrls } from '@/app/actions';
 
 
 export const dynamic = 'force-static';
@@ -73,6 +76,14 @@ const IS_LARGE_IMAGE_THRESHOLD_MP = 12;
 const MAX_DIMENSION_DOWNSCALED = 2048;
 const TF_MODEL_STORAGE_KEY = 'localstorage://astrostacker-model';
 
+const initialServerStackState = {
+  success: false,
+  message: '',
+  stackedImageUrl: null,
+  logs: [],
+};
+
+
 export default function AstroStackerPage() {
   const { t } = useLanguage();
   const [allImageStarData, setAllImageStarData] = useState<ImageQueueEntry[]>([]);
@@ -97,9 +108,6 @@ export default function AstroStackerPage() {
   const [showPostProcessEditor, setShowPostProcessEditor] = useState(false);
   const [imageForPostProcessing, setImageForPostProcessing] = useState<string | null>(null);
   const [editedPreviewUrl, setEditedPreviewUrl] = useState<string | null>(null);
-
-  const [imageUrl, setImageUrl] = useState('');
-  const [isAddingFromUrl, setIsAddingFromUrl] = useState(false);
   
   // --- Post-Processing State ---
   const [brightness, setBrightness] = useState(100);
@@ -138,8 +146,36 @@ export default function AstroStackerPage() {
     setIsFileApiReady(true);
   }, []);
 
+  const [serverStackState, formAction] = useFormState(stackImagesWithUrls, initialServerStackState);
+  const formRef = useRef<HTMLFormElement>(null);
+  const [isServerProcessing, setIsServerProcessing] = useState(false);
+  
+  useEffect(() => {
+    if (serverStackState.logs.length > logs.length) {
+      serverStackState.logs.forEach(log => addLog(log));
+    }
+    if (serverStackState.message) {
+      addLog(`[SERVER] ${serverStackState.message}`);
+      if (!serverStackState.success) {
+        window.alert(`Server Stacking Failed: ${serverStackState.message}`);
+      }
+    }
+    if (serverStackState.success && serverStackState.stackedImageUrl) {
+        setStackedImage(serverStackState.stackedImageUrl);
+        setImageForPostProcessing(serverStackState.stackedImageUrl);
+        setEditedPreviewUrl(serverStackState.stackedImageUrl);
+        handleResetAdjustments();
+    }
+    setIsServerProcessing(false);
+  }, [serverStackState]);
+
   const addLog = useCallback((message: string) => {
+    if (!message) return;
     setLogs(prevLogs => {
+      // Avoid duplicate logs
+      if (prevLogs.some(log => log.message === message)) {
+          return prevLogs;
+      }
       const newLog = {
         id: logIdCounter.current++,
         timestamp: new Date().toLocaleTimeString(),
@@ -382,40 +418,6 @@ export default function AstroStackerPage() {
       }
     }
   }, [addLog, fileToDataURL]);
-
-  const handleUrlAdded = useCallback(async () => {
-    if (!imageUrl) {
-        addLog("[URL] URL is empty.");
-        return;
-    }
-    setIsAddingFromUrl(true);
-    addLog(`[URL] Attempting to fetch image from: ${imageUrl}`);
-    try {
-        const response = await fetch(`/proxy?url=${encodeURIComponent(imageUrl)}`);
-        if (!response.ok) {
-            throw new Error(`Failed to fetch image through proxy. Status: ${response.status}`);
-        }
-        const blob = await response.blob();
-        
-        let fileName = new URL(imageUrl).pathname.split('/').pop() || 'image-from-url.jpg';
-        if (!fileName.match(/\.(jpg|jpeg|png|gif|webp|tif|tiff)$/i)) {
-          // Guess extension from blob type
-          const ext = blob.type.split('/')[1] || 'jpg';
-          fileName = `image-from-url.${ext}`;
-        }
-        
-        const file = new File([blob], fileName, { type: blob.type });
-
-        await handleFilesAdded([file]);
-        setImageUrl(''); // Clear input on success
-    } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : "Unknown error";
-        addLog(`[URL ERROR] Failed to add image from URL: ${errorMessage}`);
-        window.alert(`Failed to add image from URL: ${errorMessage}`);
-    } finally {
-        setIsAddingFromUrl(false);
-    }
-  }, [imageUrl, handleFilesAdded, addLog]);
 
   const handleCalibrationFilesAdded = useCallback(async (
     files: File[],
@@ -1145,7 +1147,7 @@ export default function AstroStackerPage() {
 
   const imageForAnnotation = allImageStarData.find(img => img.id === manualSelectImageId);
   const canStartStacking = allImageStarData.length >= 2 && allImageStarData.every(img => img.isAnalyzed);
-  const isUiDisabled = isProcessingStack || isTrainingModel || isAddingFromUrl || allImageStarData.some(img => img.isAnalyzing);
+  const isUiDisabled = isProcessingStack || isTrainingModel || isServerProcessing || allImageStarData.some(img => img.isAnalyzing);
   const currentYear = new Date().getFullYear();
 
   // Determine the primary image to show in the main preview area
@@ -1164,26 +1166,35 @@ export default function AstroStackerPage() {
                 <CardDescription className="text-sm max-h-32 overflow-y-auto">{t('cardDescription')}</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <ImageUploadArea onFilesAdded={handleFilesAdded} isProcessing={isUiDisabled || !isFileApiReady} multiple={true} />
-
-                <div className="space-y-2">
-                  <Label htmlFor="url-input">Add Image from URL</Label>
-                  <div className="flex gap-2">
-                      <Input
-                          id="url-input"
-                          type="url"
-                          placeholder="https://..."
-                          value={imageUrl}
-                          onChange={(e) => setImageUrl(e.target.value)}
-                          disabled={isUiDisabled}
-                          onKeyDown={(e) => e.key === 'Enter' && handleUrlAdded()}
-                      />
-                      <Button onClick={handleUrlAdded} disabled={isUiDisabled || !imageUrl}>
-                          {isAddingFromUrl ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link className="h-4 w-4" />}
-                      </Button>
-                  </div>
-                </div>
-
+                <Tabs defaultValue="local" className="w-full">
+                  <TabsList className="grid w-full grid-cols-2">
+                    <TabsTrigger value="local"><Upload className="mr-2 h-4 w-4" /> From Device</TabsTrigger>
+                    <TabsTrigger value="url"><Server className="mr-2 h-4 w-4" /> From URLs</TabsTrigger>
+                  </TabsList>
+                  <TabsContent value="local" className="mt-4">
+                    <ImageUploadArea onFilesAdded={handleFilesAdded} isProcessing={isUiDisabled || !isFileApiReady} multiple={true} />
+                  </TabsContent>
+                  <TabsContent value="url" className="mt-4">
+                     <form ref={formRef} action={formAction} onSubmit={() => setIsServerProcessing(true)} className="space-y-4">
+                        <Label htmlFor="url-input">Image URLs</Label>
+                        <Textarea
+                            id="url-input"
+                            name="imageUrls"
+                            placeholder="https://.../image1.jpg&#10;https://.../image2.jpg"
+                            rows={5}
+                            disabled={isUiDisabled}
+                        />
+                        <input type="hidden" name="alignmentMethod" value={alignmentMethod} />
+                        <input type="hidden" name="stackingMode" value={stackingMode} />
+                        <Button type="submit" disabled={isUiDisabled} className="w-full">
+                            {isServerProcessing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Server className="mr-2 h-4 w-4" />}
+                            Stack from URLs
+                        </Button>
+                        {isServerProcessing && <Progress value={progressPercent} className="w-full h-2 mt-2" />}
+                     </form>
+                  </TabsContent>
+                </Tabs>
+                
                 <Accordion type="multiple" className="w-full">
                   <AccordionItem value="darks">
                     <AccordionTrigger>
