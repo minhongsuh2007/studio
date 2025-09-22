@@ -53,7 +53,9 @@ async function urlToImageData(url: string): Promise<ServerImageData> {
             }
             imageBuffer = await imageResponse.arrayBuffer();
         } else {
-            throw new Error(`URL did not point to an image and no og:image meta tag was found.`);
+            // This was the source of the unhandled error. By throwing an error here,
+            // it will be caught by the main `catch` block in the POST handler.
+            throw new Error(`URL did not point to a direct image and no og:image meta tag was found.`);
         }
     }
     
@@ -71,21 +73,20 @@ async function urlToImageData(url: string): Promise<ServerImageData> {
 
 
 export async function POST(request: NextRequest) {
-    const authHeader = request.headers.get('Authorization');
-    const token = authHeader?.split(' ')[1];
-    
-    // .env 파일에 정의된 API 키 목록
-    const validApiKeys = (process.env.ASTROSTACKER_API_KEYS || '').split(',').filter(k => k.trim());
-
-    if (validApiKeys.length === 0) {
-        return NextResponse.json({ error: 'API keys are not configured on the server.' }, { status: 500 });
-    }
-
-    if (!token || !validApiKeys.includes(token)) {
-        return NextResponse.json({ error: 'Unauthorized: Invalid API Key' }, { status: 401 });
-    }
-
     try {
+        const authHeader = request.headers.get('Authorization');
+        const token = authHeader?.split(' ')[1];
+        
+        const validApiKeys = (process.env.ASTROSTACKER_API_KEYS || '').split(',').filter(k => k.trim());
+
+        if (validApiKeys.length === 0) {
+            return NextResponse.json({ error: 'API keys are not configured on the server.' }, { status: 500 });
+        }
+
+        if (!token || !validApiKeys.includes(token)) {
+            return NextResponse.json({ error: 'Unauthorized: Invalid API Key' }, { status: 401 });
+        }
+
         const body = await request.json();
         const {
             imageUrls,
@@ -133,6 +134,9 @@ export async function POST(request: NextRequest) {
             } as ImageData,
             file: null
         }));
+        
+        const refImage = serverEntries[0];
+        const refStars = refImage?.detectedStars;
 
         switch (alignmentMethod) {
             case 'planetary':
@@ -143,13 +147,17 @@ export async function POST(request: NextRequest) {
                  break;
             case 'consensus':
                 addLog("[API] 'consensus' method on server falls back to 'standard' as AI model is client-side only.");
-                 if (serverEntries.length > 0 && serverEntries[0].detectedStars.length < 2) throw new Error("Reference image for alignment has less than 2 stars.");
-                stackedImageData = await alignAndStack(serverEntries as any, serverEntries[0].detectedStars, stackingMode as StackingMode, mockSetProgress);
+                 if (!refImage || !refStars || refStars.length < 2) {
+                    throw new Error("Reference image for alignment has less than 2 stars.");
+                 }
+                stackedImageData = await alignAndStack(serverEntries as any, refStars, stackingMode as StackingMode, mockSetProgress);
                 break;
             case 'standard':
             default:
-                if (serverEntries.length > 0 && serverEntries[0].detectedStars.length < 2) throw new Error("Reference image for 'standard' alignment has less than 2 stars.");
-                stackedImageData = await alignAndStack(serverEntries as any, serverEntries[0].detectedStars, stackingMode as StackingMode, mockSetProgress);
+                if (!refImage || !refStars || refStars.length < 2) {
+                    throw new Error("Reference image for 'standard' alignment has less than 2 stars.");
+                }
+                stackedImageData = await alignAndStack(serverEntries as any, refStars, stackingMode as StackingMode, mockSetProgress);
                 break;
         }
 
