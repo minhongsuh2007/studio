@@ -100,14 +100,14 @@ export async function POST(req: NextRequest) {
                 stackedImageData = await planetaryAlignAndStack(imageQueue, stackingMode, addLog, setProgress, 80);
                 break;
             case 'dumb':
-                stackedImageData = await dumbAlignAndStack({ imageEntries: imageQueue, stackingMode, addLog, setProgress });
+                stackedImageData = await dumbAlignAndStack({ imageEntries: imageQueue, stackingMode: stackingMode, addLog, setProgress });
                 break;
             case 'standard':
                 stackedImageData = await alignAndStack(imageQueue, [], stackingMode, setProgress, addLog);
                 break;
             case 'consensus':
             default:
-                stackedImageData = await consensusAlignAndStack({ imageEntries: imageQueue, stackingMode, addLog, setProgress });
+                stackedImageData = await consensusAlignAndStack({ imageEntries: imageQueue, stackingMode: stackingMode, addLog, setProgress });
                 break;
         }
 
