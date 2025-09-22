@@ -4,8 +4,7 @@ import sharp from 'sharp';
 import { alignAndStack, consensusAlignAndStack, dumbAlignAndStack, planetaryAlignAndStack } from '@/lib/server-align';
 import type { AlignmentMethod, StackingMode, ImageQueueEntry } from '@/lib/server-align';
 
-// --- Helper Functions ---
-
+// --- Helper Function ---
 async function urlToImageData(url: string, log: (msg: string) => void): Promise<ImageData | null> {
     try {
         log(`[IMG-FETCH] Fetching: ${url}`);
@@ -24,14 +23,10 @@ async function urlToImageData(url: string, log: (msg: string) => void): Promise<
             throw new Error("Could not read image metadata.");
         }
 
-        // Ensure the image has an alpha channel for consistency
         const rawData = await image.ensureAlpha().raw().toBuffer();
-
         log(`[IMG-FETCH] Success: ${url} (${metadata.width}x${metadata.height})`);
         
-        // The sharp buffer is raw pixel data. We need to wrap it in an ImageData-like object.
-        // Note: The global ImageData constructor is not available in Node.js runtime.
-        // We create a compatible object.
+        // Create an object compatible with the ImageData interface for Node.js
         return {
             data: new Uint8ClampedArray(rawData),
             width: metadata.width,
@@ -81,7 +76,6 @@ export async function POST(req: NextRequest) {
                     id: url,
                     imageData: imageData,
                     analysisDimensions: { width: imageData.width, height: imageData.height },
-                    // Star detection will happen inside the alignment functions
                     detectedStars: [], 
                 });
             } else {
@@ -99,9 +93,7 @@ export async function POST(req: NextRequest) {
         const refImage = imageQueue[0];
         const { width, height } = refImage.analysisDimensions;
 
-        const setProgress = (p: number) => {
-            // Progress reporting can be added here if needed, e.g., via logs
-        };
+        const setProgress = (p: number) => { /* Progress reporting can be added here if needed */ };
 
         switch (alignmentMethod) {
             case 'planetary':
@@ -125,7 +117,6 @@ export async function POST(req: NextRequest) {
 
         addLog("Stacking complete. Generating final output image.");
         
-        // Convert final buffer to PNG
         const finalImageBuffer = await sharp(Buffer.from(stackedImageData), {
             raw: {
                 width: width,
