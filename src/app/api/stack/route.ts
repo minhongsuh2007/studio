@@ -1,4 +1,5 @@
 
+import 'dotenv/config';
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import sharp from 'sharp';
@@ -79,7 +80,7 @@ export async function POST(request: NextRequest) {
         
         const validApiKeys = (process.env.ASTROSTACKER_API_KEYS || '').split(',').filter(k => k.trim());
 
-        if (validApiKeys.length === 0) {
+        if (validApiKeys.length === 0 || (validApiKeys.length === 1 && validApiKeys[0] === '')) {
             return NextResponse.json({ error: 'API keys are not configured on the server.' }, { status: 500 });
         }
 
