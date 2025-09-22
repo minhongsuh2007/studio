@@ -75,19 +75,6 @@ async function urlToImageData(url: string): Promise<ServerImageData> {
 
 export async function POST(request: NextRequest) {
     try {
-        const authHeader = request.headers.get('Authorization');
-        const token = authHeader?.split(' ')[1];
-        
-        const validApiKeys = (process.env.ASTROSTACKER_API_KEYS || '').split(',').filter(k => k.trim());
-
-        if (validApiKeys.length === 0 || (validApiKeys.length === 1 && validApiKeys[0] === '')) {
-            return NextResponse.json({ error: 'API keys are not configured on the server.' }, { status: 500 });
-        }
-
-        if (!token || !validApiKeys.includes(token)) {
-            return NextResponse.json({ error: 'Unauthorized: Invalid API Key' }, { status: 401 });
-        }
-
         const body = await request.json();
         const {
             imageUrls,
