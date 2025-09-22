@@ -155,18 +155,24 @@ export async function POST(request: NextRequest) {
 
         const { width, height } = imageEntries[0].analysisDimensions;
         
-        const outputBuffer = await sharp(Buffer.from(stackedImageData), {
-            raw: { width, height, channels: 4 }
-        }).png().toBuffer();
+        try {
+            const outputBuffer = await sharp(Buffer.from(stackedImageData), {
+                raw: { width, height, channels: 4 }
+            }).png().toBuffer();
 
-        const responsePayload = {
-            message: `Successfully stacked ${imageEntries.length} images.`,
-            stackedImageUrl: `data:image/png;base64,${outputBuffer.toString('base64')}`,
-            width,
-            height,
-        };
+            const responsePayload = {
+                message: `Successfully stacked ${imageEntries.length} images.`,
+                stackedImageUrl: `data:image/png;base64,${outputBuffer.toString('base64')}`,
+                width,
+                height,
+            };
 
-        return NextResponse.json(responsePayload);
+            return NextResponse.json(responsePayload);
+        } catch (bufferError) {
+             const bufferErrorMessage = bufferError instanceof Error ? bufferError.message : "Unknown buffer/sharp error";
+             console.error("[API SHARP ERROR]", bufferError);
+             throw new Error(`Failed to create output image buffer: ${bufferErrorMessage}`);
+        }
 
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : "An unknown error occurred";
