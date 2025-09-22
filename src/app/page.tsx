@@ -36,6 +36,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { saveAs } from 'file-saver';
 import { stackImagesWithUrls } from '@/app/actions';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 
 export const dynamic = 'force-static';
