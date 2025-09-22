@@ -25,13 +25,39 @@ interface ServerImageQueueEntry {
 
 // URL로부터 이미지를 다운로드하고 sharp를 사용해 픽셀 데이터로 변환하는 함수
 async function urlToImageData(url: string): Promise<ServerImageData> {
-    const response = await fetch(url);
-    if (!response.ok) {
-        throw new Error(`Failed to fetch image from ${url}: ${response.statusText}`);
+    const initialResponse = await fetch(url);
+    if (!initialResponse.ok) {
+        throw new Error(`Failed to fetch from ${url}: ${initialResponse.statusText}`);
     }
-    const arrayBuffer = await response.arrayBuffer();
+
+    const contentType = initialResponse.headers.get('content-type');
+    let imageBuffer: ArrayBuffer;
+
+    if (contentType && contentType.startsWith('image/')) {
+        // It's a direct image link
+        imageBuffer = await initialResponse.arrayBuffer();
+    } else {
+        // It's likely an HTML page, try to find an og:image
+        const html = await initialResponse.text();
+        const ogImageMatch = html.match(/<meta\s+(?:property="og:image"|name="og:image")\s+content="([^"]+)"/);
+        
+        if (ogImageMatch && ogImageMatch[1]) {
+            const ogImageUrl = ogImageMatch[1];
+            const imageResponse = await fetch(ogImageUrl);
+            if (!imageResponse.ok) {
+                throw new Error(`Failed to fetch og:image from ${ogImageUrl}: ${imageResponse.statusText}`);
+            }
+            const imageContentType = imageResponse.headers.get('content-type');
+            if (!imageContentType || !imageContentType.startsWith('image/')) {
+                throw new Error(`The og:image URL (${ogImageUrl}) did not point to a valid image.`);
+            }
+            imageBuffer = await imageResponse.arrayBuffer();
+        } else {
+            throw new Error(`URL did not point to an image and no og:image meta tag was found.`);
+        }
+    }
     
-    const image = sharp(Buffer.from(arrayBuffer));
+    const image = sharp(Buffer.from(imageBuffer));
     
     // Ensure the image is in a format we can work with (RGBA)
     const { data, info } = await image.ensureAlpha().raw().toBuffer({ resolveWithObject: true });
@@ -70,24 +96,6 @@ export async function POST(request: NextRequest) {
         if (!imageUrls || !Array.isArray(imageUrls) || imageUrls.length < 2) {
             return NextResponse.json({ error: 'At least two imageUrls are required.' }, { status: 400 });
         }
-        
-        // --- URL 유효성 검사 추가 ---
-        for (const url of imageUrls) {
-            if (typeof url !== 'string' || (!url.match(/\.(jpg|jpeg|png|gif|tif|tiff|webp)$/i) && !url.startsWith('data:'))) {
-                 // 구글 이미지 검색 결과 링크와 같은 잘못된 URL 형식 필터링
-                 if (url.includes("google.com/imgres")) {
-                    return NextResponse.json(
-                        { error: 'Invalid image URL format. Please provide a direct link to the image file, not a Google Images result page.' },
-                        { status: 400 }
-                    );
-                 }
-                return NextResponse.json(
-                    { error: `Invalid image URL format: ${url}. URL must be a direct link to a supported image file (e.g., .jpg, .png).` },
-                    { status: 400 }
-                );
-            }
-        }
-        // --- 유효성 검사 끝 ---
 
         console.log(`[API] Received stack request for ${imageUrls.length} images. Method: ${alignmentMethod}, Mode: ${stackingMode}`);
 
@@ -96,12 +104,11 @@ export async function POST(request: NextRequest) {
             console.log(`[API] Processing image: ${url}`);
             const imageData = await urlToImageData(url);
             
-            // `detectBrightBlobs`는 브라우저의 ImageData 형식을 기대하므로, 필요한 속성을 가진 객체를 전달합니다.
             const browserCompatibleImageData = {
                 data: imageData.data,
                 width: imageData.width,
                 height: imageData.height,
-            } as ImageData; // 서버에서는 타입스크립트의 타입 단언으로 처리
+            } as ImageData;
 
             const detectedStars = detectBrightBlobs(browserCompatibleImageData, browserCompatibleImageData.width, browserCompatibleImageData.height);
             
@@ -115,20 +122,18 @@ export async function POST(request: NextRequest) {
         console.log(`[API] All images processed. Found stars in ${imageEntries.filter(e => e.detectedStars.length > 0).length} images.`);
         
         let stackedImageData: Uint8ClampedArray;
-        const mockSetProgress = () => {}; // 서버에서는 진행률 보고가 필요 없음
+        const mockSetProgress = () => {};
         const addLog = (msg: string) => console.log(`[API STACK LOG] ${msg}`);
 
-        // ImageQueueEntry 타입을 서버용으로 변환 (File 객체 제거)
         const serverEntries = imageEntries.map(e => ({
             ...e,
             imageData: {
                 ...e.imageData,
                 colorSpace: 'srgb'
-            } as ImageData, // align 함수들이 ImageData 타입을 기대하므로 캐스팅
-            file: null // 서버에서는 file 객체 불필요
+            } as ImageData,
+            file: null
         }));
 
-        // alignmentMethod에 따라 적절한 스태킹 함수 호출
         switch (alignmentMethod) {
             case 'planetary':
                 stackedImageData = await planetaryAlignAndStack(serverEntries as any, stackingMode as StackingMode, addLog, mockSetProgress, 50);
@@ -137,7 +142,6 @@ export async function POST(request: NextRequest) {
                  stackedImageData = await dumbAlignAndStack({imageEntries: serverEntries as any, stackingMode: stackingMode as StackingMode, addLog, setProgress: mockSetProgress });
                  break;
             case 'consensus':
-                // 서버 환경에서는 AI 모델을 사용할 수 없으므로, standard로 대체
                 addLog("[API] 'consensus' method on server falls back to 'standard' as AI model is client-side only.");
                  if (serverEntries.length > 0 && serverEntries[0].detectedStars.length < 2) throw new Error("Reference image for alignment has less than 2 stars.");
                 stackedImageData = await alignAndStack(serverEntries as any, serverEntries[0].detectedStars, stackingMode as StackingMode, mockSetProgress);
@@ -151,7 +155,6 @@ export async function POST(request: NextRequest) {
 
         const { width, height } = imageEntries[0].analysisDimensions;
         
-        // 최종 스태킹된 데이터를 sharp를 사용해 PNG 버퍼로 변환
         const outputBuffer = await sharp(Buffer.from(stackedImageData), {
             raw: { width, height, channels: 4 }
         }).png().toBuffer();
