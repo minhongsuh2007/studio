@@ -44,9 +44,6 @@ const nextConfig = {
       '@tensorflow/tfjs-node': 'commonjs @tensorflow/tfjs-node',
     });
     return config;
-  },
-  env: {
-    ASTROSTACKER_API_KEYS: process.env.ASTROSTACKER_API_KEYS,
   }
 };
 
