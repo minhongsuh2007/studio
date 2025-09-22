@@ -71,6 +71,24 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'At least two imageUrls are required.' }, { status: 400 });
         }
         
+        // --- URL 유효성 검사 추가 ---
+        for (const url of imageUrls) {
+            if (typeof url !== 'string' || (!url.match(/\.(jpg|jpeg|png|gif|tif|tiff|webp)$/i) && !url.startsWith('data:'))) {
+                 // 구글 이미지 검색 결과 링크와 같은 잘못된 URL 형식 필터링
+                 if (url.includes("google.com/imgres")) {
+                    return NextResponse.json(
+                        { error: 'Invalid image URL format. Please provide a direct link to the image file, not a Google Images result page.' },
+                        { status: 400 }
+                    );
+                 }
+                return NextResponse.json(
+                    { error: `Invalid image URL format: ${url}. URL must be a direct link to a supported image file (e.g., .jpg, .png).` },
+                    { status: 400 }
+                );
+            }
+        }
+        // --- 유효성 검사 끝 ---
+
         console.log(`[API] Received stack request for ${imageUrls.length} images. Method: ${alignmentMethod}, Mode: ${stackingMode}`);
 
         const imageEntries: ServerImageQueueEntry[] = [];
@@ -121,12 +139,12 @@ export async function POST(request: NextRequest) {
             case 'consensus':
                 // 서버 환경에서는 AI 모델을 사용할 수 없으므로, standard로 대체
                 addLog("[API] 'consensus' method on server falls back to 'standard' as AI model is client-side only.");
-                 if (serverEntries[0].detectedStars.length < 2) throw new Error("Reference image for alignment has less than 2 stars.");
+                 if (serverEntries.length > 0 && serverEntries[0].detectedStars.length < 2) throw new Error("Reference image for alignment has less than 2 stars.");
                 stackedImageData = await alignAndStack(serverEntries as any, serverEntries[0].detectedStars, stackingMode as StackingMode, mockSetProgress);
                 break;
             case 'standard':
             default:
-                if (serverEntries[0].detectedStars.length < 2) throw new Error("Reference image for 'standard' alignment has less than 2 stars.");
+                if (serverEntries.length > 0 && serverEntries[0].detectedStars.length < 2) throw new Error("Reference image for 'standard' alignment has less than 2 stars.");
                 stackedImageData = await alignAndStack(serverEntries as any, serverEntries[0].detectedStars, stackingMode as StackingMode, mockSetProgress);
                 break;
         }
