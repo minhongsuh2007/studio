@@ -8,14 +8,6 @@ AstroStacker의 핵심 기능인 이미지 스태킹을 외부에서 프로그�
 - **Method:** `POST`
 - **Content-Type:** `application/json`
 
-## 인증
-
-API를 사용하려면 API 키를 통한 인증이 필요합니다. `.env` 파일에 저장된 키를 `Authorization` 헤더에 담아 요청해야 합니다.
-
-- **Header:** `Authorization: Bearer YOUR_API_KEY`
-
-`YOUR_API_KEY` 부분을 `.env` 파일의 `ASTROSTACKER_API_KEYS`에 설정된 값 중 하나로 교체하세요. (예: `a1b2c3d4-e5f6-7890-g1h2-i3j4k5l6m7n8`)
-
 ## 요청 본문 (Request Body)
 
 스태킹할 이미지와 설정을 JSON 형식으로 전송합니다.
@@ -65,7 +57,6 @@ API를 사용하려면 API 키를 통한 인증이 필요합니다. `.env` 파�
 
 ## 오류 응답 (Error Response)
 
-- `401 Unauthorized`: API 키가 잘못되었거나 제공되지 않은 경우
 - `400 Bad Request`: `imageUrls`가 2개 미만이거나 형식이 잘못된 경우
 - `500 Internal Server Error`: 서버 내부에서 이미지 처리 중 오류가 발생한 경우
 
@@ -75,10 +66,8 @@ API를 사용하려면 API 키를 통한 인증이 필요합니다. `.env` 파�
 
 ```bash
 # YOUR_PUBLIC_APP_URL과 실제 이미지 URL을 자신의 값으로 바꾸세요.
-# 기본 API 키는 a1b2c3d4-e5f6-7890-g1h2-i3j4k5l6m7n8 입니다.
 curl -X POST https://YOUR_PUBLIC_APP_URL/api/stack \
 -H "Content-Type: application/json" \
--H "Authorization: Bearer a1b2c3d4-e5f6-7890-g1h2-i3j4k5l6m7n8" \
 -d '{
   "imageUrls": [
     "https://live.staticflickr.com/65535/53416674892_1559863495_o.jpg",
