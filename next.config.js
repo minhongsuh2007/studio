@@ -7,6 +7,14 @@ const nextConfig = {
   eslint: {
     ignoreDuringBuilds: true,
   },
+  async rewrites() {
+    return [
+      {
+        source: '/proxy',
+        destination: '/api/proxy',
+      },
+    ];
+  },
   images: {
     remotePatterns: [
       {

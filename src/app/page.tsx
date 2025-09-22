@@ -17,7 +17,7 @@ import { ImagePreview } from '@/components/astrostacker/ImagePreview';
 import { ImagePostProcessEditor } from '@/components/astrostacker/ImagePostProcessEditor';
 import { TutorialDialog } from '@/components/astrostacker/TutorialDialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Star as StarIcon, ListChecks, CheckCircle, RefreshCcw, Edit3, Loader2, Orbit, Trash2, Wand2, ShieldOff, Layers, Baseline, X, AlertTriangle, BrainCircuit, TestTube2, Eraser, Download, Upload, Cpu, AlertCircle, Moon, Sun, Sparkles, UserCheck, Zap, Diamond, Globe, Camera, Video, Play, StopCircle, Puzzle } from 'lucide-react';
+import { Star as StarIcon, Link, ListChecks, CheckCircle, RefreshCcw, Edit3, Loader2, Orbit, Trash2, Wand2, ShieldOff, Layers, Baseline, X, AlertTriangle, BrainCircuit, TestTube2, Eraser, Download, Upload, Cpu, AlertCircle, Moon, Sun, Sparkles, UserCheck, Zap, Diamond, Globe, Camera, Video, Play, StopCircle, Puzzle } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
@@ -97,6 +97,9 @@ export default function AstroStackerPage() {
   const [showPostProcessEditor, setShowPostProcessEditor] = useState(false);
   const [imageForPostProcessing, setImageForPostProcessing] = useState<string | null>(null);
   const [editedPreviewUrl, setEditedPreviewUrl] = useState<string | null>(null);
+
+  const [imageUrl, setImageUrl] = useState('');
+  const [isAddingFromUrl, setIsAddingFromUrl] = useState(false);
   
   // --- Post-Processing State ---
   const [brightness, setBrightness] = useState(100);
@@ -379,6 +382,40 @@ export default function AstroStackerPage() {
       }
     }
   }, [addLog, fileToDataURL]);
+
+  const handleUrlAdded = useCallback(async () => {
+    if (!imageUrl) {
+        addLog("[URL] URL is empty.");
+        return;
+    }
+    setIsAddingFromUrl(true);
+    addLog(`[URL] Attempting to fetch image from: ${imageUrl}`);
+    try {
+        const response = await fetch(`/proxy?url=${encodeURIComponent(imageUrl)}`);
+        if (!response.ok) {
+            throw new Error(`Failed to fetch image through proxy. Status: ${response.status}`);
+        }
+        const blob = await response.blob();
+        
+        let fileName = new URL(imageUrl).pathname.split('/').pop() || 'image-from-url.jpg';
+        if (!fileName.match(/\.(jpg|jpeg|png|gif|webp|tif|tiff)$/i)) {
+          // Guess extension from blob type
+          const ext = blob.type.split('/')[1] || 'jpg';
+          fileName = `image-from-url.${ext}`;
+        }
+        
+        const file = new File([blob], fileName, { type: blob.type });
+
+        await handleFilesAdded([file]);
+        setImageUrl(''); // Clear input on success
+    } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : "Unknown error";
+        addLog(`[URL ERROR] Failed to add image from URL: ${errorMessage}`);
+        window.alert(`Failed to add image from URL: ${errorMessage}`);
+    } finally {
+        setIsAddingFromUrl(false);
+    }
+  }, [imageUrl, handleFilesAdded, addLog]);
 
   const handleCalibrationFilesAdded = useCallback(async (
     files: File[],
@@ -1108,7 +1145,7 @@ export default function AstroStackerPage() {
 
   const imageForAnnotation = allImageStarData.find(img => img.id === manualSelectImageId);
   const canStartStacking = allImageStarData.length >= 2 && allImageStarData.every(img => img.isAnalyzed);
-  const isUiDisabled = isProcessingStack || isTrainingModel || allImageStarData.some(img => img.isAnalyzing);
+  const isUiDisabled = isProcessingStack || isTrainingModel || isAddingFromUrl || allImageStarData.some(img => img.isAnalyzing);
   const currentYear = new Date().getFullYear();
 
   // Determine the primary image to show in the main preview area
@@ -1128,6 +1165,24 @@ export default function AstroStackerPage() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <ImageUploadArea onFilesAdded={handleFilesAdded} isProcessing={isUiDisabled || !isFileApiReady} multiple={true} />
+
+                <div className="space-y-2">
+                  <Label htmlFor="url-input">Add Image from URL</Label>
+                  <div className="flex gap-2">
+                      <Input
+                          id="url-input"
+                          type="url"
+                          placeholder="https://..."
+                          value={imageUrl}
+                          onChange={(e) => setImageUrl(e.target.value)}
+                          disabled={isUiDisabled}
+                          onKeyDown={(e) => e.key === 'Enter' && handleUrlAdded()}
+                      />
+                      <Button onClick={handleUrlAdded} disabled={isUiDisabled || !imageUrl}>
+                          {isAddingFromUrl ? <Loader2 className="h-4 w-4 animate-spin" /> : <Link className="h-4 w-4" />}
+                      </Button>
+                  </div>
+                </div>
 
                 <Accordion type="multiple" className="w-full">
                   <AccordionItem value="darks">
