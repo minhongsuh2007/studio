@@ -52,7 +52,7 @@ export async function POST(req: NextRequest) {
     const addLog = (msg: string) => logs.push(`[${new Date().toISOString()}] ${msg}`);
 
     try {
-        addLog("API call received.");
+        addLog("API call received. Processing request without authentication.");
         const body = await req.json();
 
         const {
