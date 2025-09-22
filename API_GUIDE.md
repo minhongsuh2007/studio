@@ -14,7 +14,7 @@ API를 사용하려면 API 키를 통한 인증이 필요합니다. `.env` 파�
 
 - **Header:** `Authorization: Bearer YOUR_API_KEY`
 
-`YOUR_API_KEY` 부분을 `.env` 파일의 `ASTROSTACKER_API_KEYS`에 설정된 값으로 교체하세요.
+`YOUR_API_KEY` 부분을 `.env` 파일의 `ASTROSTACKER_API_KEYS`에 설정된 값 중 하나로 교체하세요. (예: `a1b2c3d4-e5f6-7890-g1h2-i3j4k5l6m7n8`)
 
 ## 요청 본문 (Request Body)
 
@@ -35,8 +35,6 @@ API를 사용하려면 API 키를 통한 인증이 필요합니다. `.env` 파�
 ### 파라미터 설명
 
 - **`imageUrls`** (배열, 필수): 스태킹할 이미지들의 공개적으로 접근 가능한 URL 목록입니다. 최소 2개 이상의 URL이 필요합니다.
-    - **중요:** URL은 반드시 `.jpg`, `.png` 등 실제 이미지 파일로 직접 연결되어야 합니다. 구글 이미지 검색 결과 페이지 링크(`https://www.google.com/imgres?...` 등)는 사용할 수 없습니다.
-    - **팁:** 웹 브라우저에서 이미지 위에 마우스 오른쪽 버튼을 클릭한 후, **'이미지 주소 복사'** 메뉴를 사용하여 실제 이미지 파일의 URL을 얻을 수 있습니다.
 - **`alignmentMethod`** (문자열, 선택): 정렬 방법을 지정합니다. 기본값은 `consensus`입니다.
   - `standard`: 가장 기본적인 2-star 정렬
   - `consensus`: AI 패턴 또는 밝기 기반의 합의 정렬
@@ -68,18 +66,19 @@ API를 사용하려면 API 키를 통한 인증이 필요합니다. `.env` 파�
 ## 오류 응답 (Error Response)
 
 - `401 Unauthorized`: API 키가 잘못되었거나 제공되지 않은 경우
-- `400 Bad Request`: `imageUrls`가 2개 미만이거나 형식이 잘못된 경우 (예: 실제 이미지 파일 링크가 아닌 경우)
+- `400 Bad Request`: `imageUrls`가 2개 미만이거나 형식이 잘못된 경우
 - `500 Internal Server Error`: 서버 내부에서 이미지 처리 중 오류가 발생한 경우
 
 ## 사용 예시 (`curl` 사용)
 
-터미널에서 아래 명령어를 실행하여 API를 테스트할 수 있습니다. `https://YOUR_PUBLIC_APP_URL` 부분을 현재 개발 환경의 실제 공개 URL로, `YOUR_API_KEY`를 `.env` 파일에 설정한 키로, 그리고 이미지 URL을 실제 값으로 바꾸세요.
+터미널에서 아래 명령어를 실행하여 API를 테스트할 수 있습니다. `https://YOUR_PUBLIC_APP_URL` 부분을 현재 개발 환경의 실제 공개 URL로 바꾸세요.
 
 ```bash
-# YOUR_PUBLIC_APP_URL과 YOUR_API_KEY, 실제 이미지 URL을 자신의 값으로 바꾸세요.
+# YOUR_PUBLIC_APP_URL과 실제 이미지 URL을 자신의 값으로 바꾸세요.
+# 기본 API 키는 a1b2c3d4-e5f6-7890-g1h2-i3j4k5l6m7n8 입니다.
 curl -X POST https://YOUR_PUBLIC_APP_URL/api/stack \
 -H "Content-Type: application/json" \
--H "Authorization: Bearer YOUR_API_KEY" \
+-H "Authorization: Bearer a1b2c3d4-e5f6-7890-g1h2-i3j4k5l6m7n8" \
 -d '{
   "imageUrls": [
     "https://live.staticflickr.com/65535/53416674892_1559863495_o.jpg",
