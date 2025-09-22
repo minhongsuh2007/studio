@@ -52,15 +52,11 @@ export async function POST(request: NextRequest) {
     const validApiKeys = (process.env.ASTROSTACKER_API_KEYS || '').split(',').filter(k => k.trim());
 
     if (validApiKeys.length === 0) {
-        return new NextResponse(JSON.stringify({ error: 'API keys are not configured on the server.' }), {
-            status: 500, headers: { 'Content-Type': 'application/json' },
-        });
+        return NextResponse.json({ error: 'API keys are not configured on the server.' }, { status: 500 });
     }
 
     if (!token || !validApiKeys.includes(token)) {
-        return new NextResponse(JSON.stringify({ error: 'Unauthorized: Invalid API Key' }), {
-            status: 401, headers: { 'Content-Type': 'application/json' },
-        });
+        return NextResponse.json({ error: 'Unauthorized: Invalid API Key' }, { status: 401 });
     }
 
     try {
@@ -72,9 +68,7 @@ export async function POST(request: NextRequest) {
         } = body;
 
         if (!imageUrls || !Array.isArray(imageUrls) || imageUrls.length < 2) {
-            return new NextResponse(JSON.stringify({ error: 'At least two imageUrls are required.' }), {
-                status: 400, headers: { 'Content-Type': 'application/json' },
-            });
+            return NextResponse.json({ error: 'At least two imageUrls are required.' }, { status: 400 });
         }
         
         console.log(`[API] Received stack request for ${imageUrls.length} images. Method: ${alignmentMethod}, Mode: ${stackingMode}`);
@@ -151,17 +145,11 @@ export async function POST(request: NextRequest) {
             height,
         };
 
-        return new NextResponse(JSON.stringify(responsePayload), {
-            status: 200,
-            headers: { 'Content-Type': 'application/json' },
-        });
+        return NextResponse.json(responsePayload);
 
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : "An unknown error occurred";
         console.error("[API STACK ERROR]", error);
-        return new NextResponse(JSON.stringify({ error: 'Internal Server Error', details: errorMessage }), {
-            status: 500,
-            headers: { 'Content-Type': 'application/json' },
-        });
+        return NextResponse.json({ error: 'Internal Server Error', details: errorMessage }, { status: 500 });
     }
 }
