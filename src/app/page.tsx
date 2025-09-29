@@ -1154,7 +1154,7 @@ export default function AstroStackerPage() {
     }
     if (window.confirm("Are you sure you want to reset the AI model? All training progress will be lost and the model will be removed from your browser's storage.")) {
         try {
-            await tf.models.removeModel(TF_MODEL_STORAGE_KEY);
+            await tf.io.removeModel(TF_MODEL_STORAGE_KEY);
             localStorage.removeItem('astrostacker-model-normalization');
             setTrainedModel(null);
             setModelNormalization(null);
@@ -1526,4 +1526,5 @@ export default function AstroStackerPage() {
   );
 }
 
+    
     
