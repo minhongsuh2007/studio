@@ -18,7 +18,7 @@ import { ImagePreview } from '@/components/astrostacker/ImagePreview';
 import { ImagePostProcessEditor } from '@/components/astrostacker/ImagePostProcessEditor';
 import { TutorialDialog } from '@/components/astrostacker/TutorialDialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Star as StarIcon, Link, ListChecks, CheckCircle, RefreshCcw, Edit3, Loader2, Orbit, Trash2, Wand2, ShieldOff, Layers, Baseline, X, AlertTriangle, BrainCircuit, TestTube2, Eraser, Download, Upload, Cpu, AlertCircle, Moon, Sun, Sparkles, UserCheck, Zap, Diamond, Globe, Camera, Video, Play, StopCircle, Puzzle, Server } from 'lucide-react';
+import { Star as StarIcon, Link, ListChecks, CheckCircle, RefreshCcw, Edit3, Loader2, Orbit, Trash2, Wand2, ShieldOff, Layers, Baseline, X, AlertTriangle, BrainCircuit, TestTube2, Eraser, Download, Upload, Cpu, AlertCircle, Moon, Sun, Sparkles, UserCheck, Zap, Diamond, Globe, Camera, Video, Play, StopCircle, Puzzle, Server, RotateCcw } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
@@ -1146,6 +1146,27 @@ export default function AstroStackerPage() {
       }
   };
 
+  const handleResetModel = async () => {
+    if (!trainedModel) {
+        window.alert("No trained model to reset.");
+        return;
+    }
+    if (window.confirm("Are you sure you want to reset the AI model? All training progress will be lost and the model will be removed from your browser's storage.")) {
+        try {
+            await tf.models.removeModel(TF_MODEL_STORAGE_KEY);
+            localStorage.removeItem('astrostacker-model-normalization');
+            setTrainedModel(null);
+            setModelNormalization(null);
+            addLog("[AI-CLIENT] Trained model has been successfully reset and removed from storage.");
+            window.alert("AI model has been reset.");
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            addLog(`[AI-CLIENT ERROR] Could not reset the model: ${errorMessage}`);
+            window.alert(`Failed to reset the model: ${errorMessage}`);
+        }
+    }
+  };
+
   const imageForAnnotation = allImageStarData.find(img => img.id === manualSelectImageId);
   const canStartStacking = allImageStarData.length >= 2 && allImageStarData.every(img => img.isAnalyzed);
   const isUiDisabled = isProcessingStack || isTrainingModel || isServerProcessing || allImageStarData.some(img => img.isAnalyzing);
@@ -1428,9 +1449,14 @@ export default function AstroStackerPage() {
                         <Button onClick={handleExportPatterns} disabled={learnedPatterns.length === 0}><Download className="mr-2 h-4 w-4" />{t('exportPatternsButton')}</Button>
                         <ImageUploadArea onFilesAdded={handleImportPatterns} isProcessing={isUiDisabled} multiple={false} accept={{ 'application/json': ['.json'] }} dropzoneText={t('importPatternsDropzone')} buttonText={t('importPatternsButton')} />
                       </div>
-                       <Button onClick={handleTrainModel} disabled={isUiDisabled || learnedPatterns.filter(p => selectedPatternIDs.has(p.id)).length === 0} className="w-full mb-4">
+                      <div className="flex gap-4 mb-4">
+                       <Button onClick={handleTrainModel} disabled={isUiDisabled || learnedPatterns.filter(p => selectedPatternIDs.has(p.id)).length === 0} className="w-full">
                           {isTrainingModel ? <><Loader2 className="mr-2 h-4 w-4 animate-spin"/>{t('trainingModelButton')}</> : <><Cpu className="mr-2 h-4 w-4" />{t('trainModelButton')}</>}
                       </Button>
+                      <Button onClick={handleResetModel} disabled={isUiDisabled || !trainedModel} variant="destructive" className="w-full">
+                        <RotateCcw className="mr-2 h-4 w-4"/> Reset AI Model
+                      </Button>
+                      </div>
                       {trainedModel && <Alert variant="default" className="mb-4"><AlertCircle className="h-4 w-4" /><AlertTitle>Model Ready</AlertTitle><AlertDescription>An AI model is trained and ready. The 'Consensus' alignment method will be enhanced by this for better star recognition.</AlertDescription></Alert>}
 
                       <h4 className="font-semibold mb-2">{t('allLearnedPatternsListTitle')}</h4>
