@@ -53,6 +53,7 @@ interface ImageQueueEntry {
   analysisDimensions: { width: number; height: number };
   imageData: ImageData | null; // This will hold the analysis ImageData
   detectedStars: Star[];
+  manualStars: Star[]; // Manually selected stars for this image specifically
   aiVerifiedStars?: Star[]; // Optional array for stars verified by the AI model
 }
 
@@ -135,7 +136,6 @@ export default function AstroStackerPage() {
   const [testImage, setTestImage] = useState<ImageQueueEntry | null>(null);
   const [isAnalyzingTestImage, setIsAnalyzingTestImage] = useState(false);
   const [testImageMatchedStars, setTestImageMatchedStars] = useState<Star[]>([]);
-  const [canvasStars, setCanvasStars] = useState<Star[]>([]);
 
   // --- TFJS Model State ---
   const [trainedModel, setTrainedModel] = useState<tf.LayersModel | null>(null);
@@ -402,6 +402,7 @@ export default function AstroStackerPage() {
           analysisDimensions,
           imageData: null,
           detectedStars: [],
+          manualStars: [],
         };
       } catch (error) {
         addLog(`[ERROR] Could not process ${file.name}: ${error instanceof Error ? error.message : "Unknown error"}`);
@@ -472,6 +473,7 @@ export default function AstroStackerPage() {
     setAllImageStarData(prev => prev.filter(item => item.id !== idToRemove));
     if (manualSelectImageId === idToRemove) {
       setManualSelectImageId(null);
+      setManualSelectedStars([]);
     }
   };
   
@@ -487,13 +489,12 @@ export default function AstroStackerPage() {
     if (manualSelectImageId === imageId) {
       setManualSelectImageId(null);
       setManualSelectedStars([]);
-      setCanvasStars([]);
       return;
     }
     
     setManualSelectImageId(imageId);
-    setManualSelectedStars(imageToSelect.detectedStars);
-    setCanvasStars(imageToSelect.detectedStars);
+    // Load existing manual stars for this image, or start fresh
+    setManualSelectedStars(imageToSelect.manualStars || []);
   };
 
   const findNearbyStarCenter = (
@@ -602,83 +603,33 @@ export default function AstroStackerPage() {
       if (centeredStar) {
         setManualSelectedStars(prev => [...prev, centeredStar]);
       } else {
-        setManualSelectedStars(prev => [...prev, { x, y, brightness: 0, size: 0 }]);
+        // Allow placing a marker even if no bright blob is found
+        setManualSelectedStars(prev => [...prev, { x, y, brightness: 100, size: 1 }]);
       }
     }
   };
 
   const handleWipeAllStars = () => {
-    const imageToUpdate = allImageStarData.find(img => img.id === manualSelectImageId);
-    if (imageToUpdate) {
+    if (manualSelectImageId) {
         setManualSelectedStars([]);
-        setCanvasStars(imageToUpdate.detectedStars);
         addLog("Manual star selections for this image have been cleared.");
     }
   };
 
-  const handleConfirmManualSelection = async () => {
-    if (manualSelectedStars.length < 2) {
-      window.alert("Please select at least 2 stars to define a pattern.");
-      return;
-    }
-
-    const imageToLearnFrom = allImageStarData.find(img => img.id === manualSelectImageId);
-    if (!imageToLearnFrom || !imageToLearnFrom.imageData) return;
+  const handleConfirmManualSelection = () => {
+    if (!manualSelectImageId) return;
     
-    const patternId = 'aggregated-user-pattern';
-    
-    const { data, width, height } = imageToLearnFrom.imageData;
-    const newCharacteristics = await extractCharacteristicsFromImage({
-      stars: manualSelectedStars,
-      imageData: { data: Array.from(data), width, height }
-    });
-    
-    setLearnedPatterns(prev => {
-      const existingPatternIndex = prev.findIndex(p => p.id === patternId);
-      let updatedPatterns;
+    setAllImageStarData(prev => prev.map(entry => 
+      entry.id === manualSelectImageId 
+        ? { ...entry, manualStars: manualSelectedStars } 
+        : entry
+    ));
 
-      if (existingPatternIndex !== -1) {
-        const existingPattern = prev[existingPatternIndex];
-        const updatedCharacteristics = [...existingPattern.characteristics, ...newCharacteristics];
-        const updatedSourceIds = new Set([...existingPattern.sourceImageIds, imageToLearnFrom.id]);
-
-        const newPattern: LearnedPattern = {
-          id: patternId,
-          timestamp: Date.now(),
-          sourceImageIds: Array.from(updatedSourceIds),
-          characteristics: updatedCharacteristics,
-        };
-        updatedPatterns = [...prev];
-        updatedPatterns[existingPatternIndex] = newPattern;
-        addLog(`Star Pattern Updated: ${newCharacteristics.length} new star characteristics from ${imageToLearnFrom.file.name} added to your aggregated pattern.`);
-
-      } else {
-        const newPattern: LearnedPattern = {
-          id: patternId,
-          timestamp: Date.now(),
-          sourceImageIds: [imageToLearnFrom.id],
-          characteristics: newCharacteristics,
-        };
-        updatedPatterns = [...prev, newPattern];
-        addLog(`Star Pattern Learned: A new aggregated pattern has been created with ${newCharacteristics.length} stars from ${imageToLearnFrom.file.name}.`);
-      }
-
-      saveLearnedPatterns(updatedPatterns);
-      
-      setSelectedPatternIDs(prevSelected => {
-          const newSet = new Set(prevSelected);
-          newSet.add(patternId);
-          return newSet;
-      });
-
-      return updatedPatterns;
-    });
+    addLog(`Saved ${manualSelectedStars.length} manual stars for ${allImageStarData.find(e=>e.id === manualSelectImageId)?.file.name}.`);
 
     setManualSelectImageId(null);
     setManualSelectedStars([]);
-    setCanvasStars([]);
   };
-
 
   const handleStackAllImages = async () => {
     const imagesToStack = allImageStarData.filter(img => img.isAnalyzed && img.imageData);
@@ -793,9 +744,16 @@ export default function AstroStackerPage() {
           });
       } else {
         const refImageForStandard = calibratedLightFrames[0];
-        const refStarsForStandard = (manualSelectImageId === refImageForStandard.id && manualSelectedStars.length > 1) 
-            ? manualSelectedStars 
+        // Use manually selected stars if they exist for the reference image.
+        const refStarsForStandard = (refImageForStandard.manualStars && refImageForStandard.manualStars.length > 1) 
+            ? refImageForStandard.manualStars 
             : refImageForStandard.detectedStars;
+
+        if (refImageForStandard.manualStars && refImageForStandard.manualStars.length > 1) {
+          addLog(`[ALIGN] Using ${refImageForStandard.manualStars.length} manually selected stars from reference image.`);
+        } else {
+          addLog(`[ALIGN] Using auto-detected stars from reference image.`);
+        }
 
         if (refStarsForStandard.length < 2) {
           throw new Error("Standard alignment requires at least 2 stars in the reference image. Please use Manual Select or ensure auto-detection finds stars.");
@@ -868,7 +826,7 @@ export default function AstroStackerPage() {
             ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
             const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
             const detectedStars = detectBrightBlobs(imageData, canvas.width, canvas.height);
-            return { id: `test-${file.name}-${Date.now()}`, file, originalPreviewUrl: previewUrl, analysisPreviewUrl: previewUrl, isAnalyzing: false, isAnalyzed: true, originalDimensions: dimensions, analysisDimensions: dimensions, imageData, detectedStars };
+            return { id: `test-${file.name}-${Date.now()}`, file, originalPreviewUrl: previewUrl, analysisPreviewUrl: previewUrl, isAnalyzing: false, isAnalyzed: true, originalDimensions: dimensions, analysisDimensions: dimensions, imageData, detectedStars, manualStars: [] };
         } catch (e) {
             return null;
         }
@@ -946,7 +904,6 @@ export default function AstroStackerPage() {
         
         if (patternId === 'aggregated-user-pattern') {
             setManualSelectedStars([]);
-            setCanvasStars([]);
         }
         addLog(`Pattern ${patternId} deleted.`);
     }
@@ -1176,6 +1133,66 @@ export default function AstroStackerPage() {
   // Determine the primary image to show in the main preview area
   const mainPreviewUrl = (showPostProcessEditor ? editedPreviewUrl : stackedImage) || null;
 
+  const handleAiLearnFromManualSelection = async () => {
+    if (manualSelectedStars.length < 2) {
+      window.alert("Please select at least 2 stars to define a pattern.");
+      return;
+    }
+
+    const imageToLearnFrom = allImageStarData.find(img => img.id === manualSelectImageId);
+    if (!imageToLearnFrom || !imageToLearnFrom.imageData) return;
+    
+    const patternId = 'aggregated-user-pattern';
+    
+    const { data, width, height } = imageToLearnFrom.imageData;
+    const newCharacteristics = await extractCharacteristicsFromImage({
+      stars: manualSelectedStars,
+      imageData: { data: Array.from(data), width, height }
+    });
+    
+    setLearnedPatterns(prev => {
+      const existingPatternIndex = prev.findIndex(p => p.id === patternId);
+      let updatedPatterns;
+
+      if (existingPatternIndex !== -1) {
+        const existingPattern = prev[existingPatternIndex];
+        const updatedCharacteristics = [...existingPattern.characteristics, ...newCharacteristics];
+        const updatedSourceIds = new Set([...existingPattern.sourceImageIds, imageToLearnFrom.id]);
+
+        const newPattern: LearnedPattern = {
+          id: patternId,
+          timestamp: Date.now(),
+          sourceImageIds: Array.from(updatedSourceIds),
+          characteristics: updatedCharacteristics,
+        };
+        updatedPatterns = [...prev];
+        updatedPatterns[existingPatternIndex] = newPattern;
+        addLog(`Star Pattern Updated: ${newCharacteristics.length} new star characteristics from ${imageToLearnFrom.file.name} added to your aggregated pattern.`);
+
+      } else {
+        const newPattern: LearnedPattern = {
+          id: patternId,
+          timestamp: Date.now(),
+          sourceImageIds: [imageToLearnFrom.id],
+          characteristics: newCharacteristics,
+        };
+        updatedPatterns = [...prev, newPattern];
+        addLog(`Star Pattern Learned: A new aggregated pattern has been created with ${newCharacteristics.length} stars from ${imageToLearnFrom.file.name}.`);
+      }
+
+      saveLearnedPatterns(updatedPatterns);
+      
+      setSelectedPatternIDs(prevSelected => {
+          const newSet = new Set(prevSelected);
+          newSet.add(patternId);
+          return newSet;
+      });
+
+      return updatedPatterns;
+    });
+
+    handleConfirmManualSelection(); // Also save for alignment and close
+  };
 
   return (
     <div className="flex flex-col min-h-screen bg-background">
@@ -1330,6 +1347,7 @@ export default function AstroStackerPage() {
                             onManualSelectToggle={() => handleManualSelectToggle(entry.id)} isProcessing={isUiDisabled}
                             isAnalyzed={entry.isAnalyzed} 
                             isManualSelectMode={manualSelectImageId === entry.id}
+                            manualStarCount={entry.manualStars.length}
                           />
                         ))}
                       </div>
@@ -1342,9 +1360,10 @@ export default function AstroStackerPage() {
                       <CardDescription className="text-xs">Now editing: {imageForAnnotation.file.name}. Selected {manualSelectedStars.length} stars.</CardDescription>
                     </CardHeader>
                     <CardFooter className="p-3 flex flex-col gap-2">
-                      <Button onClick={handleWipeAllStars} className="w-full" variant="destructive" size="sm"><Eraser className="mr-2 h-4 w-4" />Wipe All Stars</Button>
-                      <Button onClick={handleConfirmManualSelection} className="w-full" variant="secondary"><CheckCircle className="mr-2 h-4 w-4" />Confirm & Learn Pattern</Button>
-                      <Button onClick={() => {setManualSelectImageId(null); setManualSelectedStars([]); setCanvasStars([]);}} className="w-full"><X className="mr-2 h-4 w-4" />Cancel</Button>
+                       <Button onClick={handleConfirmManualSelection} className="w-full" variant="secondary"><CheckCircle className="mr-2 h-4 w-4" />Confirm Selections</Button>
+                      <Button onClick={handleAiLearnFromManualSelection} className="w-full" variant="outline" size="sm"><BrainCircuit className="mr-2 h-4 w-4"/>Confirm & Also Teach AI</Button>
+                       <Button onClick={handleWipeAllStars} className="w-full" variant="destructive" size="sm"><Eraser className="mr-2 h-4 w-4" />Wipe All Stars</Button>
+                      <Button onClick={() => {setManualSelectImageId(null); setManualSelectedStars([]);}} className="w-full"><X className="mr-2 h-4 w-4" />Cancel</Button>
                     </CardFooter>
                   </Card>
                 )}
@@ -1354,7 +1373,7 @@ export default function AstroStackerPage() {
           <div className="w-full lg:w-3/5 xl:w-2/3 flex flex-col space-y-6">
             <div className="flex-grow">
               {imageForAnnotation ? (
-                  <StarAnnotationCanvas imageUrl={imageForAnnotation.analysisPreviewUrl} allStars={canvasStars} manualStars={manualSelectedStars} onCanvasClick={handleStarAnnotationClick} analysisWidth={imageForAnnotation.analysisDimensions.width} analysisHeight={imageForAnnotation.analysisDimensions.height} />
+                  <StarAnnotationCanvas imageUrl={imageForAnnotation.analysisPreviewUrl} allStars={imageForAnnotation.detectedStars} manualStars={manualSelectedStars} onCanvasClick={handleStarAnnotationClick} analysisWidth={imageForAnnotation.analysisDimensions.width} analysisHeight={imageForAnnotation.analysisDimensions.height} />
               ) : testImage ? (
                   <StarAnnotationCanvas imageUrl={testImage.analysisPreviewUrl} allStars={testImage.detectedStars} manualStars={testImageMatchedStars} onCanvasClick={() => {}} analysisWidth={testImage.analysisDimensions.width} analysisHeight={testImage.analysisDimensions.height} />
               ) : (
@@ -1525,6 +1544,3 @@ export default function AstroStackerPage() {
     </div>
   );
 }
-
-    
-    

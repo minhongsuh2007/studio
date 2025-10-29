@@ -18,6 +18,7 @@ interface ImageQueueItemProps {
   isProcessing: boolean;
   isAnalyzed: boolean;
   isManualSelectMode: boolean;
+  manualStarCount: number;
 }
 
 export function ImageQueueItem({
@@ -31,6 +32,7 @@ export function ImageQueueItem({
   isProcessing,
   isAnalyzed,
   isManualSelectMode,
+  manualStarCount,
 }: ImageQueueItemProps) {
   
   const isReferenceImage = index === 0;
@@ -63,6 +65,11 @@ export function ImageQueueItem({
                 <Loader2 className="mr-1 h-3 w-3 animate-spin" /> Analyzing...
              </div>
          )}
+         {manualStarCount > 0 && (
+            <div className="absolute bottom-1 left-1 bg-blue-600 text-white px-2 py-0.5 rounded-full text-xs font-bold">
+                {manualStarCount} Stars
+            </div>
+         )}
          {!isAnalyzed && !isAnalyzing && (
             <div className="absolute bottom-1 right-1 bg-yellow-500/80 text-background p-1 rounded-sm text-xs flex items-center" title="Needs Analysis">
                  Needs Analysis
@@ -93,5 +100,3 @@ export function ImageQueueItem({
     </Card>
   );
 }
-
-    
