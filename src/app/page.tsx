@@ -94,7 +94,7 @@ export default function AstroStackerPage() {
   const [isProcessingStack, setIsProcessingStack] = useState(false);
   const [isTrainingModel, setIsTrainingModel] = useState(false);
   const [stackingMode, setStackingMode] = useState<StackingMode>('median');
-  const [alignmentMethod, setAlignmentMethod] = useState<AlignmentMethod>('standard');
+  const [alignmentMethod, setAlignmentMethod] = useState<AlignmentMethod>('consensus');
   const [starDetectionMethod, setStarDetectionMethod] = useState<StarDetectionMethod>('general');
   const [stackingQuality, setStackingQuality] = useState<StackingQuality>('standard');
   const [planetaryStackingQuality, setPlanetaryStackingQuality] = useState<number>(50);
@@ -758,7 +758,7 @@ export default function AstroStackerPage() {
         if (refStarsForStandard.length < 2) {
           throw new Error("Standard alignment requires at least 2 stars in the reference image. Please use Manual Select or ensure auto-detection finds stars.");
         }
-        stackedImageData = await alignAndStack(calibratedLightFrames, refStarsForStandard, stackingMode, progressUpdate);
+        stackedImageData = await alignAndStack(calibratedLightFrames, refStarsForStandard, stackingMode, progressUpdate, addLog);
       }
 
       const { width, height } = stackingDimensions;
@@ -825,7 +825,7 @@ export default function AstroStackerPage() {
             canvas.height = dimensions.height;
             ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
             const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-            const detectedStars = detectBrightBlobs(imageData, canvas.width, canvas.height);
+            const detectedStars = detectBrightBlobs(imageData, canvas.width, canvas.height, 180);
             return { id: `test-${file.name}-${Date.now()}`, file, originalPreviewUrl: previewUrl, analysisPreviewUrl: previewUrl, isAnalyzing: false, isAnalyzed: true, originalDimensions: dimensions, analysisDimensions: dimensions, imageData, detectedStars, manualStars: [] };
         } catch (e) {
             return null;
@@ -864,16 +864,13 @@ export default function AstroStackerPage() {
         
         logs.forEach(logMsg => addLog(`[AI TEST] ${logMsg}`));
         
-        if (rankedStars && Array.isArray(rankedStars)) {
-            const matchedStars = rankedStars.slice(0, 10).map(rs => rs.star);
-            setTestImageMatchedStars(matchedStars);
-            addLog(`Test complete. Found ${matchedStars.length} matching stars.`);
-            window.alert(t('testAnalysisCompleteToastDesc', {count: matchedStars.length, fileName: testImage.file.name}));
-        } else {
-            setTestImageMatchedStars([]);
-            addLog(`Test complete. No valid star data returned from AI.`);
-            window.alert(t('testAnalysisCompleteToastDesc', {count: 0, fileName: testImage.file.name}));
-        }
+        const matchedStars = rankedStars
+            .filter(rs => rs.probability > 0.7) // Use a threshold to define a "match"
+            .map(rs => rs.star);
+
+        setTestImageMatchedStars(matchedStars);
+        addLog(`Test complete. Found ${matchedStars.length} matching stars.`);
+        window.alert(t('testAnalysisCompleteToastDesc', {count: matchedStars.length, fileName: testImage.file.name}));
         
         setIsAnalyzingTestImage(false);
     }, 100);

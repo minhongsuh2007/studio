@@ -48,7 +48,7 @@ function getTransformFromStarPair(refStar1: Star, refStar2: Star, targetStar1: S
 
     if (refDist === 0) return null;
     let scale = targetDist / refDist;
-    if (scale === 0) return null;
+    if (scale < 0.9 || scale > 1.1) return null; // Reject if scale is off by more than 10%
 
     const cosAngle = Math.cos(-angle);
     const sinAngle = Math.sin(-angle);
@@ -78,7 +78,7 @@ function getTriangleSignature(p1: Star, p2: Star, p3: Star) {
  * Finds the most consistent geometric pattern (triangle) of stars across multiple images.
  */
 function findGeometricConsensus(
-    allImageRankedStars: { imageId: string; rankedStars: { star: Star; probability: number; }[] }[],
+    allImageRankedStars: { imageId: string; rankedStars: Star[] }[],
     addLog: (message: string) => void
 ): { refPair: Star[]; targetPairs: Record<string, Star[]>; imageIds: string[] } | null {
     if (allImageRankedStars.length < 2) {
@@ -87,7 +87,7 @@ function findGeometricConsensus(
     }
 
     const refImage = allImageRankedStars[0];
-    const refStars = refImage.rankedStars.map(rs => rs.star);
+    const refStars = refImage.rankedStars;
     if (refStars.length < 3) {
         addLog(`[CONSENSUS] Reference image '${refImage.imageId}' has fewer than 3 AI-verified stars.`);
         return null;
@@ -115,7 +115,7 @@ function findGeometricConsensus(
                 // Look for this triangle in other images
                 for (let imgIdx = 1; imgIdx < allImageRankedStars.length; imgIdx++) {
                     const targetImage = allImageRankedStars[imgIdx];
-                    const targetStars = targetImage.rankedStars.map(rs => rs.star);
+                    const targetStars = targetImage.rankedStars;
                     if (targetStars.length < 3) continue;
 
                     let foundMatchInImage = false;
@@ -189,36 +189,45 @@ export async function consensusAlignAndStack({
   }
   
   // 1. Get AI-ranked stars for all images
-  addLog("[CONSENSUS] Step 1: Getting AI-ranked star candidates for all images...");
-  const allImageRankedStars: { imageId: string; rankedStars: { star: Star; probability: number; }[] }[] = [];
+  addLog("[CONSENSUS] Step 1: Getting star candidates for all images...");
+  const allImageRankedStars: { imageId: string; rankedStars: Star[] }[] = [];
 
   for (const [index, entry] of imageEntries.entries()) {
     if (!entry.imageData) continue;
 
     let starsToConsider: Star[] = entry.detectedStars;
+    let rankedStars: Star[];
 
     if (modelPackage) {
+        addLog(`[AI-DETECT] AI verifying stars for ${entry.file.name}...`);
         const { data, width, height } = entry.imageData;
-        const { rankedStars, logs } = await findMatchingStars({
+        const result = await findMatchingStars({
             imageData: { data: Array.from(data), width, height },
             candidates: starsToConsider,
             model: modelPackage.model,
             normalization: modelPackage.normalization,
         });
-        logs.forEach(logMsg => addLog(`[AI-DETECT] ${entry.file.name}: ${logMsg}`));
+        result.logs.forEach(logMsg => addLog(`[AI-DETECT] ${entry.file.name}: ${logMsg}`));
 
-        if (rankedStars && rankedStars.length > 0) {
+        // Filter for high-probability stars and take the top 50
+        rankedStars = result.rankedStars
+            .filter(rs => rs.probability > 0.5)
+            .sort((a,b) => b.probability - a.probability)
+            .map(rs => rs.star)
+            .slice(0, 50);
+
+        if (rankedStars.length > 0) {
             allImageRankedStars.push({ imageId: entry.id, rankedStars });
         } else {
             addLog(`[AI-DETECT] No probable stars found for ${entry.file.name}.`);
         }
     } else {
-        // If no AI model, create a dummy ranking based on brightness
-        const rankedStars = entry.detectedStars
+        // If no AI model, rank by brightness
+        rankedStars = entry.detectedStars
             .sort((a, b) => b.brightness - a.brightness)
-            .map(star => ({ star, probability: star.brightness / 1000 })); // Normalize brightness as pseudo-probability
+            .slice(0, 50);
         allImageRankedStars.push({ imageId: entry.id, rankedStars });
-        addLog(`[CONSENSUS] No AI model. Using ${entry.detectedStars.length} detected stars for ${entry.file.name}.`);
+        addLog(`[CONSENSUS] No AI model. Using top ${rankedStars.length} detected stars for ${entry.file.name}.`);
     }
     
     setProgress(0.3 * ((index + 1) / imageEntries.length));
@@ -267,17 +276,26 @@ export async function consensusAlignAndStack({
     }
     
     const [ref1, ref2] = refPair;
-    const [target1, target2] = targetPairs[entry.id];
-    const transform = getTransformFromStarPair(ref1, ref2, target1, target2);
+    const targetPair = targetPairs[entry.id];
+    
+    // Test both permutations of the target pair to find the correct orientation
+    const transform1 = getTransformFromStarPair(ref1, ref2, targetPair[0], targetPair[1]);
+    const transform2 = getTransformFromStarPair(ref1, ref2, targetPair[1], targetPair[0]);
+    
+    let transform = transform1;
+    // A simple heuristic: choose the transform with scale closer to 1
+    if (transform2 && (!transform1 || Math.abs(transform2.scale - 1) < Math.abs(transform1.scale - 1))) {
+        transform = transform2;
+    }
 
     if (!transform) {
-        addLog(`[CONSENSUS] Discarding ${entry.file.name}: failed to compute transform.`);
+        addLog(`[CONSENSUS] Discarding ${entry.file.name}: failed to compute a valid transform (scale might be >10% off).`);
         alignedImageDatas.push(null);
         setProgress(progress);
         continue;
     }
     
-    addLog(`[CONSENSUS] Aligning ${entry.file.name}...`);
+    addLog(`[CONSENSUS] Aligning ${entry.file.name} (scale: ${transform.scale.toFixed(3)})...`);
     const { width, height } = entry.analysisDimensions;
     const warpedData = warpImage(entry.imageData.data, width, height, transform);
     alignedImageDatas.push(warpedData);

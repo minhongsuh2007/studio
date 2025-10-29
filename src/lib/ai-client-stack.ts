@@ -3,7 +3,7 @@
 'use client';
 
 // This file is deprecated as of the latest changes.
-// The AI alignment logic has been reverted to use the standard 2-star alignment for reliability.
+// The AI alignment logic has been moved to the new `consensus-align.ts` file.
 // This file is kept to avoid breaking potential imports but is no longer actively used in the stacking pipeline.
 
 import type * as tf from '@tensorflow/tfjs';
@@ -352,131 +352,6 @@ export async function aiClientAlignAndStack(
   addLog: (message: string) => void,
   setProgress: (progress: number) => void
 ): Promise<Uint8ClampedArray> {
-  addLog("[AI-CLIENT] Starting global consensus AI stacking.");
-  if (imageEntries.length < 2) {
-    throw new Error("AI stacking requires at least two images.");
-  }
-  
-  // 1. Find candidate stars in ALL images first using the TFJS model
-  const allImageStars: { imageId: string; stars: Star[] }[] = [];
-  addLog("[AI-CLIENT] Step 1: Generating candidates and verifying with AI model...");
-  for (const entry of imageEntries) {
-      if (!entry.imageData) continue;
-      
-      const { width, height } = entry.analysisDimensions;
-      
-      let finalStars: Star[] = [];
-      let currentProbThreshold = 0.8;
-      
-      const initialCandidates = detectBrightBlobs(entry.imageData, width, height);
-
-      while(finalStars.length < 10 && currentProbThreshold >= 0.1) {
-          addLog(`[AI-MATCH] ${entry.file.name}: Verifying ${initialCandidates.length} candidates with threshold ${currentProbThreshold.toFixed(2)}...`);
-          
-          const { matchedStars, logs } = await findMatchingStars({
-              imageData: { data: Array.from(entry.imageData.data), width, height },
-              candidates: initialCandidates,
-              model: modelPackage.model,
-              normalization: modelPackage.normalization,
-              probabilityThreshold: currentProbThreshold
-          });
-
-          logs.forEach(logMsg => addLog(`[AI-MATCH] ${entry.file.name}: ${logMsg}`));
-
-          finalStars = matchedStars;
-          if (finalStars.length < 10) {
-              currentProbThreshold -= 0.1;
-          } else {
-              break;
-          }
-      }
-
-      const topStars = finalStars.sort((a, b) => b.brightness - a.brightness);
-      
-      if (topStars.length > 1) {
-          allImageStars.push({ imageId: entry.id, stars: topStars });
-          addLog(`[AI-CLIENT] Image ${entry.file.name}: Finalized with ${topStars.length} AI-verified stars (Threshold: ${currentProbThreshold.toFixed(2)}).`);
-      } else {
-        addLog(`[AI-CLIENT] Image ${entry.file.name} has < 2 AI-verified stars, excluding from pair search.`);
-      }
-      setProgress(0.25 * ((imageEntries.indexOf(entry) + 1) / imageEntries.length)); // 25% of progress for this stage
-  }
-  
-  // 2. Find the best globally shared pair of stars
-  addLog("[AI-CLIENT] Step 2: Finding the most common star pair across all images.");
-  const globalPairInfo = findBestGlobalPair(allImageStars, addLog);
-
-  if (!globalPairInfo) {
-      throw new Error("AI alignment failed: Could not find a reliable star pair shared across multiple images.");
-  }
-  
-  const { refPair, targetPairs, imageIds } = globalPairInfo;
-  const refEntry = imageEntries.find(e => e.id === imageIds[0]);
-  if (!refEntry) {
-      throw new Error("Could not find the reference image entry for the global pair.");
-  }
-
-  // 3. Align and collect image data for the images that share the global pair
-  addLog(`[AI-CLIENT] Step 3: Aligning ${imageIds.length} images that contain the global pair.`);
-  const alignedImageDatas: (Uint8ClampedArray | null)[] = [];
-  const refImageInPair = imageEntries.find(e => e.id === Object.keys(targetPairs)[0]);
-  alignedImageDatas.push(refImageInPair!.imageData!.data); // The first image is the reference
-
-  for (let i = 0; i < imageEntries.length; i++) {
-    const entry = imageEntries[i];
-    const progress = 0.25 + (0.5 * (i + 1) / imageEntries.length); // This stage is 50% of progress
-    
-    if (!imageIds.includes(entry.id) || !entry.imageData) {
-        addLog(`[AI-CLIENT] Discarding ${entry.file.name}: does not contain the global star pair.`);
-        setProgress(progress);
-        continue;
-    }
-
-    if (entry.id === refImageInPair!.id) { // It's the reference, already added
-        addLog(`[AI-CLIENT] Using ${entry.file.name} as alignment reference.`);
-        setProgress(progress);
-        continue;
-    }
-    
-    const [ref1, ref2] = refPair;
-    const [target1, target2] = targetPairs[entry.id];
-    const transform = getTransformFromStarPair(ref1, ref2, target1, target2);
-
-    if (!transform) {
-        addLog(`[AI-CLIENT] Discarding ${entry.file.name}: failed to compute transform.`);
-        setProgress(progress);
-        continue;
-    }
-    
-    addLog(`[AI-CLIENT] Aligning ${entry.file.name}...`);
-    const { width, height } = entry.analysisDimensions;
-    const warpedData = warpImage(entry.imageData.data, width, height, transform);
-    alignedImageDatas.push(warpedData);
-    setProgress(progress);
-  }
-
-  // 4. Stack the aligned images
-  addLog(`[AI-CLIENT] Step 4: Stacking ${alignedImageDatas.length} images with mode: ${mode}.`);
-  setProgress(0.99);
-
-  if (alignedImageDatas.length < 2) {
-      throw new Error("AI Stacking failed: Fewer than 2 images remained after filtering for the global pair.");
-  }
-
-  let stackedResult;
-  switch (mode) {
-    case 'median':
-        stackedResult = stackImagesMedian(alignedImageDatas);
-        break;
-    case 'sigma':
-        stackedResult = stackImagesSigmaClip(alignedImageDatas);
-        break;
-    case 'average':
-    default:
-        stackedResult = stackImagesAverage(alignedImageDatas);
-        break;
-  }
-  setProgress(1);
-  addLog("[AI-CLIENT] Stacking complete.");
-  return stackedResult;
+  addLog("[AI-CLIENT] This alignment method has been deprecated. Please use the 'Consensus' method for better results.");
+  throw new Error("The 'AI Pattern' alignment method is deprecated. Please switch to 'Consensus (Deep Sky)'.");
 }

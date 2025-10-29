@@ -1,5 +1,6 @@
 
 
+
 // --- Types ---
 export type Point = { x: number; y: number };
 export type Star = Point & { brightness: number; size: number };
@@ -29,7 +30,7 @@ export function detectBrightBlobs(
   imageData: ImageData,
   width: number,
   height: number,
-  threshold: number = 200
+  threshold: number = 180
 ): Star[] {
     const { data } = imageData;
     const visited = new Uint8Array(width * height);
@@ -124,7 +125,7 @@ function toGrayscale(imageData: ImageData): Uint8Array {
 /**
  * Calculates the transformation required to align two points sets based on their two brightest stars.
  */
-function getTransformFromTwoStars(refStars: Star[], targetStars: Star[]): Transform | null {
+function getTransformFromTwoStars(refStars: Star[], targetStars: Star[], log: (msg:string)=>void): Transform | null {
     if (refStars.length < 2 || targetStars.length < 2) {
         return null;
     }
@@ -132,62 +133,48 @@ function getTransformFromTwoStars(refStars: Star[], targetStars: Star[]): Transf
     const [ref1, ref2] = refStars;
     const [target1, target2] = targetStars;
 
-    // Vectors from star1 to star2
-    const refVec = { x: ref2.x - ref1.x, y: ref2.y - ref1.y };
-    const targetVec = { x: target2.x - target1.x, y: target2.y - target1.y };
-
-    // Angle of each vector
-    const refAngle = Math.atan2(refVec.y, refVec.x);
-    const targetAngle = Math.atan2(targetVec.y, targetVec.x);
-    let angle = targetAngle - refAngle;
-
-    // Scale from the lengths of the vectors
-    const refDist = Math.sqrt(refVec.x * refVec.x + refVec.y * refVec.y);
-    const targetDist = Math.sqrt(targetVec.x * targetVec.x + targetVec.y * targetVec.y);
-
-    // Avoid division by zero
-    if (refDist < 1e-6) return null;
-    let scale = targetDist / refDist;
-    if (scale === 0) return null; // Avoid zero scale
-
-    // Now, consider that the second brightest star might be a different one.
-    // Let's test the swapped case.
-    const targetVecSwapped = { x: target1.x - target2.x, y: target1.y - target2.y };
-    const targetAngleSwapped = Math.atan2(targetVecSwapped.y, targetVecSwapped.x);
-    let angleSwapped = targetAngleSwapped - refAngle;
-    const targetDistSwapped = Math.sqrt(targetVecSwapped.x*targetVecSwapped.x + targetVecSwapped.y*targetVecSwapped.y);
-    let scaleSwapped = targetDistSwapped / refDist;
-
-    // To decide which is better, we can't do much without a third star.
-    // However, a simple check could be to see which scale is closer to 1.
-    if (Math.abs(scaleSwapped - 1) < Math.abs(scale - 1)) {
-        scale = scaleSwapped;
-        angle = angleSwapped;
-        // The transformation logic needs to handle this swap, aligning target2 to ref1
+    const getTransform = (r1:Star, r2:Star, t1:Star, t2:Star) => {
+        const refVec = { x: r2.x - r1.x, y: r2.y - r1.y };
+        const targetVec = { x: t2.x - t1.x, y: t2.y - t1.y };
+    
+        const refAngle = Math.atan2(refVec.y, refVec.x);
+        const targetAngle = Math.atan2(targetVec.y, targetVec.x);
+        let angle = targetAngle - refAngle;
+    
+        const refDist = Math.hypot(refVec.x, refVec.y);
+        const targetDist = Math.hypot(targetVec.x, targetVec.y);
+    
+        if (refDist < 1e-6) return null;
+        let scale = targetDist / refDist;
+        if (scale === 0) return null;
+    
         const cosAngle = Math.cos(-angle);
         const sinAngle = Math.sin(-angle);
-        const rotatedTargetX = target2.x * cosAngle - target2.y * sinAngle;
-        const rotatedTargetY = target2.x * sinAngle + target2.y * cosAngle;
-        const dx = ref1.x - rotatedTargetX * scale;
-        const dy = ref1.y - rotatedTargetY * scale;
-        return { dx, dy, angle: -angle, scale };
-
-    }
-
-    // Calculate translation (dx, dy)
-    // The translation needs to align target1 to ref1 after rotation and scaling.
-    const cosAngle = Math.cos(-angle);
-    const sinAngle = Math.sin(-angle);
+        
+        const rotatedTargetX = t1.x * cosAngle - t1.y * sinAngle;
+        const rotatedTargetY = t1.x * sinAngle + t1.y * cosAngle;
     
-    // Rotate and scale target1's coordinates
-    const rotatedTargetX = target1.x * cosAngle - target1.y * sinAngle;
-    const rotatedTargetY = target1.x * sinAngle + target1.y * cosAngle;
+        const dx = r1.x - rotatedTargetX * scale;
+        const dy = r1.y - rotatedTargetY * scale;
+    
+        return { dx, dy, angle: -angle, scale };
+    }
+    
+    // Test both permutations for target stars
+    const transform1 = getTransform(ref1, ref2, target1, target2);
+    const transform2 = getTransform(ref1, ref2, target2, target1);
 
-    // Now calculate the translation needed to move the transformed target1 to ref1
-    const dx = ref1.x - rotatedTargetX * scale;
-    const dy = ref1.y - rotatedTargetY * scale;
+    if (!transform1) return transform2;
+    if (!transform2) return transform1;
 
-    return { dx, dy, angle: -angle, scale };
+    // Heuristic: choose transform with scale closer to 1
+    if (Math.abs(transform1.scale - 1) <= Math.abs(transform2.scale - 1)) {
+        log(`[ALIGN-STD] Choosing transform with scale ${transform1.scale.toFixed(3)}`);
+        return transform1;
+    } else {
+        log(`[ALIGN-STD] Choosing transform with scale ${transform2.scale.toFixed(3)} (swapped target stars)`);
+        return transform2;
+    }
 }
 
 /**
@@ -210,32 +197,22 @@ export function warpImage(
     
     const invScale = 1 / scale;
 
-    // The center of rotation and scaling should be the reference point, not the canvas center
-    // For simplicity with this transform, we'll work with the coordinates directly.
-
     for (let y = 0; y < srcHeight; y++) {
         for (let x = 0; x < srcWidth; x++) {
             
-            // Inverse transform: from destination (x,y) to source (srcX, srcY)
-            // 1. Inverse translate
             const x1 = x - dx;
             const y1 = y - dy;
 
-            // 2. Inverse scale
             const x2 = x1 * invScale;
             const y2 = y1 * invScale;
 
-            // 3. Inverse rotate
             const srcX = x2 * cosAngle + y2 * sinAngle;
             const srcY = -x2 * sinAngle + y2 * cosAngle;
 
-            // Bilinear interpolation
             const x_floor = Math.floor(srcX);
             const y_floor = Math.floor(srcY);
-            const x_ceil = x_floor + 1;
-            const y_ceil = y_floor + 1;
             
-            if (x_floor < 0 || x_ceil >= srcWidth || y_floor < 0 || y_ceil >= srcHeight) {
+            if (x_floor < 0 || x_floor >= srcWidth - 1 || y_floor < 0 || y_floor >= srcHeight - 1) {
                 continue; // Out of bounds
             }
             
@@ -246,9 +223,9 @@ export function warpImage(
 
             for (let channel = 0; channel < 4; channel++) {
                  const c00 = srcData[(y_floor * srcWidth + x_floor) * 4 + channel];
-                 const c10 = srcData[(y_floor * srcWidth + x_ceil) * 4 + channel];
-                 const c01 = srcData[(y_ceil * srcWidth + x_floor) * 4 + channel];
-                 const c11 = srcData[(y_ceil * srcWidth + x_ceil) * 4 + channel];
+                 const c10 = srcData[(y_floor * srcWidth + x_floor + 1) * 4 + channel];
+                 const c01 = srcData[((y_floor + 1) * srcWidth + x_floor) * 4 + channel];
+                 const c11 = srcData[((y_floor + 1) * srcWidth + x_floor + 1) * 4 + channel];
 
                  if (c00 === undefined || c10 === undefined || c01 === undefined || c11 === undefined) continue;
 
@@ -258,7 +235,7 @@ export function warpImage(
                  dstData[dstIdx + channel] = c_x0 * (1 - y_ratio) + c_x1 * y_ratio;
             }
             // Set alpha to full for pixels that get data
-            if (dstData[dstIdx+3] === 0 && (dstData[dstIdx] > 0 || dstData[dstIdx+1] > 0 || dstData[dstIdx+2] > 0)) {
+            if (dstData[dstIdx] > 0 || dstData[dstIdx+1] > 0 || dstData[dstIdx+2] > 0) {
               dstData[dstIdx+3] = 255;
             }
         }
@@ -279,7 +256,7 @@ export function stackImagesAverage(images: (Uint8ClampedArray | null)[]): Uint8C
     for (const img of validImages) {
         for (let i = 0; i < length; i += 4) {
             // Check if pixel has data (not black from warping)
-            if (img[i+3] > 0) {
+            if (img[i+3] > 128) {
                 accum[i] += img[i];
                 accum[i + 1] += img[i + 1];
                 accum[i + 2] += img[i + 2];
@@ -306,26 +283,26 @@ export function stackImagesMedian(images: (Uint8ClampedArray | null)[]): Uint8Cl
     if (validImages.length === 0) throw new Error("No valid images to stack");
     const length = validImages[0].length;
     const result = new Uint8ClampedArray(length);
-    const pixelValues: number[] = [];
 
     for (let i = 0; i < length; i += 4) {
-        for (let channel = 0; channel < 3; channel++) {
-            pixelValues.length = 0;
-            for (const img of validImages) {
-                if (img[i + 3] > 0) {
-                    pixelValues.push(img[i + channel]);
-                }
-            }
-            if (pixelValues.length > 0) {
-                pixelValues.sort((a, b) => a - b);
-                const mid = Math.floor(pixelValues.length / 2);
-                result[i + channel] = pixelValues.length % 2 !== 0
-                    ? pixelValues[mid]
-                    : (pixelValues[mid - 1] + pixelValues[mid]) / 2;
+        const r: number[] = [], g: number[] = [], b: number[] = [];
+        for (const img of validImages) {
+            if (img[i + 3] > 128) {
+                r.push(img[i]);
+                g.push(img[i+1]);
+                b.push(img[i+2]);
             }
         }
-        
-        result[i + 3] = pixelValues.length > 0 ? 255 : 0;
+        if (r.length > 0) {
+            r.sort((a, b) => a - b);
+            g.sort((a, b) => a - b);
+            b.sort((a, b) => a - b);
+            const mid = Math.floor(r.length / 2);
+            result[i] = r.length % 2 !== 0 ? r[mid] : (r[mid - 1] + r[mid]) / 2;
+            result[i+1] = g.length % 2 !== 0 ? g[mid] : (g[mid - 1] + g[mid]) / 2;
+            result[i+2] = b.length % 2 !== 0 ? b[mid] : (b[mid - 1] + b[mid]) / 2;
+            result[i + 3] = 255;
+        }
     }
     return result;
 }
@@ -335,18 +312,20 @@ export function stackImagesSigmaClip(images: (Uint8ClampedArray | null)[], sigma
     if (validImages.length === 0) throw new Error("No valid images to stack");
     const length = validImages[0].length;
     const result = new Uint8ClampedArray(length);
-    const pixelValues: number[] = [];
 
     for (let i = 0; i < length; i += 4) {
+        let hasData = false;
         for (let channel = 0; channel < 3; channel++) {
-            pixelValues.length = 0;
+            const pixelValues: number[] = [];
             for (const img of validImages) {
-                if (img[i + 3] > 0) {
+                if (img[i + 3] > 128) {
                     pixelValues.push(img[i + channel]);
                 }
             }
 
             if (pixelValues.length === 0) continue;
+            hasData = true;
+
             if (pixelValues.length < 3) {
                  result[i + channel] = pixelValues.reduce((a, b) => a + b, 0) / pixelValues.length;
                  continue;
@@ -372,7 +351,9 @@ export function stackImagesSigmaClip(images: (Uint8ClampedArray | null)[], sigma
                  result[i + channel] = pixelValues.length % 2 !== 0 ? pixelValues[mid] : (pixelValues[mid - 1] + pixelValues[mid]) / 2;
             }
         }
-        result[i + 3] = pixelValues.length > 0 ? 255 : 0;
+        if (hasData) {
+            result[i + 3] = 255;
+        }
     }
     return result;
 }
@@ -462,7 +443,8 @@ export async function alignAndStack(
   imageEntries: ImageQueueEntry[],
   manualRefStars: Star[],
   mode: StackingMode,
-  setProgress: (progress: number) => void
+  setProgress: (progress: number) => void,
+  log: (msg: string) => void,
 ): Promise<Uint8ClampedArray> {
   if (imageEntries.length === 0 || !imageEntries[0].imageData) {
     throw new Error("No valid images provided for stacking.");
@@ -500,7 +482,7 @@ export async function alignAndStack(
         continue;
     }
 
-    const transform = getTransformFromTwoStars(refStars, targetStars);
+    const transform = getTransformFromTwoStars(refStars, targetStars, log);
 
     if (!transform) {
         alignedImageDatas.push(null);
