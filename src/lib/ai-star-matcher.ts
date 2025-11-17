@@ -1,25 +1,9 @@
 
 'use client';
 
-import type { Star } from './astro-align';
+import type { Star, StarCharacteristics } from '@/types';
 import * as tf from '@tensorflow/tfjs';
 
-export interface StarCharacteristics {
-  avgBrightness: number;
-  avgContrast: number;
-  fwhm: number;
-  pixelCount: number;
-  centerRGB: [number, number, number];
-  patch3x3RGB: [number, number, number];
-  patch5x5RGB: [number, number, number];
-}
-
-export interface LearnedPattern {
-  id: string; 
-  timestamp: number;
-  sourceImageIds: string[];
-  characteristics: StarCharacteristics[];
-}
 
 export interface SimpleImageData {
     data: number[] | Uint8ClampedArray;
@@ -180,22 +164,22 @@ function featuresFromCharacteristics(c: StarCharacteristics): number[] {
 }
 
 
-export function buildModel(): tf.LayersModel {
+export function buildModel(numClasses: number): tf.LayersModel {
     const model = tf.sequential();
     model.add(tf.layers.dense({ inputShape: [7], units: 32, activation: 'relu' }));
-    model.add(tf.layers.dropout({ rate: 0.2 }));
+    model.add(tf.layers.dropout({ rate: 0.3 }));
     model.add(tf.layers.dense({ units: 16, activation: 'relu' }));
-    model.add(tf.layers.dense({ units: 1, activation: 'sigmoid' }));
+    model.add(tf.layers.dense({ units: numClasses, activation: 'softmax' }));
     return model;
 }
 
-export function predictSingle(model: tf.LayersModel, means: number[], stds: number[], features: number[]): number {
+export function predictSingle(model: tf.LayersModel, means: number[], stds: number[], features: number[]): number[] {
   const norm = features.map((v, j) => (v - means[j]) / (stds[j] || 1));
   const input = tf.tensor2d([norm]);
   const p = model.predict(input) as tf.Tensor;
-  const prob = p.dataSync()[0];
+  const probabilities = Array.from(p.dataSync());
   tf.dispose([input, p]);
-  return prob;
+  return probabilities;
 }
 
 export async function findMatchingStars({
@@ -203,11 +187,13 @@ export async function findMatchingStars({
   candidates,
   model,
   normalization,
+  targetCategoryId,
 }: {
   imageData: SimpleImageData,
   candidates: Star[],
   model: tf.LayersModel,
   normalization: { means: number[], stds: number[] },
+  targetCategoryId: string, // The category ID we are trying to find
 }): Promise<{rankedStars: {star: Star, probability: number}[], logs: string[]}> {
     const logs: string[] = [];
     try {
@@ -216,22 +202,29 @@ export async function findMatchingStars({
             return { rankedStars: [], logs };
         }
 
-        logs.push(`Received ${candidates.length} candidates to verify with AI.`);
+        logs.push(`Received ${candidates.length} candidates to verify with AI for category ${targetCategoryId}.`);
 
         const allCharacteristics = (await extractCharacteristicsFromImage({ stars: candidates, imageData }))
             .map((char, index) => ({ char, star: candidates[index] }))
             .filter(item => item.char);
 
         const rankedStars: {star: Star, probability: number}[] = [];
+        
+        // This is a placeholder. You need to map targetCategoryId to the output index of your model.
+        // Let's assume you have a way to do that, e.g., an array of category IDs used during training.
+        const categoryIndex = 0; // FIXME: This needs to be the actual index for targetCategoryId
+        
         for (const { char, star } of allCharacteristics) {
             const features = featuresFromCharacteristics(char!);
-            const probability = predictSingle(model, normalization.means, normalization.stds, features);
-            rankedStars.push({ star, probability });
+            const probabilities = predictSingle(model, normalization.means, normalization.stds, features);
+            // We need to know which index in the output corresponds to our targetCategoryId
+            const probabilityOfTarget = probabilities[categoryIndex]; // THIS IS A GUESS
+            rankedStars.push({ star, probability: probabilityOfTarget });
         }
         
         rankedStars.sort((a, b) => b.probability - a.probability);
 
-        logs.push(`AI ranked ${rankedStars.length} candidates by probability.`);
+        logs.push(`AI ranked ${rankedStars.length} candidates by probability for category ${targetCategoryId}.`);
 
         return { rankedStars, logs };
 

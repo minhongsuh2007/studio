@@ -11,7 +11,7 @@ import { alignAndStack, detectBrightBlobs, type Star, type StackingMode } from '
 import { consensusAlignAndStack } from '@/lib/consensus-align';
 import { planetaryAlignAndStack } from '@/lib/planetary-align';
 import { dumbAlignAndStack } from '@/lib/dumb-align';
-import { extractCharacteristicsFromImage, findMatchingStars, type LearnedPattern, type SimpleImageData, type StarCharacteristics, predictSingle, buildModel } from '@/lib/ai-star-matcher';
+import { extractCharacteristicsFromImage, findMatchingStars, predictSingle, buildModel } from '@/lib/ai-star-matcher';
 import { AppHeader } from '@/components/astrostacker/AppHeader';
 import { ImageUploadArea } from '@/components/astrostacker/ImageUploadArea';
 import { ImageQueueItem } from '@/components/astrostacker/ImageQueueItem';
@@ -19,7 +19,7 @@ import { ImagePreview } from '@/components/astrostacker/ImagePreview';
 import { ImagePostProcessEditor } from '@/components/astrostacker/ImagePostProcessEditor';
 import { TutorialDialog } from '@/components/astrostacker/TutorialDialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Star as StarIcon, Link, ListChecks, CheckCircle, RefreshCcw, Edit3, Loader2, Orbit, Trash2, Wand2, ShieldOff, Layers, Baseline, X, AlertTriangle, BrainCircuit, TestTube2, Eraser, Download, Upload, Cpu, AlertCircle, Moon, Sun, Sparkles, UserCheck, Zap, Diamond, Globe, Camera, Video, Play, StopCircle, Puzzle, Server, RotateCcw } from 'lucide-react';
+import { Star as StarIcon, Link, ListChecks, CheckCircle, RefreshCcw, Edit3, Loader2, Orbit, Trash2, Wand2, ShieldOff, Layers, Baseline, X, AlertTriangle, BrainCircuit, TestTube2, Eraser, Download, Upload, Cpu, AlertCircle, Moon, Sun, Sparkles, UserCheck, Zap, Diamond, Globe, Camera, Video, Play, StopCircle, Puzzle, Server, RotateCcw, Palette } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
@@ -38,46 +38,23 @@ import { Textarea } from '@/components/ui/textarea';
 import { saveAs } from 'file-saver';
 import { stackImagesWithUrls } from '@/app/actions';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import type { ImageQueueEntry, CalibrationFrameEntry, StarCategory, LearnedPattern, LabeledStar, TestResultStar, PreviewFitMode, OutputFormat, AlignmentMethod, StackingQuality, StarDetectionMethod, StarCharacteristics } from '@/types';
 
 
 export const dynamic = 'force-static';
-
-interface ImageQueueEntry {
-  id: string;
-  file: File;
-  originalPreviewUrl: string; // URL for the original image
-  analysisPreviewUrl: string; // URL for the potentially downscaled image used for analysis
-  isAnalyzing: boolean;
-  isAnalyzed: boolean;
-  originalDimensions: { width: number; height: number };
-  analysisDimensions: { width: number; height: number };
-  imageData: ImageData | null; // This will hold the analysis ImageData
-  detectedStars: Star[];
-  manualStars: Star[]; // Manually selected stars for this image specifically
-  aiVerifiedStars?: Star[]; // Optional array for stars verified by the AI model
-}
-
-
-// Calibration frame specific type
-interface CalibrationFrameEntry {
-  id: string;
-  file: File;
-  previewUrl: string;
-  imageData: ImageData | null;
-  dimensions: { width: number; height: number };
-}
-
-type PreviewFitMode = 'contain' | 'cover';
-type OutputFormat = 'png' | 'jpeg';
-type AlignmentMethod = 'standard' | 'consensus' | 'planetary' | 'dumb';
-type StackingQuality = 'standard' | 'high';
-type StarDetectionMethod = 'general' | 'ai';
-
 
 const MIN_VALID_DATA_URL_LENGTH = 100;
 const IS_LARGE_IMAGE_THRESHOLD_MP = 12;
 const MAX_DIMENSION_DOWNSCALED = 2048;
 const TF_MODEL_STORAGE_KEY = 'localstorage://astrostacker-model';
+const STAR_CATEGORY_STORAGE_KEY = 'astrostacker-star-categories';
+const LEARNED_PATTERNS_STORAGE_KEY = 'astrostacker-learned-patterns-v2';
+const STAR_DEDUPLICATION_RADIUS = 10;
+
+const CATEGORY_COLORS = [
+  '#FF6B6B', '#4ECDC4', '#45B7D1', '#FED766', '#F0B8D9',
+  '#97C1A9', '#FFD166', '#06D6A0', '#EF476F', '#118AB2'
+];
 
 const initialServerStackState = {
   success: false,
@@ -107,7 +84,7 @@ export default function AstroStackerPage() {
   const logIdCounter = useRef(0);
   
   const [manualSelectImageId, setManualSelectImageId] = useState<string | null>(null);
-  const [manualSelectedStars, setManualSelectedStars] = useState<Star[]>([]);
+  const [manualSelectedStars, setManualSelectedStars] = useState<LabeledStar[]>([]);
   const [showPostProcessEditor, setShowPostProcessEditor] = useState(false);
   const [imageForPostProcessing, setImageForPostProcessing] = useState<string | null>(null);
   const [editedPreviewUrl, setEditedPreviewUrl] = useState<string | null>(null);
@@ -131,11 +108,13 @@ export default function AstroStackerPage() {
   const [useBias, setUseBias] = useState(false);
   
   // --- AI Learning State ---
-  const [learnedPatterns, setLearnedPatterns] = useState<LearnedPattern[]>([]);
+  const [starCategories, setStarCategories] = useState<StarCategory[]>([]);
+  const [activeCategoryId, setActiveCategoryId] = useState<string | null>(null);
+  const [learnedPatterns, setLearnedPatterns] = useState<Record<string, LearnedPattern>>({});
   const [selectedPatternIDs, setSelectedPatternIDs] = useState<Set<string>>(new Set());
   const [testImage, setTestImage] = useState<ImageQueueEntry | null>(null);
   const [isAnalyzingTestImage, setIsAnalyzingTestImage] = useState(false);
-  const [testImageMatchedStars, setTestImageMatchedStars] = useState<Star[]>([]);
+  const [testImageMatchedStars, setTestImageMatchedStars] = useState<TestResultStar[]>([]);
 
   // --- TFJS Model State ---
   const [trainedModel, setTrainedModel] = useState<tf.LayersModel | null>(null);
@@ -219,11 +198,24 @@ export default function AstroStackerPage() {
     });
 }, [addLog]);
 
+  // Load data from local storage on mount
   useEffect(() => {
     try {
-      const storedPatterns = localStorage.getItem('astrostacker-learned-patterns');
-      if (storedPatterns) {
-        setLearnedPatterns(JSON.parse(storedPatterns));
+      const storedPatterns = localStorage.getItem(LEARNED_PATTERNS_STORAGE_KEY);
+      if (storedPatterns) setLearnedPatterns(JSON.parse(storedPatterns));
+      
+      const storedCategories = localStorage.getItem(STAR_CATEGORY_STORAGE_KEY);
+      if (storedCategories) {
+        setStarCategories(JSON.parse(storedCategories));
+      } else {
+        // Initialize default categories if none are stored
+        const defaultCategories: StarCategory[] = CATEGORY_COLORS.map((color, index) => ({
+          id: `category-${index + 1}`,
+          name: `Category ${index + 1}`,
+          color: color,
+        }));
+        setStarCategories(defaultCategories);
+        localStorage.setItem(STAR_CATEGORY_STORAGE_KEY, JSON.stringify(defaultCategories));
       }
       
       const loadModel = async () => {
@@ -246,17 +238,33 @@ export default function AstroStackerPage() {
 
     } catch (e) {
       console.error("Failed to load data from localStorage", e);
-      addLog("[ERROR] Failed to load learned patterns from localStorage.");
+      addLog("[ERROR] Failed to load data from localStorage.");
     }
   }, [addLog]);
 
-  const saveLearnedPatterns = (patterns: LearnedPattern[]) => {
+  // Save functions for localStorage
+  const saveLearnedPatterns = (patterns: Record<string, LearnedPattern>) => {
     try {
-      localStorage.setItem('astrostacker-learned-patterns', JSON.stringify(patterns));
+      localStorage.setItem(LEARNED_PATTERNS_STORAGE_KEY, JSON.stringify(patterns));
     } catch (e) {
-      console.error("Failed to save learned patterns to localStorage", e);
+      console.error("Failed to save learned patterns", e);
       addLog("[ERROR] Failed to save learned patterns to localStorage.");
     }
+  };
+
+  const saveStarCategories = (categories: StarCategory[]) => {
+    try {
+      localStorage.setItem(STAR_CATEGORY_STORAGE_KEY, JSON.stringify(categories));
+    } catch (e) {
+      console.error("Failed to save star categories", e);
+      addLog("[ERROR] Failed to save star categories to localStorage.");
+    }
+  };
+
+  const handleCategoryNameChange = (id: string, newName: string) => {
+    const newCategories = starCategories.map(c => c.id === id ? { ...c, name: newName } : c);
+    setStarCategories(newCategories);
+    saveStarCategories(newCategories);
   };
 
 
@@ -489,12 +497,15 @@ export default function AstroStackerPage() {
     if (manualSelectImageId === imageId) {
       setManualSelectImageId(null);
       setManualSelectedStars([]);
+      setActiveCategoryId(null);
       return;
     }
     
     setManualSelectImageId(imageId);
     // Load existing manual stars for this image, or start fresh
     setManualSelectedStars(imageToSelect.manualStars || []);
+    // Set first category as active by default
+    setActiveCategoryId(starCategories[0]?.id || null);
   };
 
   const findNearbyStarCenter = (
@@ -586,28 +597,35 @@ export default function AstroStackerPage() {
   
       return null;
   };
-  
+
   const handleStarAnnotationClick = (x: number, y: number) => {
-    if (!manualSelectImageId) return;
-    const manualSelectRadius = 15;
-    
+    if (!manualSelectImageId || !activeCategoryId) return;
     const imageEntry = allImageStarData.find(img => img.id === manualSelectImageId);
     if (!imageEntry || !imageEntry.imageData) return;
 
-    const existingStarIndex = manualSelectedStars.findIndex(star => Math.sqrt(Math.pow(star.x - x, 2) + Math.pow(star.y - y, 2)) < manualSelectRadius);
-  
+    // Check if a star is already selected nearby
+    const existingStarIndex = manualSelectedStars.findIndex(star => Math.hypot(star.x - x, star.y - y) < STAR_DEDUPLICATION_RADIUS);
+
     if (existingStarIndex !== -1) {
+      // If a star exists nearby, remove it
       setManualSelectedStars(prev => prev.filter((_, index) => index !== existingStarIndex));
     } else {
+      // Otherwise, add a new star
       const centeredStar = findNearbyStarCenter(imageEntry.imageData, x, y);
       if (centeredStar) {
-        setManualSelectedStars(prev => [...prev, centeredStar]);
-      } else {
-        // Allow placing a marker even if no bright blob is found
-        setManualSelectedStars(prev => [...prev, { x, y, brightness: 100, size: 1 }]);
+        const newStar: LabeledStar = { ...centeredStar, categoryId: activeCategoryId };
+
+        // Deduplication logic
+        setManualSelectedStars(prevStars => {
+          const filteredStars = prevStars.filter(existingStar => {
+            return Math.hypot(existingStar.x - newStar.x, existingStar.y - newStar.y) >= STAR_DEDUPLICATION_RADIUS;
+          });
+          return [...filteredStars, newStar];
+        });
       }
     }
   };
+  
 
   const handleWipeAllStars = () => {
     if (manualSelectImageId) {
@@ -629,6 +647,7 @@ export default function AstroStackerPage() {
 
     setManualSelectImageId(null);
     setManualSelectedStars([]);
+    setActiveCategoryId(null);
   };
 
   const handleStackAllImages = async () => {
@@ -855,22 +874,34 @@ export default function AstroStackerPage() {
     setTimeout(async () => {
         const {data, width, height} = testImage.imageData!;
 
-        const { rankedStars, logs } = await findMatchingStars({
-          imageData: {data: Array.from(data), width, height},
-          candidates: testImage.detectedStars,
-          model: trainedModel,
-          normalization: modelNormalization,
-        });
+        const allMatchedStars: TestResultStar[] = [];
         
-        logs.forEach(logMsg => addLog(`[AI TEST] ${logMsg}`));
-        
-        const matchedStars = rankedStars
-            .filter(rs => rs.probability > 0.7) // Use a threshold to define a "match"
-            .map(rs => rs.star);
+        const activePatterns = Object.values(learnedPatterns).filter(p => selectedPatternIDs.has(p.id));
 
-        setTestImageMatchedStars(matchedStars);
-        addLog(`Test complete. Found ${matchedStars.length} matching stars.`);
-        window.alert(t('testAnalysisCompleteToastDesc', {count: matchedStars.length, fileName: testImage.file.name}));
+        for (const pattern of activePatterns) {
+          const category = starCategories.find(c => c.id === pattern.categoryId);
+          if (!category) continue;
+          
+          const { rankedStars, logs } = await findMatchingStars({
+            imageData: {data: Array.from(data), width, height},
+            candidates: testImage.detectedStars,
+            model: trainedModel,
+            normalization: modelNormalization,
+            targetCategoryId: category.id,
+          });
+          
+          logs.forEach(logMsg => addLog(`[AI TEST - ${category.name}] ${logMsg}`));
+          
+          const matchedStars = rankedStars
+              .filter(rs => rs.probability > 0.6) // Use a threshold to define a "match"
+              .map(rs => ({ ...rs.star, categoryId: category.id, color: category.color }));
+
+          allMatchedStars.push(...matchedStars);
+        }
+
+        setTestImageMatchedStars(allMatchedStars);
+        addLog(`Test complete. Found ${allMatchedStars.length} matching stars across all selected patterns.`);
+        window.alert(t('testAnalysisCompleteToastDesc', {count: allMatchedStars.length, fileName: testImage.file.name}));
         
         setIsAnalyzingTestImage(false);
     }, 100);
@@ -886,9 +917,10 @@ export default function AstroStackerPage() {
   };
 
   const deletePattern = (patternId: string) => {
-    if (window.confirm(`Are you sure you want to delete the pattern "${patternId}"? This cannot be undone.`)) {
+    if (window.confirm(`Are you sure you want to delete the pattern "${learnedPatterns[patternId].sourceImageFileName}"? This cannot be undone.`)) {
         setLearnedPatterns(prevPatterns => {
-            const newPatterns = prevPatterns.filter(p => p.id !== patternId);
+            const newPatterns = { ...prevPatterns };
+            delete newPatterns[patternId];
             saveLearnedPatterns(newPatterns);
             return newPatterns;
         });
@@ -899,29 +931,30 @@ export default function AstroStackerPage() {
             return newSelectedIDs;
         });
         
-        if (patternId === 'aggregated-user-pattern') {
-            setManualSelectedStars([]);
-        }
         addLog(`Pattern ${patternId} deleted.`);
     }
   };
   
   const handleExportPatterns = () => {
-    if (learnedPatterns.length === 0) {
+    if (Object.keys(learnedPatterns).length === 0) {
         window.alert(t('noPatternsToExport'));
         return;
     }
-    const dataStr = JSON.stringify(learnedPatterns, null, 2);
+    const dataToExport = {
+      patterns: learnedPatterns,
+      categories: starCategories,
+    };
+    const dataStr = JSON.stringify(dataToExport, null, 2);
     const blob = new Blob([dataStr], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = 'astrostacker_patterns.json';
+    link.download = 'astrostacker_patterns_and_categories.json';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
-    addLog("Exported all learned patterns to astrostacker_patterns.json");
+    addLog("Exported all learned patterns and categories.");
   };
 
   const handleImportPatterns = useCallback((files: File[]) => {
@@ -934,36 +967,32 @@ export default function AstroStackerPage() {
             const content = event.target?.result as string;
             if (!content) throw new Error("File is empty or could not be read.");
             
-            const importedPatterns: LearnedPattern[] = JSON.parse(content);
+            const importedData = JSON.parse(content);
+            const importedPatterns = importedData.patterns;
+            const importedCategories = importedData.categories;
 
-            if (!Array.isArray(importedPatterns) || importedPatterns.some(p => !p.id || !p.characteristics)) {
-                throw new Error("Invalid pattern file format.");
+            if (!importedPatterns || !importedCategories) {
+              throw new Error("Invalid file format. Must contain 'patterns' and 'categories' keys.");
             }
 
-            setLearnedPatterns(prev => {
-                const newPatternsMap = new Map(prev.map(p => [p.id, p]));
-                let updatedCount = 0;
-                let newCount = 0;
+            // Import Categories
+            if (Array.isArray(importedCategories)) {
+              setStarCategories(importedCategories);
+              saveStarCategories(importedCategories);
+              addLog(`Imported ${importedCategories.length} star categories.`);
+            }
 
-                for (const imported of importedPatterns) {
-                    if (newPatternsMap.has(imported.id)) {
-                        const existingPattern = newPatternsMap.get(imported.id)!;
-                        existingPattern.characteristics.push(...imported.characteristics);
-                        existingPattern.sourceImageIds = Array.from(new Set([...existingPattern.sourceImageIds, ...imported.sourceImageIds]));
-                        existingPattern.timestamp = Date.now();
-                        updatedCount++;
-                    } else {
-                        newPatternsMap.set(imported.id, imported);
-                        newCount++;
-                    }
-                }
-                
-                const finalPatterns = Array.from(newPatternsMap.values());
-                saveLearnedPatterns(finalPatterns);
-                addLog(`Import complete: ${newCount} new patterns added, ${updatedCount} existing patterns updated by accumulating data.`);
-                window.alert(t('patternsImportedSuccess', { new: newCount, updated: updatedCount }));
-                return finalPatterns;
-            });
+            // Import Patterns
+            if (typeof importedPatterns === 'object' && importedPatterns !== null) {
+              setLearnedPatterns(prev => {
+                  const newPatterns = { ...prev, ...importedPatterns };
+                  saveLearnedPatterns(newPatterns);
+                  const newCount = Object.keys(importedPatterns).length;
+                  addLog(`Imported ${newCount} patterns.`);
+                  window.alert(`Import successful: ${newCount} patterns and ${importedCategories.length} categories loaded.`);
+                  return newPatterns;
+              });
+            }
 
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : "Unknown error";
@@ -981,7 +1010,7 @@ export default function AstroStackerPage() {
 
   type Sample = {
     features: number[];
-    label: number;
+    label: string; // Now the categoryId
   };
 
   function featuresFromCharacteristics(c: StarCharacteristics): number[] {
@@ -1009,24 +1038,33 @@ export default function AstroStackerPage() {
       return { norm, means, stds };
   }
 
-  async function trainClientModel(samples: Sample[], epochs = 30, batchSize = 16) {
-      if (samples.some(s => typeof s.label === 'undefined')) {
-          throw new Error('Labels are missing for some samples.');
-      }
+  async function trainClientModel(samples: Sample[], categories: StarCategory[], epochs = 40, batchSize = 32) {
+      if (samples.length === 0) throw new Error("No samples to train on.");
+  
+      const categoryToIndex = new Map(categories.map((c, i) => [c.id, i]));
+      const numClasses = categories.length;
+  
       const X = samples.map(s => s.features);
-      const y = samples.map(s => s.label!);
-
+      const y = samples.map(s => {
+          const index = categoryToIndex.get(s.label);
+          const oneHot = new Array(numClasses).fill(0);
+          if (index !== undefined) {
+              oneHot[index] = 1;
+          }
+          return oneHot;
+      });
+  
       const { norm, means, stds } = normalizeFeatures(X);
       const xs = tf.tensor2d(norm);
-      const ys = tf.tensor2d(y.map(v => [v]));
-
+      const ys = tf.tensor2d(y);
+  
       const split = Math.floor(norm.length * 0.8);
       const [xTrain, xTest] = [xs.slice([0, 0], [split, xs.shape[1]]), xs.slice([split, 0], [xs.shape[0] - split, xs.shape[1]])];
-      const [yTrain, yTest] = [ys.slice([0, 0], [split, 1]), ys.slice([split, 0], [ys.shape[0] - split, 1])];
-
-      const model = buildModel();
-      model.compile({ optimizer: tf.train.adam(0.001), loss: 'binaryCrossentropy', metrics: ['accuracy'] });
-
+      const [yTrain, yTest] = [ys.slice([0, 0], [split, numClasses]), ys.slice([split, 0], [ys.shape[0] - split, numClasses])];
+  
+      const model = buildModel(numClasses); // buildModel needs to accept numClasses
+      model.compile({ optimizer: tf.train.adam(0.001), loss: 'categoricalCrossentropy', metrics: ['accuracy'] });
+  
       const history = await model.fit(xTrain, yTrain, {
           epochs,
           batchSize,
@@ -1044,43 +1082,40 @@ export default function AstroStackerPage() {
       });
       
       const finalEpochLogs = history.history.acc ? { acc: history.history.acc[epochs - 1], val_acc: history.history.val_acc[epochs - 1] } : {};
-
+  
       tf.dispose([xs, ys, xTrain, xTest, yTrain, yTest]);
-
+  
       return { model, means, stds, accuracy: finalEpochLogs.acc as number };
   }
 
 
   const handleTrainModel = async () => {
-      const activePatterns = learnedPatterns.filter(p => selectedPatternIDs.has(p.id));
+      const activePatterns = Object.values(learnedPatterns).filter(p => selectedPatternIDs.has(p.id));
       if (activePatterns.length === 0) {
           window.alert("Please select at least one pattern to train the model.");
           return;
       }
       
-      const starCharacteristics = activePatterns.flatMap(p => p.characteristics);
-      if (starCharacteristics.length < 20) {
-        window.alert(`Need at least 20 star samples to train a model. You have ${starCharacteristics.length}. Please add more stars via Manual Select.`);
+      const allCharacteristics = activePatterns.flatMap(p => 
+          p.characteristics.map(c => ({ ...c, categoryId: p.categoryId }))
+      );
+
+      if (allCharacteristics.length < 20) {
+        window.alert(`Need at least 20 star samples across all selected patterns to train. You have ${allCharacteristics.length}.`);
         return;
       }
       
-      addLog(`[TRAIN] Starting client-side model training with ${starCharacteristics.length} star samples.`);
+      addLog(`[TRAIN] Starting model training with ${allCharacteristics.length} star samples from ${activePatterns.length} patterns.`);
       setIsTrainingModel(true);
       
       try {
-        const starSamples: Sample[] = starCharacteristics.map(c => ({ features: featuresFromCharacteristics(c), label: 1 }));
+        const samples: Sample[] = allCharacteristics.map(c => ({
+          features: featuresFromCharacteristics(c),
+          label: c.categoryId,
+        }));
         
-        const noiseSamples: Sample[] = [];
-        const numNoiseSamples = Math.max(starSamples.length, 20);
-        const numFeatures = starSamples[0].features.length;
-        for (let i = 0; i < numNoiseSamples; i++) {
-            const noiseFeatures = Array(numFeatures).fill(0).map(() => Math.random() * 50);
-            noiseSamples.push({ features: noiseFeatures, label: 0 });
-        }
-        
-        const allSamples = [...starSamples, ...noiseSamples];
-
-        const { model, means, stds, accuracy } = await trainClientModel(allSamples);
+        // Use all defined categories for the model output layer
+        const { model, means, stds, accuracy } = await trainClientModel(samples, starCategories);
         
         setTrainedModel(model);
         setModelNormalization({ means, stds });
@@ -1089,8 +1124,8 @@ export default function AstroStackerPage() {
         localStorage.setItem('astrostacker-model-normalization', JSON.stringify({ means, stds }));
 
 
-        addLog(`[TRAIN] Client-side training successful! Accuracy: ${accuracy ? (accuracy * 100).toFixed(2) : 'N/A'}%. Model is saved and ready.`);
-        window.alert("AI Model trained successfully and is ready for alignment.");
+        addLog(`[TRAIN] Training successful! Accuracy: ${accuracy ? (accuracy * 100).toFixed(2) : 'N/A'}%. Model is saved and ready.`);
+        window.alert("AI Model trained successfully and is ready for use.");
 
       } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
@@ -1127,68 +1162,74 @@ export default function AstroStackerPage() {
   const isUiDisabled = isProcessingStack || isTrainingModel || isServerProcessing || allImageStarData.some(img => img.isAnalyzing);
   const currentYear = new Date().getFullYear();
 
-  // Determine the primary image to show in the main preview area
   const mainPreviewUrl = (showPostProcessEditor ? editedPreviewUrl : stackedImage) || null;
 
   const handleAiLearnFromManualSelection = async () => {
-    if (manualSelectedStars.length < 2) {
-      window.alert("Please select at least 2 stars to define a pattern.");
+    if (manualSelectedStars.length === 0) {
+      window.alert("Please select at least one star to define a pattern.");
       return;
     }
 
     const imageToLearnFrom = allImageStarData.find(img => img.id === manualSelectImageId);
     if (!imageToLearnFrom || !imageToLearnFrom.imageData) return;
-    
-    const patternId = 'aggregated-user-pattern';
-    
+
+    // Group stars by category
+    const starsByCategory: { [key: string]: Star[] } = {};
+    for (const star of manualSelectedStars) {
+      if (!starsByCategory[star.categoryId]) {
+        starsByCategory[star.categoryId] = [];
+      }
+      starsByCategory[star.categoryId].push(star);
+    }
+
     const { data, width, height } = imageToLearnFrom.imageData;
-    const newCharacteristics = await extractCharacteristicsFromImage({
-      stars: manualSelectedStars,
-      imageData: { data: Array.from(data), width, height }
-    });
-    
-    setLearnedPatterns(prev => {
-      const existingPatternIndex = prev.findIndex(p => p.id === patternId);
-      let updatedPatterns;
+    let patternsLearnedCount = 0;
 
-      if (existingPatternIndex !== -1) {
-        const existingPattern = prev[existingPatternIndex];
-        const updatedCharacteristics = [...existingPattern.characteristics, ...newCharacteristics];
-        const updatedSourceIds = new Set([...existingPattern.sourceImageIds, imageToLearnFrom.id]);
+    for (const categoryId in starsByCategory) {
+        const starsInCat = starsByCategory[categoryId];
+        if (starsInCat.length === 0) continue;
+
+        const newCharacteristics = await extractCharacteristicsFromImage({
+          stars: starsInCat,
+          imageData: { data: Array.from(data), width, height }
+        });
+
+        // Use the image file name + category ID as a unique pattern ID
+        const patternId = `${imageToLearnFrom.file.name}::${categoryId}`;
+        const categoryName = starCategories.find(c => c.id === categoryId)?.name || categoryId;
 
         const newPattern: LearnedPattern = {
           id: patternId,
+          sourceImageFileName: imageToLearnFrom.file.name,
+          categoryId: categoryId,
           timestamp: Date.now(),
-          sourceImageIds: Array.from(updatedSourceIds),
-          characteristics: updatedCharacteristics,
-        };
-        updatedPatterns = [...prev];
-        updatedPatterns[existingPatternIndex] = newPattern;
-        addLog(`Star Pattern Updated: ${newCharacteristics.length} new star characteristics from ${imageToLearnFrom.file.name} added to your aggregated pattern.`);
-
-      } else {
-        const newPattern: LearnedPattern = {
-          id: patternId,
-          timestamp: Date.now(),
-          sourceImageIds: [imageToLearnFrom.id],
           characteristics: newCharacteristics,
         };
-        updatedPatterns = [...prev, newPattern];
-        addLog(`Star Pattern Learned: A new aggregated pattern has been created with ${newCharacteristics.length} stars from ${imageToLearnFrom.file.name}.`);
-      }
 
-      saveLearnedPatterns(updatedPatterns);
-      
-      setSelectedPatternIDs(prevSelected => {
-          const newSet = new Set(prevSelected);
-          newSet.add(patternId);
-          return newSet;
-      });
+        setLearnedPatterns(prev => {
+            const updatedPatterns = { ...prev };
+            if(updatedPatterns[patternId] && !window.confirm(`A pattern for category '${categoryName}' from this image already exists. Overwrite it?`)) {
+                addLog(`Skipped overwriting pattern for ${categoryName}.`);
+                return updatedPatterns;
+            }
+            updatedPatterns[patternId] = newPattern;
+            saveLearnedPatterns(updatedPatterns);
+            addLog(`Pattern Learned: '${categoryName}' from ${imageToLearnFrom.file.name} with ${newCharacteristics.length} stars.`);
+            patternsLearnedCount++;
+            return updatedPatterns;
+        });
 
-      return updatedPatterns;
-    });
+         setSelectedPatternIDs(prevSelected => {
+            const newSet = new Set(prevSelected);
+            newSet.add(patternId);
+            return newSet;
+        });
+    }
 
-    handleConfirmManualSelection(); // Also save for alignment and close
+    if (patternsLearnedCount > 0) {
+        window.alert(`${patternsLearnedCount} star pattern(s) learned and saved.`);
+    }
+    handleConfirmManualSelection(); // Save for alignment and close editor
   };
 
   return (
@@ -1354,8 +1395,24 @@ export default function AstroStackerPage() {
                 {manualSelectImageId && imageForAnnotation && (
                   <Card className="mt-2 bg-muted/20">
                     <CardHeader className="p-3"><CardTitle className="text-base">Manual Star Selection</CardTitle>
-                      <CardDescription className="text-xs">Now editing: {imageForAnnotation.file.name}. Selected {manualSelectedStars.length} stars.</CardDescription>
+                      <CardDescription className="text-xs">Now editing: {imageForAnnotation.file.name}. Click a category, then click on stars.</CardDescription>
                     </CardHeader>
+                     <CardContent className="p-3 space-y-2">
+                      <div className="grid grid-cols-5 gap-2">
+                        {starCategories.map(cat => (
+                          <Button 
+                            key={cat.id}
+                            size="icon"
+                            variant={activeCategoryId === cat.id ? 'default' : 'outline'}
+                            onClick={() => setActiveCategoryId(cat.id)}
+                            className="h-8 w-8"
+                            style={{ backgroundColor: activeCategoryId === cat.id ? cat.color : undefined, borderColor: cat.color }}
+                            title={cat.name}
+                          >
+                          </Button>
+                        ))}
+                      </div>
+                    </CardContent>
                     <CardFooter className="p-3 flex flex-col gap-2">
                        <Button onClick={handleConfirmManualSelection} className="w-full" variant="secondary"><CheckCircle className="mr-2 h-4 w-4" />Confirm Selections</Button>
                       <Button onClick={handleAiLearnFromManualSelection} className="w-full" variant="outline" size="sm"><BrainCircuit className="mr-2 h-4 w-4"/>Confirm & Also Teach AI</Button>
@@ -1370,9 +1427,9 @@ export default function AstroStackerPage() {
           <div className="w-full lg:w-3/5 xl:w-2/3 flex flex-col space-y-6">
             <div className="flex-grow">
               {imageForAnnotation ? (
-                  <StarAnnotationCanvas imageUrl={imageForAnnotation.analysisPreviewUrl} allStars={imageForAnnotation.detectedStars} manualStars={manualSelectedStars} onCanvasClick={handleStarAnnotationClick} analysisWidth={imageForAnnotation.analysisDimensions.width} analysisHeight={imageForAnnotation.analysisDimensions.height} />
+                  <StarAnnotationCanvas imageUrl={imageForAnnotation.analysisPreviewUrl} allStars={imageForAnnotation.detectedStars} manualStars={manualSelectedStars} onCanvasClick={handleStarAnnotationClick} analysisWidth={imageForAnnotation.analysisDimensions.width} analysisHeight={imageForAnnotation.analysisDimensions.height} categories={starCategories} />
               ) : testImage ? (
-                  <StarAnnotationCanvas imageUrl={testImage.analysisPreviewUrl} allStars={testImage.detectedStars} manualStars={testImageMatchedStars} onCanvasClick={() => {}} analysisWidth={testImage.analysisDimensions.width} analysisHeight={testImage.analysisDimensions.height} />
+                  <StarAnnotationCanvas imageUrl={testImage.analysisPreviewUrl} allStars={testImage.detectedStars} manualStars={testImageMatchedStars} onCanvasClick={() => {}} analysisWidth={testImage.analysisDimensions.width} analysisHeight={testImage.analysisDimensions.height} categories={starCategories} isReadOnly={true} />
               ) : (
                   <ImagePreview imageUrl={mainPreviewUrl} fitMode={previewFitMode} />
               )}
@@ -1461,13 +1518,31 @@ export default function AstroStackerPage() {
           <div className="w-full lg:w-3/5 xl:w-2/3 space-y-6">
               <Card>
                   <CardHeader><CardTitle className="flex items-center"><BrainCircuit className="mr-2 h-5 w-5" />{t('learningModeCardTitle')}</CardTitle><CardDescription>{t('learningModeCardDescription')}</CardDescription></CardHeader>
-                  <CardContent>
+                  <CardContent className="space-y-4">
+                      <Accordion type="single" collapsible>
+                        <AccordionItem value="categories">
+                          <AccordionTrigger><Palette className="mr-2 h-4 w-4" />Star Categories</AccordionTrigger>
+                          <AccordionContent className="space-y-3 pt-2">
+                             {starCategories.map(cat => (
+                              <div key={cat.id} className="flex items-center gap-2">
+                                <div className="h-6 w-6 rounded-full border-2" style={{backgroundColor: cat.color}}></div>
+                                <Input 
+                                  value={cat.name} 
+                                  onChange={(e) => handleCategoryNameChange(cat.id, e.target.value)}
+                                  className="h-8"
+                                />
+                              </div>
+                             ))}
+                          </AccordionContent>
+                        </AccordionItem>
+                      </Accordion>
+                  
                       <div className="grid grid-cols-2 gap-4 mb-4">
-                        <Button onClick={handleExportPatterns} disabled={learnedPatterns.length === 0}><Download className="mr-2 h-4 w-4" />{t('exportPatternsButton')}</Button>
+                        <Button onClick={handleExportPatterns} disabled={Object.keys(learnedPatterns).length === 0}><Download className="mr-2 h-4 w-4" />{t('exportPatternsButton')}</Button>
                         <ImageUploadArea onFilesAdded={handleImportPatterns} isProcessing={isUiDisabled} multiple={false} accept={{ 'application/json': ['.json'] }} dropzoneText={t('importPatternsDropzone')} buttonText={t('importPatternsButton')} />
                       </div>
                       <div className="flex gap-4 mb-4">
-                       <Button onClick={handleTrainModel} disabled={isUiDisabled || learnedPatterns.filter(p => selectedPatternIDs.has(p.id)).length === 0} className="w-full">
+                       <Button onClick={handleTrainModel} disabled={isUiDisabled || selectedPatternIDs.size === 0} className="w-full">
                           {isTrainingModel ? <><Loader2 className="mr-2 h-4 w-4 animate-spin"/>{t('trainingModelButton')}</> : <><Cpu className="mr-2 h-4 w-4" />{t('trainModelButton')}</>}
                       </Button>
                       <Button onClick={handleResetModel} disabled={isUiDisabled || !trainedModel} variant="destructive" className="w-full">
@@ -1477,20 +1552,26 @@ export default function AstroStackerPage() {
                       {trainedModel && <Alert variant="default" className="mb-4"><AlertCircle className="h-4 w-4" /><AlertTitle>Model Ready</AlertTitle><AlertDescription>An AI model is trained and ready. The 'Consensus' alignment method will be enhanced by this for better star recognition.</AlertDescription></Alert>}
 
                       <h4 className="font-semibold mb-2">{t('allLearnedPatternsListTitle')}</h4>
-                      {learnedPatterns.length === 0 ? (<p className="text-sm text-muted-foreground">{t('noPatternLearnedYetInfo')}</p>) : (
+                      {Object.keys(learnedPatterns).length === 0 ? (<p className="text-sm text-muted-foreground">{t('noPatternLearnedYetInfo')}</p>) : (
                           <ScrollArea className="h-40 border rounded-md p-2">
-                              {learnedPatterns.map(p => (
+                              {Object.values(learnedPatterns).map(p => {
+                                const category = starCategories.find(c => c.id === p.categoryId);
+                                return (
                                   <div key={p.id} className="flex items-center justify-between p-2 rounded-md hover:bg-muted/50">
                                       <div className="flex items-center gap-2">
                                           <Checkbox id={`pattern-${p.id}`} checked={selectedPatternIDs.has(p.id)} onCheckedChange={(checked) => handlePatternSelectionChange(p.id, !!checked)} />
-                                          <div>
-                                              <label htmlFor={`pattern-${p.id}`} className="font-medium text-sm cursor-pointer">{p.id} ({p.characteristics.length} stars)</label>
-                                              <p className="text-xs text-muted-foreground"> {p.sourceImageIds.length} source images. Learned on {new Date(p.timestamp).toLocaleDateString()}</p>
+                                          <div className='flex items-center gap-2'>
+                                              <div className="h-4 w-4 rounded-full" style={{backgroundColor: category?.color}}></div>
+                                              <div>
+                                                  <label htmlFor={`pattern-${p.id}`} className="font-medium text-sm cursor-pointer">{p.sourceImageFileName} - {category?.name}</label>
+                                                  <p className="text-xs text-muted-foreground"> {p.characteristics.length} stars. Learned on {new Date(p.timestamp).toLocaleDateString()}</p>
+                                              </div>
                                           </div>
                                       </div>
                                       <Button variant="ghost" size="icon" className="h-7 w-7 z-10" onClick={() => deletePattern(p.id)}><Trash2 className="h-4 w-4 text-destructive"/></Button>
                                   </div>
-                              ))}
+                                )
+                              })}
                           </ScrollArea>
                       )}
                   </CardContent>
@@ -1500,7 +1581,7 @@ export default function AstroStackerPage() {
                   <CardHeader><CardTitle className="flex items-center"><TestTube2 className="mr-2 h-5 w-5" />{t('learnTestCardTitle')}</CardTitle><CardDescription>{t('learnTestCardDescription')}</CardDescription></CardHeader>
                   <CardContent className="space-y-4">
                       <ImageUploadArea onFilesAdded={handleTestFileAdded} isProcessing={isAnalyzingTestImage || isUiDisabled || !isFileApiReady} multiple={false} />
-                      <Button onClick={runPatternTest} disabled={isAnalyzingTestImage || isUiDisabled || !testImage} className="w-full">
+                      <Button onClick={runPatternTest} disabled={isAnalyzingTestImage || isUiDisabled || !testImage || selectedPatternIDs.size === 0} className="w-full">
                           {isAnalyzingTestImage ? <><Loader2 className="mr-2 h-4 w-4 animate-spin"/>{t('analyzingTestImageProgress')}</> : <>{t('runPatternTestButton')}</>}
                       </Button>
                       {testImage && <p className="text-sm text-center text-muted-foreground">{t('recognizedStarsCount', {count: testImageMatchedStars.length})}</p>}

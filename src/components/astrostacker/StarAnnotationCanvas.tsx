@@ -3,15 +3,16 @@
 
 import type React from 'react';
 import { useRef, useEffect, useCallback } from 'react';
-import type { Star } from '@/lib/astro-align';
+import type { StarCategory, LabeledStar, TestResultStar } from '@/types';
 
 interface StarAnnotationCanvasProps {
   imageUrl: string;
-  allStars: Star[];
-  manualStars: Star[];
+  allStars: LabeledStar[];
+  manualStars: (LabeledStar | TestResultStar)[];
   onCanvasClick: (x: number, y: number) => void;
   analysisWidth: number;
   analysisHeight: number;
+  categories: StarCategory[];
   isReadOnly?: boolean;
 }
 
@@ -22,9 +23,11 @@ export function StarAnnotationCanvas({
   onCanvasClick,
   analysisWidth,
   analysisHeight,
+  categories,
   isReadOnly = false,
 }: StarAnnotationCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const categoryMap = new Map(categories.map(c => [c.id, c]));
   
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
@@ -40,26 +43,28 @@ export function StarAnnotationCanvas({
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
-      // Draw all detected stars (faint yellow)
-      ctx.strokeStyle = "rgba(255, 255, 0, 0.5)";
+      // Draw all auto-detected stars (faint white)
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.4)";
       ctx.lineWidth = 1;
       for (const star of allStars) {
         ctx.beginPath();
-        ctx.arc(star.x, star.y, 3, 0, 2 * Math.PI);
+        ctx.arc(star.x, star.y, 5, 0, 2 * Math.PI);
         ctx.stroke();
       }
 
-      // Draw manually selected stars (bright red)
-      ctx.strokeStyle = "red";
+      // Draw manually selected/verified stars
       ctx.lineWidth = 2;
       for (const star of manualStars) {
+        const category = categoryMap.get(star.categoryId);
+        const color = (star as TestResultStar).color || category?.color || 'red';
+        ctx.strokeStyle = color;
         ctx.beginPath();
-        ctx.arc(star.x, star.y, 6, 0, 2 * Math.PI);
+        ctx.arc(star.x, star.y, 8, 0, 2 * Math.PI);
         ctx.stroke();
       }
     };
     img.src = imageUrl;
-  }, [imageUrl, allStars, manualStars, analysisWidth, analysisHeight]);
+  }, [imageUrl, allStars, manualStars, analysisWidth, analysisHeight, categoryMap]);
 
   useEffect(() => {
     draw();
