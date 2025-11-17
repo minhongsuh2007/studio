@@ -64,6 +64,14 @@ export function AppHeader({ onTutorialClick }: AppHeaderProps) {
               >
                 {t('switchToJapanese')}
               </Button>
+              <Button
+                variant={language === 'de' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => handleLanguageChange('de')}
+                className="text-xs px-2 py-1 h-auto"
+              >
+                {t('switchToGerman')}
+              </Button>
             </div>
         </div>
       </div>
