@@ -187,13 +187,15 @@ export async function findMatchingStars({
   candidates,
   model,
   normalization,
+  modelCategories,
   targetCategoryId,
 }: {
   imageData: SimpleImageData,
   candidates: Star[],
   model: tf.LayersModel,
   normalization: { means: number[], stds: number[] },
-  targetCategoryId: string, // The category ID we are trying to find
+  modelCategories: string[],
+  targetCategoryId: string,
 }): Promise<{rankedStars: {star: Star, probability: number}[], logs: string[]}> {
     const logs: string[] = [];
     try {
@@ -202,7 +204,13 @@ export async function findMatchingStars({
             return { rankedStars: [], logs };
         }
 
-        logs.push(`Received ${candidates.length} candidates to verify with AI for category ${targetCategoryId}.`);
+        const categoryIndex = modelCategories.indexOf(targetCategoryId);
+        if (categoryIndex === -1) {
+            logs.push(`Error: Target category ID '${targetCategoryId}' not found in the trained model's categories. Cannot predict.`);
+            return { rankedStars: [], logs };
+        }
+        
+        logs.push(`AI will verify ${candidates.length} candidates for category '${targetCategoryId}' (index: ${categoryIndex}).`);
 
         const allCharacteristics = (await extractCharacteristicsFromImage({ stars: candidates, imageData }))
             .map((char, index) => ({ char, star: candidates[index] }))
@@ -210,21 +218,17 @@ export async function findMatchingStars({
 
         const rankedStars: {star: Star, probability: number}[] = [];
         
-        // This is a placeholder. You need to map targetCategoryId to the output index of your model.
-        // Let's assume you have a way to do that, e.g., an array of category IDs used during training.
-        const categoryIndex = 0; // FIXME: This needs to be the actual index for targetCategoryId
-        
         for (const { char, star } of allCharacteristics) {
             const features = featuresFromCharacteristics(char!);
             const probabilities = predictSingle(model, normalization.means, normalization.stds, features);
-            // We need to know which index in the output corresponds to our targetCategoryId
-            const probabilityOfTarget = probabilities[categoryIndex]; // THIS IS A GUESS
+            const probabilityOfTarget = probabilities[categoryIndex];
             rankedStars.push({ star, probability: probabilityOfTarget });
         }
         
         rankedStars.sort((a, b) => b.probability - a.probability);
 
-        logs.push(`AI ranked ${rankedStars.length} candidates by probability for category ${targetCategoryId}.`);
+        const foundCount = rankedStars.filter(r => r.probability > 0.7).length;
+        logs.push(`AI ranked ${rankedStars.length} candidates. Found ${foundCount} with >70% confidence.`);
 
         return { rankedStars, logs };
 

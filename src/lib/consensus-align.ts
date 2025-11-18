@@ -22,6 +22,7 @@ interface ModelPackage {
         means: number[];
         stds: number[];
     };
+    categories: string[];
 }
 
 /**
@@ -201,20 +202,23 @@ export async function consensusAlignAndStack({
     if (modelPackage) {
         addLog(`[AI-DETECT] AI verifying stars for ${entry.file.name}...`);
         const { data, width, height } = entry.imageData;
-        const result = await findMatchingStars({
-            imageData: { data: Array.from(data), width, height },
-            candidates: starsToConsider,
-            model: modelPackage.model,
-            normalization: modelPackage.normalization,
-        });
-        result.logs.forEach(logMsg => addLog(`[AI-DETECT] ${entry.file.name}: ${logMsg}`));
+        const categoriesToFind = modelPackage.categories;
+        let aiVerifiedStars: Star[] = [];
 
-        // Filter for high-probability stars and take the top 50
-        rankedStars = result.rankedStars
-            .filter(rs => rs.probability > 0.5)
-            .sort((a,b) => b.probability - a.probability)
-            .map(rs => rs.star)
-            .slice(0, 50);
+        for(const catId of categoriesToFind) {
+            const result = await findMatchingStars({
+                imageData: { data: Array.from(data), width, height },
+                candidates: starsToConsider,
+                model: modelPackage.model,
+                normalization: modelPackage.normalization,
+                modelCategories: modelPackage.categories,
+                targetCategoryId: catId
+            });
+            result.logs.forEach(logMsg => addLog(`[AI-DETECT] ${entry.file.name} (${catId}): ${logMsg}`));
+            aiVerifiedStars.push(...result.rankedStars.filter(rs => rs.probability > 0.7).map(rs => rs.star));
+        }
+        
+        rankedStars = [...new Set(aiVerifiedStars)].slice(0, 50);
 
         if (rankedStars.length > 0) {
             allImageRankedStars.push({ imageId: entry.id, rankedStars });

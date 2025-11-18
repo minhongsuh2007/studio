@@ -119,6 +119,7 @@ export default function AstroStackerPage() {
   // --- TFJS Model State ---
   const [trainedModel, setTrainedModel] = useState<tf.LayersModel | null>(null);
   const [modelNormalization, setModelNormalization] = useState<{ means: number[], stds: number[] } | null>(null);
+  const [modelCategories, setModelCategories] = useState<string[] | null>(null);
 
   // --- File processing readiness ---
   const [isFileApiReady, setIsFileApiReady] = useState(false);
@@ -223,12 +224,14 @@ export default function AstroStackerPage() {
         try {
             const loadedModel = await tf.loadLayersModel(TF_MODEL_STORAGE_KEY);
             const storedNormalization = localStorage.getItem('astrostacker-model-normalization');
-            if (loadedModel && storedNormalization) {
+            const storedCategories = localStorage.getItem('astrostacker-model-categories');
+            if (loadedModel && storedNormalization && storedCategories) {
                 setTrainedModel(loadedModel);
                 setModelNormalization(JSON.parse(storedNormalization));
-                addLog("[AI-CLIENT] Successfully loaded pre-trained model from storage.");
+                setModelCategories(JSON.parse(storedCategories));
+                addLog("[AI-CLIENT] Successfully loaded pre-trained model and metadata from storage.");
             } else {
-                addLog("[AI-CLIENT] No pre-trained model found.");
+                addLog("[AI-CLIENT] No complete pre-trained model found.");
             }
         } catch (e) {
             addLog("[AI-CLIENT] No pre-trained model found in storage.");
@@ -724,8 +727,8 @@ export default function AstroStackerPage() {
       let stackedImageData;
       const progressUpdate = (p: number) => setProgressPercent(20 + p * 80);
 
-      const shouldUseAi = starDetectionMethod === 'ai' && trainedModel && modelNormalization;
-      const modelPackage = shouldUseAi ? { model: trainedModel, normalization: modelNormalization } : undefined;
+      const shouldUseAi = starDetectionMethod === 'ai' && trainedModel && modelNormalization && modelCategories;
+      const modelPackage = shouldUseAi ? { model: trainedModel, normalization: modelNormalization, categories: modelCategories } : undefined;
 
       if (alignmentMethod === 'planetary') {
         stackedImageData = await planetaryAlignAndStack(
@@ -863,7 +866,7 @@ export default function AstroStackerPage() {
         window.alert(t('noTestImageToastTitle'));
         return;
     }
-    if (!trainedModel || !modelNormalization) {
+    if (!trainedModel || !modelNormalization || !modelCategories) {
         window.alert("AI model is not trained. Please train the model before running a test.");
         return;
     }
@@ -877,23 +880,23 @@ export default function AstroStackerPage() {
         const allMatchedStars: TestResultStar[] = [];
         
         const activePatterns = Object.values(learnedPatterns).filter(p => selectedPatternIDs.has(p.id));
+        const categoriesToTest = starCategories.filter(cat => activePatterns.some(p => p.categoryId === cat.id));
 
-        for (const pattern of activePatterns) {
-          const category = starCategories.find(c => c.id === pattern.categoryId);
-          if (!category) continue;
-          
+        for (const category of categoriesToTest) {
+          addLog(`[AI TEST] Searching for stars matching category: ${category.name}`);
           const { rankedStars, logs } = await findMatchingStars({
             imageData: {data: Array.from(data), width, height},
             candidates: testImage.detectedStars,
             model: trainedModel,
             normalization: modelNormalization,
+            modelCategories: modelCategories,
             targetCategoryId: category.id,
           });
           
           logs.forEach(logMsg => addLog(`[AI TEST - ${category.name}] ${logMsg}`));
           
           const matchedStars = rankedStars
-              .filter(rs => rs.probability > 0.6) // Use a threshold to define a "match"
+              .filter(rs => rs.probability > 0.7) // Use a higher threshold for better confidence
               .map(rs => ({ ...rs.star, categoryId: category.id, color: category.color }));
 
           allMatchedStars.push(...matchedStars);
@@ -1038,55 +1041,56 @@ export default function AstroStackerPage() {
       return { norm, means, stds };
   }
 
-  async function trainClientModel(samples: Sample[], categories: StarCategory[], epochs = 40, batchSize = 32) {
-      if (samples.length === 0) throw new Error("No samples to train on.");
-  
-      const categoryToIndex = new Map(categories.map((c, i) => [c.id, i]));
-      const numClasses = categories.length;
-  
-      const X = samples.map(s => s.features);
-      const y = samples.map(s => {
-          const index = categoryToIndex.get(s.label);
-          const oneHot = new Array(numClasses).fill(0);
-          if (index !== undefined) {
-              oneHot[index] = 1;
-          }
-          return oneHot;
-      });
-  
-      const { norm, means, stds } = normalizeFeatures(X);
-      const xs = tf.tensor2d(norm);
-      const ys = tf.tensor2d(y);
-  
-      const split = Math.floor(norm.length * 0.8);
-      const [xTrain, xTest] = [xs.slice([0, 0], [split, xs.shape[1]]), xs.slice([split, 0], [xs.shape[0] - split, xs.shape[1]])];
-      const [yTrain, yTest] = [ys.slice([0, 0], [split, numClasses]), ys.slice([split, 0], [ys.shape[0] - split, numClasses])];
-  
-      const model = buildModel(numClasses); // buildModel needs to accept numClasses
-      model.compile({ optimizer: tf.train.adam(0.001), loss: 'categoricalCrossentropy', metrics: ['accuracy'] });
-  
-      const history = await model.fit(xTrain, yTrain, {
-          epochs,
-          batchSize,
-          validationData: [xTest, yTest],
-          shuffle: true,
-          callbacks: {
-              onEpochEnd: (epoch, logs) => {
-                  if (logs && (epoch + 1) % 5 === 0) {
-                      const acc = logs.acc || logs.accuracy;
-                      const valAcc = logs.val_acc || logs.val_accuracy;
-                      addLog(`Epoch ${epoch + 1}: Accuracy=${acc ? acc.toFixed(3) : 'N/A'}, Val Accuracy=${valAcc ? valAcc.toFixed(3) : 'N/A'}`);
-                  }
-              }
-          }
-      });
-      
-      const finalEpochLogs = history.history.acc ? { acc: history.history.acc[epochs - 1], val_acc: history.history.val_acc[epochs - 1] } : {};
-  
-      tf.dispose([xs, ys, xTrain, xTest, yTrain, yTest]);
-  
-      return { model, means, stds, accuracy: finalEpochLogs.acc as number };
-  }
+  async function trainClientModel(samples: Sample[], categoriesForModel: StarCategory[], epochs = 40, batchSize = 32) {
+    if (samples.length === 0) throw new Error("No samples to train on.");
+
+    const categoryIds = categoriesForModel.map(c => c.id);
+    const categoryToIndex = new Map(categoryIds.map((id, i) => [id, i]));
+    const numClasses = categoryIds.length;
+
+    const X = samples.map(s => s.features);
+    const y = samples.map(s => {
+        const index = categoryToIndex.get(s.label);
+        const oneHot = new Array(numClasses).fill(0);
+        if (index !== undefined) {
+            oneHot[index] = 1;
+        }
+        return oneHot;
+    });
+
+    const { norm, means, stds } = normalizeFeatures(X);
+    const xs = tf.tensor2d(norm);
+    const ys = tf.tensor2d(y);
+
+    const split = Math.floor(norm.length * 0.8);
+    const [xTrain, xTest] = [xs.slice([0, 0], [split, xs.shape[1]]), xs.slice([split, 0], [xs.shape[0] - split, xs.shape[1]])];
+    const [yTrain, yTest] = [ys.slice([0, 0], [split, numClasses]), ys.slice([split, 0], [ys.shape[0] - split, numClasses])];
+
+    const model = buildModel(numClasses);
+    model.compile({ optimizer: tf.train.adam(0.001), loss: 'categoricalCrossentropy', metrics: ['accuracy'] });
+
+    const history = await model.fit(xTrain, yTrain, {
+        epochs,
+        batchSize,
+        validationData: [xTest, yTest],
+        shuffle: true,
+        callbacks: {
+            onEpochEnd: (epoch, logs) => {
+                if (logs && (epoch + 1) % 5 === 0) {
+                    const acc = logs.acc || logs.accuracy;
+                    const valAcc = logs.val_acc || logs.val_accuracy;
+                    addLog(`Epoch ${epoch + 1}: Accuracy=${acc ? acc.toFixed(3) : 'N/A'}, Val Accuracy=${valAcc ? valAcc.toFixed(3) : 'N/A'}`);
+                }
+            }
+        }
+    });
+    
+    const finalEpochLogs = history.history.acc ? { acc: history.history.acc[epochs - 1], val_acc: history.history.val_acc[epochs - 1] } : {};
+
+    tf.dispose([xs, ys, xTrain, xTest, yTrain, yTest]);
+
+    return { model, means, stds, categories: categoryIds, accuracy: finalEpochLogs.acc as number };
+}
 
 
   const handleTrainModel = async () => {
@@ -1104,8 +1108,12 @@ export default function AstroStackerPage() {
         window.alert(`Need at least 20 star samples across all selected patterns to train. You have ${allCharacteristics.length}.`);
         return;
       }
+
+      // Get the unique categories from the selected patterns
+      const categoriesInUseIds = new Set(activePatterns.map(p => p.categoryId));
+      const categoriesForModel = starCategories.filter(c => categoriesInUseIds.has(c.id));
       
-      addLog(`[TRAIN] Starting model training with ${allCharacteristics.length} star samples from ${activePatterns.length} patterns.`);
+      addLog(`[TRAIN] Starting model training with ${allCharacteristics.length} star samples across ${categoriesForModel.length} categories.`);
       setIsTrainingModel(true);
       
       try {
@@ -1114,14 +1122,15 @@ export default function AstroStackerPage() {
           label: c.categoryId,
         }));
         
-        // Use all defined categories for the model output layer
-        const { model, means, stds, accuracy } = await trainClientModel(samples, starCategories);
+        const { model, means, stds, categories, accuracy } = await trainClientModel(samples, categoriesForModel);
         
         setTrainedModel(model);
         setModelNormalization({ means, stds });
+        setModelCategories(categories);
         
         await model.save(TF_MODEL_STORAGE_KEY);
         localStorage.setItem('astrostacker-model-normalization', JSON.stringify({ means, stds }));
+        localStorage.setItem('astrostacker-model-categories', JSON.stringify(categories));
 
 
         addLog(`[TRAIN] Training successful! Accuracy: ${accuracy ? (accuracy * 100).toFixed(2) : 'N/A'}%. Model is saved and ready.`);
@@ -1145,8 +1154,10 @@ export default function AstroStackerPage() {
         try {
             await tf.io.removeModel(TF_MODEL_STORAGE_KEY);
             localStorage.removeItem('astrostacker-model-normalization');
+            localStorage.removeItem('astrostacker-model-categories');
             setTrainedModel(null);
             setModelNormalization(null);
+            setModelCategories(null);
             addLog("[AI-CLIENT] Trained model has been successfully reset and removed from storage.");
             window.alert("AI model has been reset.");
         } catch (error) {
