@@ -44,58 +44,78 @@ async function decodeImage(
   }
 }
 
+async function fetchAndDecodeImage(
+  url: string,
+  id: string,
+  log: (msg: string) => void
+): Promise<ServerImageQueueEntry | null> {
+  try {
+    log(`[FETCH] Downloading: ${url}`);
+    const response = await fetch(url, { headers: { 'User-Agent': 'AstroStacker/1.0' }});
+    if (!response.ok) throw new Error(`Fetch failed with status ${response.status}`);
+    
+    const file = new File([await response.blob()], new URL(url).pathname.split('/').pop() || 'image.jpg');
+    return await decodeImage(file, id, log);
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    addLog(`[ERROR] Failed to process URL ${url}: ${errorMessage}`);
+    return null;
+  }
+}
 
 export async function POST(req: NextRequest) {
+  const logs: string[] = [];
+  const addLog = (message: string) => {
+      logs.push(`[${new Date().toISOString()}] ${message}`);
+      console.log(message);
+  };
+
   try {
-    const formData = await req.formData();
-    const imageFiles = formData.getAll('images') as File[];
-    const alignmentMethod = (formData.get('alignmentMethod') as AlignmentMethod) || 'consensus';
-    const stackingMode = (formData.get('stackingMode') as StackingMode) || 'median';
-    const imageUrlsString = formData.get('imageUrls') as string | null;
+    const contentType = req.headers.get('content-type') || '';
+    let imageEntries: (ServerImageQueueEntry | null)[] = [];
+    let alignmentMethod: AlignmentMethod = 'consensus';
+    let stackingMode: StackingMode = 'median';
 
-    const logs: string[] = [];
-    const addLog = (message: string) => {
-        logs.push(`[${new Date().toISOString()}] ${message}`);
-        console.log(message);
-    };
-
-    let resolvedImages: (ServerImageQueueEntry | null)[] = [];
-
-    if (imageFiles && imageFiles.length > 0) {
-        addLog(`Received ${imageFiles.length} files from FormData.`);
-        const imagePromises = imageFiles.map((file, index) =>
-            decodeImage(file, `file_${index}_${file.name}`, addLog)
-        );
-        resolvedImages = await Promise.all(imagePromises);
-
-    } else if (imageUrlsString) {
-        const imageUrls = imageUrlsString.split('\n').filter(url => url.trim() !== '');
-        addLog(`Received ${imageUrls.length} URLs from FormData.`);
+    if (contentType.includes('multipart/form-data')) {
+        addLog('Processing FormData request...');
+        const formData = await req.formData();
+        const imageFiles = formData.getAll('images') as File[];
+        alignmentMethod = (formData.get('alignmentMethod') as AlignmentMethod) || 'consensus';
+        stackingMode = (formData.get('stackingMode') as StackingMode) || 'median';
         
-        const fetchAndDecodeImage = async (url: string, id: string): Promise<ServerImageQueueEntry | null> => {
-            try {
-                addLog(`[FETCH] Downloading: ${url}`);
-                const response = await fetch(url, { headers: { 'User-Agent': 'AstroStacker/1.0' }});
-                if (!response.ok) throw new Error(`Fetch failed with status ${response.status}`);
-                const file = new File([await response.blob()], new URL(url).pathname.split('/').pop() || 'image.jpg');
-                return await decodeImage(file, id, addLog);
-            } catch (error) {
-                const errorMessage = error instanceof Error ? error.message : String(error);
-                addLog(`[ERROR] Failed to process URL ${url}: ${errorMessage}`);
-                return null;
-            }
-        };
+        if (imageFiles.length > 0) {
+            addLog(`Received ${imageFiles.length} files from FormData.`);
+            const imagePromises = imageFiles.map((file, index) =>
+                decodeImage(file, `file_${index}_${file.name}`, addLog)
+            );
+            imageEntries = await Promise.all(imagePromises);
+        } else {
+            return NextResponse.json({ error: 'No image files found in FormData.', logs: logs }, { status: 400 });
+        }
 
-        const imagePromises = imageUrls.map((url, index) =>
-            fetchAndDecodeImage(url, `url_${index}`)
-        );
-        resolvedImages = await Promise.all(imagePromises);
+    } else if (contentType.includes('application/json')) {
+        addLog('Processing JSON request...');
+        const body = await req.json();
+        const imageUrls = body.imageUrls as string[];
+        alignmentMethod = (body.alignmentMethod as AlignmentMethod) || 'consensus';
+        stackingMode = (body.stackingMode as StackingMode) || 'median';
+        
+        if (imageUrls && imageUrls.length > 0) {
+            addLog(`Received ${imageUrls.length} URLs from JSON body.`);
+            const imagePromises = imageUrls.map((url, index) =>
+                fetchAndDecodeImage(url, `url_${index}`, addLog)
+            );
+            imageEntries = await Promise.all(imagePromises);
+        } else {
+             return NextResponse.json({ error: 'No imageUrls found in JSON body.', logs: logs }, { status: 400 });
+        }
+
     } else {
-         return NextResponse.json({ error: 'No images or image URLs provided.', logs: [] }, { status: 400 });
+      return NextResponse.json({ error: `Unsupported Content-Type: ${contentType}`, logs: logs }, { status: 415 });
     }
 
     const result = await stackImages({
-        images: resolvedImages,
+        images: imageEntries,
         alignmentMethod,
         stackingMode,
     });
@@ -119,6 +139,7 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred on the server.';
     console.error('[API_ROUTE_ERROR]', error);
-    return NextResponse.json({ error: 'Failed to process the request.', details: errorMessage, logs: [`[FATAL] ${errorMessage}`] }, { status: 500 });
+    addLog(`[FATAL] ${errorMessage}`);
+    return NextResponse.json({ error: 'Failed to process the request.', details: errorMessage, logs: logs }, { status: 500 });
   }
 }
