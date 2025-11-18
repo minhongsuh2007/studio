@@ -399,6 +399,7 @@ export default function AstroStackerPage() {
             setImageForPostProcessing(result.stackedImageUrl);
             setEditedPreviewUrl(result.stackedImageUrl);
             handleResetAdjustments();
+            setIsServerProcessing(false); // Make sure to reset state on success
         } else {
             const errorMsg = result.error || 'Unknown API error';
             addLog(`[API-STACK] Error: ${errorMsg}`);
@@ -679,7 +680,7 @@ export default function AstroStackerPage() {
         // Deduplication logic
         setManualSelectedStars(prevStars => {
           const filteredStars = prevStars.filter(existingStar => {
-            return Math.hypot(existingStar.x - newStar.x, newStar.y - newStar.y) >= STAR_DEDUPLICATION_RADIUS;
+            return Math.hypot(existingStar.x - newStar.x, existingStar.y - newStar.y) >= STAR_DEDUPLICATION_RADIUS;
           });
           return [...filteredStars, newStar];
         });
@@ -1694,4 +1695,3 @@ export default function AstroStackerPage() {
   );
 }
 
-    
