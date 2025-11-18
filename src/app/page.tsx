@@ -355,35 +355,45 @@ export default function AstroStackerPage() {
     return finalUpdatedEntry;
   };
 
-  const handleServerStacking = async (images: ServerImagePayload[]) => {
+  const handleServerStacking = async (files: File[]) => {
       setIsServerProcessing(true);
       setStackedImage(null);
       setShowPostProcessEditor(false);
-      addLog(`[SERVER-STACK] Stacking ${images.length} file(s) on the server...`);
+      addLog(`[API-STACK] Stacking ${files.length} file(s) via API...`);
 
       try {
-          const result = await stackImages({
-              images,
-              alignmentMethod,
-              stackingMode,
-          });
+        const formData = new FormData();
+        files.forEach(file => {
+            formData.append('images', file);
+        });
+        formData.append('alignmentMethod', alignmentMethod);
+        formData.append('stackingMode', stackingMode);
 
-          if (result.success && result.stackedImageUrl) {
-              addLog(`[SERVER-STACK] Success: ${result.message}`);
-              result.logs.forEach(l => addLog(l));
-              setStackedImage(result.stackedImageUrl);
-              setImageForPostProcessing(result.stackedImageUrl);
-              setEditedPreviewUrl(result.stackedImageUrl);
-              handleResetAdjustments();
-          } else {
-              addLog(`[SERVER-STACK] Error: ${result.message}`);
-              if (result.details) addLog(`[SERVER-STACK] Details: ${result.details}`);
-              result.logs.forEach(l => addLog(l));
-              window.alert(`Server Stacking Failed: ${result.message}`);
-          }
+        const response = await fetch('/api/stack', {
+            method: 'POST',
+            body: formData,
+        });
+
+        const result = await response.json();
+
+        if (response.ok && result.stackedImageUrl) {
+            addLog(`[API-STACK] Success: ${result.message}`);
+            result.logs.forEach((l: string) => addLog(l));
+            setStackedImage(result.stackedImageUrl);
+            setImageForPostProcessing(result.stackedImageUrl);
+            setEditedPreviewUrl(result.stackedImageUrl);
+            handleResetAdjustments();
+        } else {
+            const errorMsg = result.error || 'Unknown API error';
+            addLog(`[API-STACK] Error: ${errorMsg}`);
+            if (result.details) addLog(`[API-STACK] Details: ${result.details}`);
+            (result.logs || []).forEach((l: string) => addLog(l));
+            window.alert(`Server Stacking Failed: ${errorMsg}`);
+        }
+
       } catch (error) {
           const errorMessage = error instanceof Error ? error.message : "An unknown server error occurred.";
-          addLog(`[SERVER-STACK] Fatal Error: ${errorMessage}`);
+          addLog(`[API-STACK] Fatal Error: ${errorMessage}`);
           window.alert(`Server Stacking Failed: ${errorMessage}`);
       } finally {
           setIsServerProcessing(false);
@@ -394,13 +404,12 @@ export default function AstroStackerPage() {
     addLog(`Attempting to add ${files.length} file(s).`);
   
     const webImageFiles: File[] = [];
-    const fitsFiles: ServerImagePayload[] = [];
+    const fitsFiles: File[] = [];
   
     for (const file of files) {
       if (file.type === 'image/fits' || file.name.toLowerCase().endsWith('.fits') || file.name.toLowerCase().endsWith('.fit')) {
         addLog(`[FITS DETECTED] Queueing ${file.name} for server-side processing.`);
-        const dataUrl = await fileToDataURL(file);
-        fitsFiles.push({ fileName: file.name, dataUrl });
+        fitsFiles.push(file);
       } else {
         webImageFiles.push(file);
       }
@@ -1684,5 +1693,7 @@ export default function AstroStackerPage() {
     </div>
   );
 }
+
+    
 
     

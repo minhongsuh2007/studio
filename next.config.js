@@ -8,9 +8,6 @@ const nextConfig = {
   eslint: {
     ignoreDuringBuilds: true,
   },
-  serverActions: {
-    bodySizeLimit: '25mb',
-  },
   images: {
     remotePatterns: [
       {
@@ -38,3 +35,5 @@ const nextConfig = {
 };
 
 module.exports = nextConfig;
+
+    

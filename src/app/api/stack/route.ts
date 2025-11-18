@@ -1,24 +1,106 @@
 
 import { NextRequest, NextResponse } from 'next/server';
-import { stackImagesWithUrls } from '@/app/actions';
+import { stackImages } from '@/app/actions';
+import { AlignmentMethod, StackingMode, type ImageQueueEntry as ServerImageQueueEntry, detectBrightBlobs } from '@/lib/server-align';
+import sharp from 'sharp';
+
+async function decodeImage(
+  file: File,
+  id: string,
+  log: (msg: string) => void
+): Promise<ServerImageQueueEntry | null> {
+  try {
+    log(`[DECODE] Processing image: ${id}`);
+    
+    const buffer = Buffer.from(await file.arrayBuffer());
+    
+    const image = sharp(buffer);
+    const metadata = await image.metadata();
+    const { width, height } = metadata;
+
+    if (!width || !height) {
+      throw new Error('Could not get image dimensions.');
+    }
+
+    const rawData = await image.ensureAlpha().raw().toBuffer();
+
+    const imageData = {
+      data: new Uint8ClampedArray(rawData),
+      width,
+      height,
+    };
+
+    const stars = detectBrightBlobs(imageData, width, height, 180, log);
+
+    return {
+      id,
+      // @ts-ignore We are creating a server-side stand-in
+      imageData: imageData,
+      detectedStars: stars,
+      analysisDimensions: { width, height },
+    };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    log(`[ERROR] Failed to process image ${id}: ${errorMessage}`);
+    return null;
+  }
+}
+
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-    const { imageUrls, alignmentMethod, stackingMode } = body;
+    const formData = await req.formData();
+    const imageFiles = formData.getAll('images') as File[];
+    const alignmentMethod = (formData.get('alignmentMethod') as AlignmentMethod) || 'consensus';
+    const stackingMode = (formData.get('stackingMode') as StackingMode) || 'median';
+    const imageUrlsString = formData.get('imageUrls') as string | null;
 
-    if (!imageUrls || !Array.isArray(imageUrls) || imageUrls.length < 2) {
-      return NextResponse.json({ error: 'At least two image URLs are required.' }, { status: 400 });
+    const logs: string[] = [];
+    const addLog = (message: string) => {
+        logs.push(`[${new Date().toISOString()}] ${message}`);
+        console.log(message);
+    };
+
+    let resolvedImages: (ServerImageQueueEntry | null)[] = [];
+
+    if (imageFiles && imageFiles.length > 0) {
+        addLog(`Received ${imageFiles.length} files from FormData.`);
+        const imagePromises = imageFiles.map((file, index) =>
+            decodeImage(file, `file_${index}_${file.name}`, addLog)
+        );
+        resolvedImages = await Promise.all(imagePromises);
+
+    } else if (imageUrlsString) {
+        const imageUrls = imageUrlsString.split('\n').filter(url => url.trim() !== '');
+        addLog(`Received ${imageUrls.length} URLs from FormData.`);
+        
+        const fetchAndDecodeImage = async (url: string, id: string): Promise<ServerImageQueueEntry | null> => {
+            try {
+                addLog(`[FETCH] Downloading: ${url}`);
+                const response = await fetch(url, { headers: { 'User-Agent': 'AstroStacker/1.0' }});
+                if (!response.ok) throw new Error(`Fetch failed with status ${response.status}`);
+                const file = new File([await response.blob()], new URL(url).pathname.split('/').pop() || 'image.jpg');
+                return await decodeImage(file, id, addLog);
+            } catch (error) {
+                const errorMessage = error instanceof Error ? error.message : String(error);
+                addLog(`[ERROR] Failed to process URL ${url}: ${errorMessage}`);
+                return null;
+            }
+        };
+
+        const imagePromises = imageUrls.map((url, index) =>
+            fetchAndDecodeImage(url, `url_${index}`)
+        );
+        resolvedImages = await Promise.all(imagePromises);
+    } else {
+         return NextResponse.json({ error: 'No images or image URLs provided.' }, { status: 400 });
     }
 
-    // Convert the JSON body to FormData to be compatible with the server action
-    const formData = new FormData();
-    formData.append('imageUrls', imageUrls.join('\n'));
-    formData.append('alignmentMethod', alignmentMethod || 'standard');
-    formData.append('stackingMode', stackingMode || 'median');
-
-    // The server action's first argument `prevState` is not used in this context, so we can pass null.
-    const result = await stackImagesWithUrls(null, formData);
+    const result = await stackImages({
+        images: resolvedImages,
+        alignmentMethod,
+        stackingMode,
+    });
 
     if (result.success) {
       return NextResponse.json({
@@ -42,3 +124,5 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Failed to process the request.', details: errorMessage }, { status: 500 });
   }
 }
+
+    
