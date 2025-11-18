@@ -10,7 +10,8 @@ export type AlignmentMethod = 'standard' | 'consensus' | 'planetary' | 'dumb';
 
 export interface ImageQueueEntry {
   id: string;
-  imageData: ImageData; // Now mandatory for server-side
+  // @ts-ignore - This is a server-side stand-in for ImageData
+  imageData: { data: Uint8ClampedArray, width: number, height: number };
   detectedStars: Star[];
   analysisDimensions: { width: number; height: number; };
 };
@@ -25,10 +26,10 @@ export type Transform = {
 // --- UTILITIES ---
 
 export function detectBrightBlobs(
-  imageData: ImageData,
+  imageData: ImageQueueEntry['imageData'],
   width: number,
   height: number,
-  threshold: number = 180, // Lowered threshold for server processing
+  threshold: number = 180,
   log: (msg: string) => void
 ): Star[] {
     const { data } = imageData;
@@ -591,3 +592,5 @@ export async function dumbAlignAndStack({
     // For server-side, we simplify and use consensus as a robust fallback.
     return consensusAlignAndStack({imageEntries, stackingMode, addLog, setProgress});
 }
+
+    

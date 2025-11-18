@@ -12,99 +12,19 @@ import {
 } from '@/lib/server-align';
 import sharp from 'sharp';
 
-// Helper to create an ImageData-like object that the alignment functions expect.
-// This is a server-side interpretation.
+// This is a server-side interpretation of ImageData.
+// It is NOT the same as the browser's ImageData object.
 interface ServerImageData {
   data: Uint8ClampedArray;
   width: number;
   height: number;
 }
 
-export interface ServerImagePayload {
-  fileName: string;
-  dataUrl: string;
-}
-
-async function decodeImage(
-  dataUrl: string,
-  id: string,
-  log: (msg: string) => void
-): Promise<ImageQueueEntry | null> {
-  try {
-    log(`[DECODE] Processing image: ${id}`);
-    
-    const base64Data = dataUrl.split(',')[1];
-    if (!base64Data) {
-      throw new Error("Invalid Data URL format.");
-    }
-    const buffer = Buffer.from(base64Data, 'base64');
-    
-    // Use sharp to decode the image buffer
-    const image = sharp(buffer, { failOn: 'none' });
-    const metadata = await image.metadata();
-    const { width, height, channels } = metadata;
-
-    if (!width || !height) {
-      throw new Error('Could not get image dimensions from sharp.');
-    }
-
-    // Ensure the image has an alpha channel and get raw pixel data
-    const rawData = await image.ensureAlpha().raw().toBuffer();
-
-    const imageData: ServerImageData = {
-      data: new Uint8ClampedArray(rawData),
-      width,
-      height,
-    };
-
-    return {
-      id,
-      // @ts-ignore - We are creating a server-side stand-in for the browser's ImageData
-      imageData: imageData,
-      detectedStars: [], // Star detection will happen in the alignment function
-      analysisDimensions: { width, height },
-    };
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    log(`[ERROR] Failed to process image ${id}: ${errorMessage}`);
-    return null;
-  }
-}
-
-async function fetchAndDecodeImage(
-  url: string,
-  id: string,
-  log: (msg: string) => void
-): Promise<ImageQueueEntry | null> {
-  try {
-    log(`[FETCH] Downloading: ${url}`);
-    const response = await fetch(url, {
-        headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
-    });
-    if (!response.ok) {
-      throw new Error(
-        `Failed to fetch image. Status: ${response.status} ${response.statusText}`
-      );
-    }
-    const buffer = await response.arrayBuffer();
-    const contentType = response.headers.get('content-type') || 'image/jpeg';
-    const dataUrl = `data:${contentType};base64,${Buffer.from(buffer).toString('base64')}`;
-
-    return await decodeImage(dataUrl, id, log);
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    log(`[ERROR] Failed to process URL ${url}: ${errorMessage}`);
-    return null;
-  }
-}
-
 export async function stackImages({
     images,
     alignmentMethod,
     stackingMode,
-} : {
+}: {
     images: (ImageQueueEntry | null)[],
     alignmentMethod: AlignmentMethod,
     stackingMode: StackingMode,
@@ -221,7 +141,7 @@ export async function stackImagesWithUrls(prevState: any, formData: FormData) {
   addLog('Server Action `stackImagesWithUrls` invoked.');
 
   const rawUrls = formData.get('imageUrls') as string;
-  const alignmentMethod = (formData.get('alignmentMethod') as AlignmentMethod) || 'standard';
+  const alignmentMethod = (formData.get('alignmentMethod') as AlignmentMethod) || 'consensus';
   const stackingMode = (formData.get('stackingMode') as StackingMode) || 'median';
 
   if (!rawUrls || rawUrls.trim() === '') {
@@ -233,7 +153,7 @@ export async function stackImagesWithUrls(prevState: any, formData: FormData) {
   }
   
   addLog(`Received ${imageUrls.length} URLs. Alignment: ${alignmentMethod}, Mode: ${stackingMode}.`);
-  addLog('Starting image download and decoding process...');
+  addLog('Starting image download and decoding process via API proxy...');
   
   // This server action now proxies the request to the API route
   // to avoid Server Action body size limits and leverage robust request handling.
@@ -284,3 +204,5 @@ export async function stackImagesWithUrls(prevState: any, formData: FormData) {
     };
   }
 }
+
+    

@@ -375,14 +375,13 @@ export default function AstroStackerPage() {
     }
   
     if (fitsFiles.length > 0) {
-      // Logic to handle FITS files via server API
       setIsServerProcessing(true);
       setStackedImage(null);
       setShowPostProcessEditor(false);
       addLog(`[API-STACK] Stacking ${fitsFiles.length} FITS file(s) via API...`);
       try {
         const formData = new FormData();
-        fitsFiles.forEach(file => formData.append('images', file));
+        fitsFiles.forEach(file => formData.append('images', file, file.name));
         formData.append('alignmentMethod', alignmentMethod);
         formData.append('stackingMode', stackingMode);
 
@@ -390,6 +389,7 @@ export default function AstroStackerPage() {
             method: 'POST',
             body: formData,
         });
+
         const result = await response.json();
         
         if (response.ok && result.stackedImageUrl) {
@@ -679,7 +679,7 @@ export default function AstroStackerPage() {
         // Deduplication logic
         setManualSelectedStars(prevStars => {
           const filteredStars = prevStars.filter(existingStar => {
-            return Math.hypot(existingStar.x - newStar.x, existingStar.y - newStar.y) >= STAR_DEDUPLICATION_RADIUS;
+            return Math.hypot(existingStar.x - newStar.x, newStar.y - newStar.y) >= STAR_DEDUPLICATION_RADIUS;
           });
           return [...filteredStars, newStar];
         });
@@ -1313,22 +1313,33 @@ export default function AstroStackerPage() {
                 <CardDescription className="text-sm max-h-32 overflow-y-auto">{t('cardDescription')}</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                 <form ref={formRef} action={formAction} onSubmit={() => setIsServerProcessing(true)} className="space-y-4">
-                    <Label htmlFor="url-input">Image URLs (one per line)</Label>
-                    <Textarea
-                        id="url-input"
-                        name="imageUrls"
-                        placeholder="https://.../image1.jpg&#10;https://.../image2.fits"
-                        rows={8}
-                        disabled={isUiDisabled}
-                    />
-                    <input type="hidden" name="alignmentMethod" value={alignmentMethod} />
-                    <input type="hidden" name="stackingMode" value={stackingMode} />
-                    <Button type="submit" disabled={isUiDisabled} className="w-full">
-                        {isServerProcessing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Server className="mr-2 h-4 w-4" />}
-                        Stack from URLs
-                    </Button>
-                 </form>
+                <Tabs defaultValue="local">
+                  <TabsList className="grid w-full grid-cols-2">
+                    <TabsTrigger value="local">From Computer</TabsTrigger>
+                    <TabsTrigger value="url">From URLs</TabsTrigger>
+                  </TabsList>
+                  <TabsContent value="local" className="mt-4">
+                    <ImageUploadArea onFilesAdded={handleFilesAdded} isProcessing={isUiDisabled || !isFileApiReady} />
+                  </TabsContent>
+                  <TabsContent value="url" className="mt-4">
+                    <form ref={formRef} action={formAction} onSubmit={() => setIsServerProcessing(true)} className="space-y-4">
+                        <Label htmlFor="url-input">Image URLs (one per line)</Label>
+                        <Textarea
+                            id="url-input"
+                            name="imageUrls"
+                            placeholder="https://.../image1.jpg&#10;https://.../image2.fits"
+                            rows={8}
+                            disabled={isUiDisabled}
+                        />
+                        <input type="hidden" name="alignmentMethod" value={alignmentMethod} />
+                        <input type="hidden" name="stackingMode" value={stackingMode} />
+                        <Button type="submit" disabled={isUiDisabled} className="w-full">
+                            {isServerProcessing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Server className="mr-2 h-4 w-4" />}
+                            Stack from URLs
+                        </Button>
+                    </form>
+                  </TabsContent>
+                </Tabs>
                 
                 <Accordion type="multiple" className="w-full">
                   <AccordionItem value="darks">
@@ -1682,3 +1693,5 @@ export default function AstroStackerPage() {
     </div>
   );
 }
+
+    

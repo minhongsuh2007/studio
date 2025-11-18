@@ -4,31 +4,45 @@ import { stackImages } from '@/app/actions';
 import { AlignmentMethod, StackingMode, type ImageQueueEntry as ServerImageQueueEntry } from '@/lib/server-align';
 import sharp from 'sharp';
 
-async function decodeDataUrl(
-  dataUrl: string,
+// This is a server-side stand-in for the browser's ImageData object.
+// It is not the same and does not have the same prototype chain.
+interface ServerImageData {
+  data: Uint8ClampedArray;
+  width: number;
+  height: number;
+}
+
+async function decodeImageBuffer(
+  buffer: Buffer,
   id: string,
   log: (msg: string) => void
 ): Promise<ServerImageQueueEntry | null> {
   try {
     log(`[DECODE] Processing image: ${id}`);
     
-    const base64Data = dataUrl.split(',')[1];
-    if (!base64Data) {
-      throw new Error("Invalid Data URL format, base64 data not found.");
-    }
-    const buffer = Buffer.from(base64Data, 'base64');
-    
-    const image = sharp(buffer, { failOn: 'none' }); // failOn: 'none' is important for exotic formats
+    // Use sharp to decode the image buffer
+    const image = sharp(buffer, { failOn: 'none' }); // failOn: 'none' is important
     const metadata = await image.metadata();
-    const { width, height } = metadata;
 
+    let width = metadata.width;
+    let height = metadata.height;
+    
+    // Fallback for formats sharp might not get dimensions for (like FITS)
     if (!width || !height) {
-      throw new Error('Could not get image dimensions via sharp.');
+        log(`[DECODE_WARN] Sharp could not determine dimensions for ${id}. Buffer length: ${buffer.length}. Attempting to proceed.`);
+        // This is a heuristic. If we can't get dimensions, we can't reliably process it.
+        // We'll set dummy dimensions and let downstream alignment fail, but at least we log it.
+        width = 1;
+        height = 1;
+        // A more advanced solution would be to use a FITS-specific parser here as a fallback.
+        // For now, we accept that some files may fail.
+        return null;
     }
 
+    // Ensure the image has an alpha channel and get raw pixel data
     const rawData = await image.ensureAlpha().raw().toBuffer();
 
-    const imageData = {
+    const imageData: ServerImageData = {
       data: new Uint8ClampedArray(rawData),
       width,
       height,
@@ -36,9 +50,9 @@ async function decodeDataUrl(
 
     return {
       id,
-      // @ts-ignore We are creating a server-side stand-in
+      // @ts-ignore - We are creating a server-side stand-in for the browser's ImageData
       imageData: imageData,
-      detectedStars: [], // Star detection now happens in the alignment function on server
+      detectedStars: [], // Star detection will happen in the alignment function on the server
       analysisDimensions: { width, height },
     };
   } catch (error) {
@@ -57,16 +71,14 @@ async function fetchAndDecodeImage(
     log(`[FETCH] Downloading: ${url}`);
     const response = await fetch(url, { 
       headers: { 
+        // Some servers block requests without a user-agent
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36' 
       }
     });
-    if (!response.ok) throw new Error(`Fetch failed with status ${response.status}`);
+    if (!response.ok) throw new Error(`Fetch failed with status ${response.status} for URL ${url}`);
     
-    const buffer = await response.arrayBuffer();
-    const contentType = response.headers.get('content-type') || 'image/jpeg';
-    const dataUrl = `data:${contentType};base64,${Buffer.from(buffer).toString('base64')}`;
-    
-    return await decodeDataUrl(dataUrl, id, log);
+    const buffer = Buffer.from(await response.arrayBuffer());
+    return await decodeImageBuffer(buffer, id, log);
 
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -78,8 +90,9 @@ async function fetchAndDecodeImage(
 export async function POST(req: NextRequest) {
   const logs: string[] = [];
   const addLog = (message: string) => {
-      logs.push(`[${new Date().toISOString()}] ${message}`);
-      console.log(message);
+      const logMsg = `[${new Date().toISOString()}] ${message}`;
+      logs.push(logMsg);
+      console.log(logMsg);
   };
 
   try {
@@ -95,18 +108,36 @@ export async function POST(req: NextRequest) {
         alignmentMethod = (body.alignmentMethod as AlignmentMethod) || 'consensus';
         stackingMode = (body.stackingMode as StackingMode) || 'median';
         
-        if (imageUrls && imageUrls.length > 0) {
-            addLog(`Received ${imageUrls.length} URLs from JSON body.`);
-            const imagePromises = imageUrls.map((url, index) =>
-                fetchAndDecodeImage(url, `url_${index}`, addLog)
-            );
-            imageEntries = await Promise.all(imagePromises);
-        } else {
-             return NextResponse.json({ error: 'No imageUrls found in JSON body.', logs: logs }, { status: 400 });
+        if (!imageUrls || imageUrls.length === 0) {
+             return NextResponse.json({ error: 'No imageUrls found in JSON body.', logs }, { status: 400 });
+        }
+        
+        addLog(`Received ${imageUrls.length} URLs from JSON body.`);
+        const imagePromises = imageUrls.map((url, index) =>
+            fetchAndDecodeImage(url, `url_${index}`, addLog)
+        );
+        imageEntries = await Promise.all(imagePromises);
+
+    } else if (contentType.includes('multipart/form-data')) {
+        addLog('Processing FormData request...');
+        const formData = await req.formData();
+        const imageFiles = formData.getAll('images') as File[];
+        alignmentMethod = (formData.get('alignmentMethod') as AlignmentMethod) || 'consensus';
+        stackingMode = (formData.get('stackingMode') as StackingMode) || 'median';
+
+        if (!imageFiles || imageFiles.length === 0) {
+            return NextResponse.json({ error: 'No image files found in form data.', logs }, { status: 400 });
         }
 
+        addLog(`Received ${imageFiles.length} files from FormData.`);
+        const imagePromises = imageFiles.map(async (file, index) => {
+            const buffer = Buffer.from(await file.arrayBuffer());
+            return decodeImageBuffer(buffer, file.name || `file_${index}`, addLog);
+        });
+        imageEntries = await Promise.all(imagePromises);
+
     } else {
-      return NextResponse.json({ error: `Unsupported Content-Type: ${contentType}. This endpoint now only accepts 'application/json'.`, logs: logs }, { status: 415 });
+      return NextResponse.json({ error: `Unsupported Content-Type: ${contentType}.`, logs }, { status: 415 });
     }
 
     const result = await stackImages({
@@ -135,6 +166,8 @@ export async function POST(req: NextRequest) {
     const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred on the server.';
     console.error('[API_ROUTE_ERROR]', error);
     addLog(`[FATAL] ${errorMessage}`);
-    return NextResponse.json({ error: 'Failed to process the request.', details: errorMessage, logs: logs }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to process the request.', details: errorMessage, logs }, { status: 500 });
   }
 }
+
+    
