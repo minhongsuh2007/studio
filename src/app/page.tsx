@@ -36,7 +36,7 @@ import { applyPostProcessing } from '@/lib/post-process';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { saveAs } from 'file-saver';
-import { stackImagesWithUrls, stackImages, type ServerImagePayload } from '@/app/actions';
+import { stackImagesWithUrls, type ServerImagePayload } from '@/app/actions';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { ImageQueueEntry, CalibrationFrameEntry, StarCategory, LearnedPattern, LabeledStar, TestResultStar, PreviewFitMode, OutputFormat, AlignmentMethod, StackingQuality, StarDetectionMethod, StarCharacteristics } from '@/types';
 import { detectStarsAdvanced } from '@/lib/siril-like-detection';
@@ -72,7 +72,7 @@ export default function AstroStackerPage() {
   const [isProcessingStack, setIsProcessingStack] = useState(false);
   const [isTrainingModel, setIsTrainingModel] = useState(false);
   const [stackingMode, setStackingMode] = useState<StackingMode>('median');
-  const [alignmentMethod, setAlignmentMethod] = useState<AlignmentMethod>('consensus');
+  const [alignmentMethod, setAlignmentMethod] = useState<AlignmentMethod>('dumb');
   const [starDetectionMethod, setStarDetectionMethod] = useState<StarDetectionMethod>('general');
   const [stackingQuality, setStackingQuality] = useState<StackingQuality>('standard');
   const [planetaryStackingQuality, setPlanetaryStackingQuality] = useState<number>(50);

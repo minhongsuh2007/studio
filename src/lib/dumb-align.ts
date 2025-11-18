@@ -1,3 +1,4 @@
+
 'use client';
 
 import type { Star, StackingMode, Transform, ImageQueueEntry } from '@/lib/astro-align';
@@ -11,6 +12,7 @@ interface ModelPackage {
         means: number[];
         stds: number[];
     };
+    categories: string[];
 }
 
 
@@ -245,6 +247,7 @@ function getTransform(refPoints: Star[], targetPoints: Star[]): Transform | null
     
     let sum_xt = 0, sum_yt = 0, sum_xt_sq = 0, sum_yt_sq = 0;
     let sum_xt_xr = 0, sum_yt_yr = 0, sum_xt_yr = 0, sum_yt_xr = 0;
+    let sum_xr = 0, sum_yr = 0;
 
     for(let i=0; i<n; i++) {
         const xr = refPoints[i].x;
@@ -254,6 +257,8 @@ function getTransform(refPoints: Star[], targetPoints: Star[]): Transform | null
         
         sum_xt += xt;
         sum_yt += yt;
+        sum_xr += xr;
+        sum_yr += yr;
         sum_xt_sq += xt*xt;
         sum_yt_sq += yt*yt;
         sum_xt_xr += xt*xr;
@@ -265,14 +270,14 @@ function getTransform(refPoints: Star[], targetPoints: Star[]): Transform | null
     const D = n * (sum_xt_sq + sum_yt_sq) - (sum_xt*sum_xt + sum_yt*sum_yt);
     if (Math.abs(D) < 1e-6) return null; // Avoid division by zero, points are likely collinear
 
-    const a_num = n * (sum_xt_xr + sum_yt_yr) - (sum_xt * refPoints.reduce((s,p)=>s+p.x,0) + sum_yt * refPoints.reduce((s,p)=>s+p.y,0));
+    const a_num = n * (sum_xt_xr + sum_yt_yr) - (sum_xt * sum_xr + sum_yt * sum_yr);
     const a = a_num / D;
 
-    const b_num = n * (sum_yt_xr - sum_xt_yr) + (sum_xt * refPoints.reduce((s,p)=>s+p.y,0) - sum_yt * refPoints.reduce((s,p)=>s+p.x,0));
+    const b_num = n * (sum_yt_xr - sum_xt_yr) + (sum_xt * sum_yr - sum_yt * sum_xr);
     const b = b_num / D;
     
-    const tx = (1/n) * (refPoints.reduce((s,p)=>s+p.x,0) - a*sum_xt - b*sum_yt);
-    const ty = (1/n) * (refPoints.reduce((s,p)=>s+p.y,0) + b*sum_xt - a*sum_yt);
+    const tx = (1/n) * (sum_xr - a*sum_xt - b*sum_yt);
+    const ty = (1/n) * (sum_yr + b*sum_xt - a*sum_yt);
     
     const scale = Math.hypot(a, b);
     const angle = Math.atan2(b, a);
@@ -318,34 +323,30 @@ async function getAiVerifiedPixels(
     const aiVerifiedStars: Star[] = [];
     const {data, width, height} = entry.imageData;
 
-    for (const cluster of clusters) {
-        if (cluster.length === 1) {
+    const allRankedStars: {star: Star, probability: number}[] = [];
+
+    for(const catId of modelPackage.categories) {
+        for (const cluster of clusters) {
             const { rankedStars } = await findMatchingStars({
                 imageData: { data: Array.from(data), width, height },
                 candidates: cluster,
                 model: modelPackage.model,
                 normalization: modelPackage.normalization,
+                modelCategories: modelPackage.categories,
+                targetCategoryId: catId,
             });
-            if (rankedStars && rankedStars.length > 0 && rankedStars[0].probability > 0.1) {
-                aiVerifiedStars.push(rankedStars[0].star);
-            }
-
-        } else {
-             const { rankedStars } = await findMatchingStars({
-                imageData: { data: Array.from(data), width, height },
-                candidates: cluster,
-                model: modelPackage.model,
-                normalization: modelPackage.normalization,
-            });
-
             if (rankedStars && rankedStars.length > 0) {
-                aiVerifiedStars.push(rankedStars[0].star);
+                allRankedStars.push(...rankedStars);
             }
         }
     }
     
-    addLog(`[DUMB-AI] AI selected ${aiVerifiedStars.length} final candidates from clusters.`);
-    return aiVerifiedStars;
+    allRankedStars.sort((a,b) => b.probability - a.probability);
+
+    const topStars = allRankedStars.slice(0, 50).map(rs => rs.star);
+    
+    addLog(`[DUMB-AI] AI selected ${topStars.length} final candidates from clusters.`);
+    return topStars;
 }
 
 
