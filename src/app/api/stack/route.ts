@@ -1,7 +1,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { stackImages } from '@/app/actions';
-import { AlignmentMethod, StackingMode, type ImageQueueEntry as ServerImageQueueEntry, detectBrightBlobs } from '@/lib/server-align';
+import { AlignmentMethod, StackingMode, type ImageQueueEntry as ServerImageQueueEntry } from '@/lib/server-align';
 import sharp from 'sharp';
 
 async function decodeImage(
@@ -30,13 +30,11 @@ async function decodeImage(
       height,
     };
 
-    const stars = detectBrightBlobs(imageData, width, height, 180, log);
-
     return {
       id,
       // @ts-ignore We are creating a server-side stand-in
       imageData: imageData,
-      detectedStars: stars,
+      detectedStars: [], // Star detection now happens in the alignment function on server
       analysisDimensions: { width, height },
     };
   } catch (error) {
@@ -93,7 +91,7 @@ export async function POST(req: NextRequest) {
         );
         resolvedImages = await Promise.all(imagePromises);
     } else {
-         return NextResponse.json({ error: 'No images or image URLs provided.' }, { status: 400 });
+         return NextResponse.json({ error: 'No images or image URLs provided.', logs: [] }, { status: 400 });
     }
 
     const result = await stackImages({
@@ -121,8 +119,6 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'An unknown error occurred on the server.';
     console.error('[API_ROUTE_ERROR]', error);
-    return NextResponse.json({ error: 'Failed to process the request.', details: errorMessage }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to process the request.', details: errorMessage, logs: [`[FATAL] ${errorMessage}`] }, { status: 500 });
   }
 }
-
-    
