@@ -24,12 +24,14 @@ const nextConfig = {
     ],
   },
   webpack: (config, { isServer }) => {
-    // 'fs' module not found error in tiff.js and other libraries.
-    // This fallback prevents the error by telling webpack to ignore 'fs' resolution.
-    config.resolve.fallback = {
-        ...config.resolve.fallback,
-        fs: false
-    };
+    // This is required to make `sharp` work correctly with Next.js
+    // 'fs' is a server-side module, and this prevents it from being bundled into the client.
+    if (!isServer) {
+        config.resolve.fallback = {
+            ...config.resolve.fallback,
+            fs: false
+        };
+    }
 
     return config;
   },

@@ -16,14 +16,10 @@ interface ImageUploadAreaProps {
   buttonText?: string;
 }
 
-// Restrict to standard web formats to avoid wasm-imagemagick worker issues.
-export const STANDARD_IMAGE_FORMATS: Accept = {
-  'image/jpeg': ['.jpeg', '.jpg'],
-  'image/png': ['.png'],
-  'image/gif': ['.gif'],
-  'image/webp': ['.webp'],
-  'image/tiff': ['.tif', '.tiff'],
-  'image/fits': ['.fits'],
+// Accept all image types, as the browser will attempt to read them.
+// Server-side processing will handle failures gracefully.
+export const ALL_IMAGE_FORMATS: Accept = {
+  'image/*': [],
 };
 
 
@@ -31,7 +27,7 @@ export function ImageUploadArea({
   onFilesAdded, 
   isProcessing, 
   multiple = true, 
-  accept = STANDARD_IMAGE_FORMATS,
+  accept = ALL_IMAGE_FORMATS,
   dropzoneText,
   buttonText
 }: ImageUploadAreaProps) {

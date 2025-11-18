@@ -40,7 +40,6 @@ import { stackImagesWithUrls } from '@/app/actions';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { ImageQueueEntry, CalibrationFrameEntry, StarCategory, LearnedPattern, LabeledStar, TestResultStar, PreviewFitMode, OutputFormat, AlignmentMethod, StackingQuality, StarDetectionMethod, StarCharacteristics } from '@/types';
 import { detectStarsAdvanced } from '@/lib/siril-like-detection';
-import TIFF from 'tiff.js';
 
 
 export const dynamic = 'force-static';
@@ -136,9 +135,9 @@ export default function AstroStackerPage() {
   
   useEffect(() => {
     if (serverStackState.logs.length > logs.length) {
-      serverStackState.logs.forEach(log => addLog(log));
+      serverStackState.logs.slice(logs.length).forEach(log => addLog(log));
     }
-    if (serverStackState.message) {
+    if (serverStackState.message && !logs.some(l => l.message.includes(serverStackState.message))) {
       addLog(`[SERVER] ${serverStackState.message}`);
       if (!serverStackState.success) {
         window.alert(`Server Stacking Failed: ${serverStackState.message}`);
@@ -150,7 +149,9 @@ export default function AstroStackerPage() {
         setEditedPreviewUrl(serverStackState.stackedImageUrl);
         handleResetAdjustments();
     }
-    setIsServerProcessing(false);
+    if (serverStackState.message || serverStackState.logs.length > 0) {
+      setIsServerProcessing(false);
+    }
   }, [serverStackState]);
 
   const addLog = useCallback((message: string) => {
@@ -172,52 +173,17 @@ export default function AstroStackerPage() {
   const fileToDataURL = useCallback((file: File): Promise<string> => {
     return new Promise((resolve, reject) => {
         addLog(`[fileToDataURL] Processing ${file.name} (type: ${file.type})`);
-        const standardImageTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
-        const tiffLikeTypes = ['image/tiff', 'image/fits'];
-
-        if (standardImageTypes.includes(file.type)) {
-            addLog(`[fileToDataURL] Using standard FileReader for ${file.name}`);
-            const reader = new FileReader();
-            reader.onload = (e) => {
-                if (e.target?.result) {
-                    addLog(`[fileToDataURL] FileReader success for ${file.name}.`);
-                    resolve(e.target.result as string);
-                } else {
-                    reject(new Error(`FileReader failed for ${file.name}. Result was empty.`));
-                }
-            };
-            reader.onerror = (e) => reject(new Error(`Error reading file ${file.name} with FileReader.`));
-            reader.readAsDataURL(file);
-        } else if (tiffLikeTypes.includes(file.type) || file.name.toLowerCase().endsWith('.fits')) {
-            addLog(`[fileToDataURL] Using tiff.js for ${file.name}`);
-            const reader = new FileReader();
-            reader.onload = (e) => {
-                if (e.target?.result) {
-                    try {
-                        const tiff = new TIFF({ buffer: e.target.result as ArrayBuffer });
-                        const canvas = tiff.toCanvas();
-                        if (canvas) {
-                            addLog(`[fileToDataURL] tiff.js successfully decoded ${file.name}.`);
-                            resolve(canvas.toDataURL());
-                        } else {
-                            reject(new Error(`tiff.js failed to produce a canvas for ${file.name}.`));
-                        }
-                    } catch (err) {
-                        const errorMsg = err instanceof Error ? err.message : String(err);
-                        addLog(`[ERROR] tiff.js decoding failed for ${file.name}: ${errorMsg}`);
-                        reject(new Error(`tiff.js decoding failed for ${file.name}: ${errorMsg}`));
-                    }
-                } else {
-                    reject(new Error(`FileReader failed for ${file.name}. Result was empty.`));
-                }
-            };
-            reader.onerror = (e) => reject(new Error(`Error reading file ${file.name} for tiff.js.`));
-            reader.readAsArrayBuffer(file);
-        } else {
-            const errorMsg = `File type '${file.type}' is not supported for direct processing. Please use a standard image format (JPG, PNG) or FITS/TIFF.`;
-            addLog(`[ERROR] ${errorMsg}`);
-            reject(new Error(errorMsg));
-        }
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            if (e.target?.result) {
+                addLog(`[fileToDataURL] FileReader success for ${file.name}.`);
+                resolve(e.target.result as string);
+            } else {
+                reject(new Error(`FileReader failed for ${file.name}. Result was empty.`));
+            }
+        };
+        reader.onerror = (e) => reject(new Error(`Error reading file ${file.name} with FileReader.`));
+        reader.readAsDataURL(file);
     });
   }, [addLog]);
 
@@ -1307,7 +1273,6 @@ export default function AstroStackerPage() {
                             {isServerProcessing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Server className="mr-2 h-4 w-4" />}
                             Stack from URLs
                         </Button>
-                        {isServerProcessing && <Progress value={progressPercent} className="w-full h-2 mt-2" />}
                      </form>
                   </TabsContent>
                 </Tabs>
@@ -1406,7 +1371,7 @@ export default function AstroStackerPage() {
                 </Accordion>
 
 
-                {isProcessingStack && progressPercent > 0 && (
+                {(isProcessingStack || isServerProcessing) && progressPercent > 0 && (
                   <div className="space-y-2 my-4">
                     <Progress value={progressPercent} className="w-full h-3" />
                     <p className="text-sm text-center text-muted-foreground">{t('stackingProgress', {progressPercent: Math.round(progressPercent)})}</p>

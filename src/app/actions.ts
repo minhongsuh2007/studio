@@ -1,3 +1,4 @@
+
 'use server';
 
 import {
@@ -12,6 +13,7 @@ import {
 import sharp from 'sharp';
 
 // Helper to create an ImageData-like object that the alignment functions expect.
+// This is a server-side interpretation.
 interface ServerImageData {
   data: Uint8ClampedArray;
   width: number;
@@ -25,7 +27,6 @@ async function fetchAndDecodeImage(
 ): Promise<ImageQueueEntry | null> {
   try {
     log(`[FETCH] Downloading: ${url}`);
-    // Use a more robust User-Agent
     const response = await fetch(url, {
         headers: {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
@@ -37,8 +38,9 @@ async function fetchAndDecodeImage(
       );
     }
     const buffer = await response.arrayBuffer();
-
     log(`[DECODE] Processing image from ${url}`);
+    
+    // Use sharp to decode the image buffer
     const image = sharp(Buffer.from(buffer));
     const metadata = await image.metadata();
     const { width, height } = metadata;
@@ -84,15 +86,15 @@ export async function stackImagesWithUrls(prevState: any, formData: FormData) {
     const alignmentMethod = (formData.get('alignmentMethod') as AlignmentMethod) || 'standard';
     const stackingMode = (formData.get('stackingMode') as StackingMode) || 'median';
 
+    if (!rawUrls || rawUrls.trim() === '') {
+       return { success: false, message: 'No image URLs provided.', logs };
+    }
+    
     const imageUrls = rawUrls.split('\n').filter(url => url.trim() !== '');
 
     addLog(`Received ${imageUrls.length} URLs. Alignment: ${alignmentMethod}, Mode: ${stackingMode}.`);
-    if (!imageUrls || imageUrls.length < 2) {
-      return {
-        success: false,
-        message: 'At least two image URLs are required.',
-        logs,
-      };
+    if (imageUrls.length < 2) {
+      return { success: false, message: 'At least two image URLs are required.', logs };
     }
 
     addLog('Starting image download and decoding process...');
@@ -118,6 +120,7 @@ export async function stackImagesWithUrls(prevState: any, formData: FormData) {
 
     let stackedImageBuffer: Uint8ClampedArray;
     const setProgress = (p: number) => {
+      // Progress reporting on the server can be simple logging for now
       addLog(`Stacking progress: ${Math.round(p * 100)}%`);
     };
 
@@ -136,7 +139,7 @@ export async function stackImagesWithUrls(prevState: any, formData: FormData) {
           stackingMode,
           addLog,
           setProgress,
-          80
+          80 // Default quality for now
         );
         break;
       case 'dumb':
@@ -151,7 +154,7 @@ export async function stackImagesWithUrls(prevState: any, formData: FormData) {
       default:
         stackedImageBuffer = await alignAndStack(
           imageEntries,
-          [],
+          [], // No manual stars from server
           stackingMode,
           setProgress,
           addLog
@@ -161,11 +164,12 @@ export async function stackImagesWithUrls(prevState: any, formData: FormData) {
     addLog('Alignment and stacking complete.');
 
     const { width, height } = imageEntries[0].analysisDimensions;
+    // Use sharp to encode the final raw pixel data back to a PNG buffer
     const finalImage = await sharp(Buffer.from(stackedImageBuffer), {
       raw: {
         width: width,
         height: height,
-        channels: 4,
+        channels: 4, // RGBA
       },
     })
       .png()
