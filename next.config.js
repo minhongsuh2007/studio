@@ -23,12 +23,12 @@ const nextConfig = {
     ],
   },
   webpack: (config, { isServer }) => {
-    // 'fs' module not found error in tiff.js
-    if (!isServer) {
-        config.resolve.fallback = {
-            fs: false
-        };
-    }
+    // 'fs' module not found error in tiff.js and other libraries.
+    // This fallback prevents the error by telling webpack to ignore 'fs' resolution.
+    config.resolve.fallback = {
+        ...config.resolve.fallback,
+        fs: false
+    };
 
     return config;
   },
