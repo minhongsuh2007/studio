@@ -40,6 +40,7 @@ import { stackImagesWithUrls } from '@/app/actions';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { ImageQueueEntry, CalibrationFrameEntry, StarCategory, LearnedPattern, LabeledStar, TestResultStar, PreviewFitMode, OutputFormat, AlignmentMethod, StackingQuality, StarDetectionMethod, StarCharacteristics } from '@/types';
 import { detectStarsAdvanced } from '@/lib/siril-like-detection';
+import TIFF from 'tiff.js';
 
 
 export const dynamic = 'force-static';
@@ -172,6 +173,7 @@ export default function AstroStackerPage() {
     return new Promise((resolve, reject) => {
         addLog(`[fileToDataURL] Processing ${file.name} (type: ${file.type})`);
         const standardImageTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+        const tiffLikeTypes = ['image/tiff', 'image/fits'];
 
         const processWithFileReader = (file: File) => {
             addLog(`[fileToDataURL] Using standard FileReader for ${file.name}`);
@@ -188,12 +190,34 @@ export default function AstroStackerPage() {
             reader.readAsDataURL(file);
         };
 
-        // For this version, we only support standard browser-readable formats.
+        const processWithTiffJs = (file: File) => {
+            addLog(`[fileToDataURL] Using tiff.js for ${file.name}`);
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    const buffer = e.target?.result;
+                    if (!buffer) throw new Error('File buffer is empty.');
+                    const tiff = new TIFF({ buffer });
+                    const canvas = tiff.toCanvas();
+                    if (!canvas) throw new Error('tiff.js failed to produce a canvas.');
+                    resolve(canvas.toDataURL('image/png'));
+                } catch (err) {
+                    const errorMsg = err instanceof Error ? err.message : String(err);
+                    addLog(`[ERROR] tiff.js failed for ${file.name}: ${errorMsg}`);
+                    reject(new Error(`Failed to decode TIFF/FITS file ${file.name}: ${errorMsg}`));
+                }
+            };
+            reader.onerror = (e) => reject(new Error(`Error reading file ${file.name} for tiff.js.`));
+            reader.readAsArrayBuffer(file);
+        };
+
         if (standardImageTypes.includes(file.type)) {
             processWithFileReader(file);
+        } else if (tiffLikeTypes.includes(file.type) || file.name.toLowerCase().endsWith('.fits')) {
+            processWithTiffJs(file);
         } else {
              // If not a standard type, we inform the user it's unsupported.
-            const errorMsg = `File type '${file.type}' is not supported for direct processing. Please use standard web formats like JPG or PNG.`;
+            const errorMsg = `File type '${file.type}' is not supported for direct processing. Please use standard web formats or FITS/TIFF.`;
             addLog(`[ERROR] ${errorMsg}`);
             reject(new Error(errorMsg));
         }
@@ -1643,3 +1667,4 @@ export default function AstroStackerPage() {
     </div>
   );
 }
+

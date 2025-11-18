@@ -22,6 +22,8 @@ export const ALL_ACCEPTED_FORMATS: Accept = {
   'image/png': ['.png'],
   'image/gif': ['.gif'],
   'image/webp': ['.webp'],
+  'image/tiff': ['.tif', '.tiff'],
+  'image/fits': ['.fit', '.fits'],
 };
 
 
@@ -93,3 +95,4 @@ export function ImageUploadArea({
 }
 
     
+

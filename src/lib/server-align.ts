@@ -2,8 +2,6 @@
 // This is a new server-side-only alignment library, consolidating logic for the API.
 // It is adapted from the client-side libraries.
 
-import sharp from 'sharp';
-
 // --- Types ---
 export type Point = { x: number; y: number };
 export type Star = Point & { brightness: number; size: number };
