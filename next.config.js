@@ -22,6 +22,16 @@ const nextConfig = {
       }
     ],
   },
+  webpack: (config, { isServer }) => {
+    // 'fs' module not found error in tiff.js
+    if (!isServer) {
+        config.resolve.fallback = {
+            fs: false
+        };
+    }
+
+    return config;
+  },
 };
 
 module.exports = nextConfig;
