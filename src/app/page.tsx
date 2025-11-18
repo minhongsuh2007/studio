@@ -19,7 +19,7 @@ import { ImagePreview } from '@/components/astrostacker/ImagePreview';
 import { ImagePostProcessEditor } from '@/components/astrostacker/ImagePostProcessEditor';
 import { TutorialDialog } from '@/components/astrostacker/TutorialDialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Star as StarIcon, Link, ListChecks, CheckCircle, RefreshCcw, Edit3, Loader2, Orbit, Trash2, Wand2, ShieldOff, Layers, Baseline, X, AlertTriangle, BrainCircuit, TestTube2, Eraser, Download, Upload, Cpu, AlertCircle, Moon, Sun, Sparkles, UserCheck, Zap, Diamond, Globe, Camera, Video, Play, StopCircle, Puzzle, Server, RotateCcw, Palette } from 'lucide-react';
+import { Star as StarIcon, Link, ListChecks, CheckCircle, RefreshCcw, Edit3, Loader2, Orbit, Trash2, Wand2, ShieldOff, Layers, Baseline, X, AlertTriangle, BrainCircuit, TestTube2, Eraser, Download, Upload, Cpu, AlertCircle, Moon, Sun, Sparkles, UserCheck, Zap, Diamond, Globe, Camera, Video, Play, StopCircle, Puzzle, Server, RotateCcw, Palette, Workflow } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
@@ -175,7 +175,7 @@ export default function AstroStackerPage() {
         const standardImageTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
         const tiffLikeTypes = ['image/tiff', 'image/fits'];
 
-        const processWithFileReader = (file: File) => {
+        if (standardImageTypes.includes(file.type)) {
             addLog(`[fileToDataURL] Using standard FileReader for ${file.name}`);
             const reader = new FileReader();
             reader.onload = (e) => {
@@ -188,41 +188,38 @@ export default function AstroStackerPage() {
             };
             reader.onerror = (e) => reject(new Error(`Error reading file ${file.name} with FileReader.`));
             reader.readAsDataURL(file);
-        };
-
-        const processWithTiffJs = (file: File) => {
+        } else if (tiffLikeTypes.includes(file.type) || file.name.toLowerCase().endsWith('.fits')) {
             addLog(`[fileToDataURL] Using tiff.js for ${file.name}`);
             const reader = new FileReader();
             reader.onload = (e) => {
-                try {
-                    const buffer = e.target?.result;
-                    if (!buffer) throw new Error('File buffer is empty.');
-                    const tiff = new TIFF({ buffer });
-                    const canvas = tiff.toCanvas();
-                    if (!canvas) throw new Error('tiff.js failed to produce a canvas.');
-                    resolve(canvas.toDataURL('image/png'));
-                } catch (err) {
-                    const errorMsg = err instanceof Error ? err.message : String(err);
-                    addLog(`[ERROR] tiff.js failed for ${file.name}: ${errorMsg}`);
-                    reject(new Error(`Failed to decode TIFF/FITS file ${file.name}: ${errorMsg}`));
+                if (e.target?.result) {
+                    try {
+                        const tiff = new TIFF({ buffer: e.target.result as ArrayBuffer });
+                        const canvas = tiff.toCanvas();
+                        if (canvas) {
+                            addLog(`[fileToDataURL] tiff.js successfully decoded ${file.name}.`);
+                            resolve(canvas.toDataURL());
+                        } else {
+                            reject(new Error(`tiff.js failed to produce a canvas for ${file.name}.`));
+                        }
+                    } catch (err) {
+                        const errorMsg = err instanceof Error ? err.message : String(err);
+                        addLog(`[ERROR] tiff.js decoding failed for ${file.name}: ${errorMsg}`);
+                        reject(new Error(`tiff.js decoding failed for ${file.name}: ${errorMsg}`));
+                    }
+                } else {
+                    reject(new Error(`FileReader failed for ${file.name}. Result was empty.`));
                 }
             };
             reader.onerror = (e) => reject(new Error(`Error reading file ${file.name} for tiff.js.`));
             reader.readAsArrayBuffer(file);
-        };
-
-        if (standardImageTypes.includes(file.type)) {
-            processWithFileReader(file);
-        } else if (tiffLikeTypes.includes(file.type) || file.name.toLowerCase().endsWith('.fits')) {
-            processWithTiffJs(file);
         } else {
-             // If not a standard type, we inform the user it's unsupported.
-            const errorMsg = `File type '${file.type}' is not supported for direct processing. Please use standard web formats or FITS/TIFF.`;
+            const errorMsg = `File type '${file.type}' is not supported for direct processing. Please use a standard image format (JPG, PNG) or FITS/TIFF.`;
             addLog(`[ERROR] ${errorMsg}`);
             reject(new Error(errorMsg));
         }
     });
-}, [addLog]);
+  }, [addLog]);
 
   // Load data from local storage on mount
   useEffect(() => {
@@ -1291,8 +1288,8 @@ export default function AstroStackerPage() {
                     <TabsTrigger value="local"><Upload className="mr-2 h-4 w-4" /> From Device</TabsTrigger>
                     <TabsTrigger value="url"><Server className="mr-2 h-4 w-4" /> From URLs</TabsTrigger>
                   </TabsList>
-                  <TabsContent value="local" className="mt-4">
-                    <ImageUploadArea onFilesAdded={handleFilesAdded} isProcessing={isUiDisabled || !isFileApiReady} multiple={true} />
+                  <TabsContent value="local" className="mt-4 space-y-4">
+                     <ImageUploadArea onFilesAdded={handleFilesAdded} isProcessing={isUiDisabled || !isFileApiReady} multiple={true} />
                   </TabsContent>
                   <TabsContent value="url" className="mt-4">
                      <form ref={formRef} action={formAction} onSubmit={() => setIsServerProcessing(true)} className="space-y-4">
@@ -1667,4 +1664,3 @@ export default function AstroStackerPage() {
     </div>
   );
 }
-

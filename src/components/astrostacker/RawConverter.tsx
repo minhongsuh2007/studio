@@ -2,12 +2,6 @@
 "use client";
 
 import { useState, useCallback } from 'react';
-import {
-  ImageMagick,
-  initialize,
-  MagickFormat,
-  MagickRead,
-} from '@imagemagick/magick-wasm';
 import { useDropzone, type Accept } from 'react-dropzone';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
@@ -44,63 +38,18 @@ export function RawConverter({ isOpen, onClose, onFilesConverted }: RawConverter
   const [filesToConvert, setFilesToConvert] = useState<File[]>([]);
   const [convertedFiles, setConvertedFiles] = useState<ConvertedFile[]>([]);
   const [isConverting, setIsConverting] = useState(false);
-  const [isInitialized, setIsInitialized] = useState(false);
+  const [isInitialized, setIsInitialized] = useState(true); // Assume initialized
   const [progress, setProgress] = useState(0);
 
-  // Initialize ImageMagick WASM
-  useState(() => {
-    async function init() {
-        await initialize();
-        setIsInitialized(true);
-    }
-    init();
-  });
+  // ImageMagick logic is removed. This component is now a placeholder.
 
   const handleConvert = async () => {
-    if (filesToConvert.length === 0) return;
-    setIsConverting(true);
-    setConvertedFiles([]);
-    setProgress(0);
-
-    const results: ConvertedFile[] = [];
-
-    for (const [index, file] of filesToConvert.entries()) {
-      try {
-        const buffer = await file.arrayBuffer();
-        const data = new Uint8Array(buffer);
-
-        const result = await ImageMagick.read(data, async (image) => {
-            image.autoOrient();
-            await image.write(MagickFormat.Png, (out) => {
-              const blob = new Blob([out], { type: 'image/png' });
-              results.push({
-                originalName: file.name,
-                blob: blob,
-                dataUrl: URL.createObjectURL(blob),
-              });
-            });
-        });
-      } catch (error) {
-        console.error(`Error converting ${file.name}:`, error);
-        // We just skip the file if it fails
-      } finally {
-        setProgress(((index + 1) / filesToConvert.length) * 100);
-      }
-    }
-    
-    setConvertedFiles(results);
-    setIsConverting(false);
+    // This functionality is now handled directly in page.tsx
+    onClose();
   };
   
   const handleDownloadAll = () => {
-    convertedFiles.forEach(file => {
-      const link = document.createElement('a');
-      link.href = file.dataUrl;
-      link.download = `${file.originalName.split('.').slice(0, -1).join('.')}.png`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    });
+    // This functionality is now handled directly in page.tsx
   };
 
   const handleAddToQueue = () => {
@@ -111,7 +60,9 @@ export function RawConverter({ isOpen, onClose, onFilesConverted }: RawConverter
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     setFilesToConvert(prev => [...prev, ...acceptedFiles]);
-  }, []);
+    onFilesConverted(acceptedFiles); // Immediately pass to main component
+    onClose(); // Close the dialog after selection
+  }, [onFilesConverted, onClose]);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
@@ -124,75 +75,22 @@ export function RawConverter({ isOpen, onClose, onFilesConverted }: RawConverter
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-3xl">
         <DialogHeader>
-          <DialogTitle>RAW File Converter</DialogTitle>
+          <DialogTitle>RAW File Uploader</DialogTitle>
           <DialogDescription>
-            Convert FITS, CR2, NEF, and other RAW formats to PNG before stacking.
-            This tool uses ImageMagick running directly in your browser.
+             Upload FITS, CR2, NEF, and other RAW formats. They will be processed directly.
           </DialogDescription>
         </DialogHeader>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 py-4">
-          <div className="space-y-4">
-            <h3 className="font-semibold">Step 1: Upload RAW Files</h3>
-             {!isInitialized ? (
-                <div className="p-6 border-2 border-dashed rounded-lg flex flex-col items-center justify-center text-center h-48">
-                    <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-                    <p className="mt-2 text-sm text-muted-foreground">Initializing ImageMagick Engine...</p>
-                </div>
-            ) : (
-                <div
-                    {...getRootProps()}
-                    className={`p-6 border-2 border-dashed rounded-lg cursor-pointer transition-colors duration-200 ease-in-out h-48 flex flex-col items-center justify-center text-center
-                        ${isDragActive ? 'border-accent bg-accent/10' : 'border-input hover:border-accent/70'}`}
-                >
-                    <input {...getInputProps()} />
-                    <UploadCloud className={`w-10 h-10 ${isDragActive ? 'text-accent' : 'text-muted-foreground'}`} />
-                    <p className="mt-2 text-sm text-muted-foreground">Drag & drop files here, or click to select</p>
-                </div>
-            )}
-             {filesToConvert.length > 0 && (
-                <ScrollArea className="h-32 border rounded-md p-2">
-                    <ul className="text-sm space-y-1">
-                    {filesToConvert.map((file, i) => (
-                        <li key={i} className="truncate">{file.name}</li>
-                    ))}
-                    </ul>
-                </ScrollArea>
-            )}
-            <Button onClick={handleConvert} disabled={isConverting || filesToConvert.length === 0 || !isInitialized} className="w-full">
-              {isConverting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-              Convert {filesToConvert.length} File(s) to PNG
-            </Button>
-            {isConverting && <Progress value={progress} className="w-full" />}
-          </div>
-          <div className="space-y-4">
-            <h3 className="font-semibold">Step 2: Download or Add to Queue</h3>
-            {convertedFiles.length > 0 ? (
-                <>
-                <ScrollArea className="h-48 border rounded-md p-2">
-                    <ul className="text-sm space-y-1">
-                        {convertedFiles.map((file, i) => (
-                            <li key={i} className="truncate text-green-500 flex items-center gap-2">
-                                <CheckCircle className="h-4 w-4" />
-                                {file.originalName}.png
-                            </li>
-                        ))}
-                    </ul>
-                </ScrollArea>
-                <div className="grid grid-cols-2 gap-2">
-                    <Button onClick={handleDownloadAll} variant="secondary">
-                        <Download className="mr-2 h-4 w-4" /> Download All
-                    </Button>
-                    <Button onClick={handleAddToQueue}>
-                        Add to Stacking Queue
-                    </Button>
-                </div>
-                </>
-            ) : (
-                <div className="p-6 border-2 border-dashed rounded-lg flex flex-col items-center justify-center text-center h-full">
-                    <p className="text-sm text-muted-foreground">Converted PNG files will appear here.</p>
-                </div>
-            )}
-          </div>
+        <div
+            {...getRootProps()}
+            className={`p-12 border-2 border-dashed rounded-lg cursor-pointer transition-colors duration-200 ease-in-out
+                ${isDragActive ? 'border-accent bg-accent/10' : 'border-input hover:border-accent/70'}`}
+        >
+            <input {...getInputProps()} />
+            <div className="flex flex-col items-center justify-center text-center">
+                <UploadCloud className={`w-12 h-12 ${isDragActive ? 'text-accent' : 'text-muted-foreground'}`} />
+                <p className="mt-4 text-lg text-muted-foreground">Drag & drop RAW files here, or click to select</p>
+                <p className="text-xs text-muted-foreground mt-1">Files will be added directly to the queue.</p>
+            </div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Close</Button>
@@ -201,4 +99,3 @@ export function RawConverter({ isOpen, onClose, onFilesConverted }: RawConverter
     </Dialog>
   );
 }
-
