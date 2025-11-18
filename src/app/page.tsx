@@ -358,138 +358,135 @@ export default function AstroStackerPage() {
   const handleFilesAdded = useCallback(async (files: File[]) => {
     addLog(`Attempting to add ${files.length} file(s).`);
   
-    const webImageFiles: File[] = [];
-    const fitsFiles: File[] = [];
-  
     for (const file of files) {
-      const fileType = file.type;
       const fileName = file.name.toLowerCase();
-      if (fileType === 'image/fits' || fileName.endsWith('.fits') || fileName.endsWith('.fit')) {
-        addLog(`[FITS DETECTED] Queueing ${file.name} for server-side processing.`);
-        fitsFiles.push(file);
-      } else if (fileType.startsWith('image/')) {
-        webImageFiles.push(file);
+      const isFits = file.type === 'image/fits' || fileName.endsWith('.fits') || fileName.endsWith('.fit');
+  
+      if (isFits) {
+        addLog(`[FITS-WORKER] Processing ${file.name} with Web Worker.`);
+        const worker = new Worker(new URL('../workers/fits-parser.worker.ts', import.meta.url));
+        
+        worker.onmessage = (e) => {
+          if (e.data.error) {
+            addLog(`[FITS-WORKER-ERROR] for ${file.name}: ${e.data.error}`);
+            worker.terminate();
+            return;
+          }
+          
+          const { header, width, height, gray } = e.data;
+          addLog(`[FITS-WORKER] Successfully parsed ${file.name} (${width}x${height})`);
+
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            addLog(`[ERROR] Could not create canvas context for FITS image.`);
+            worker.terminate();
+            return;
+          }
+          
+          const imgData = ctx.createImageData(width, height);
+          for (let i = 0, j = 0; i < gray.length; i++, j += 4) {
+            const val = gray[i];
+            imgData.data[j] = val;
+            imgData.data[j+1] = val;
+            imgData.data[j+2] = val;
+            imgData.data[j+3] = 255;
+          }
+          
+          const originalPreviewUrl = canvas.toDataURL();
+  
+          const newEntry: ImageQueueEntry = {
+            id: `${file.name}-${Date.now()}`,
+            file,
+            originalPreviewUrl,
+            analysisPreviewUrl: originalPreviewUrl,
+            isAnalyzing: false,
+            isAnalyzed: false,
+            originalDimensions: { width, height },
+            analysisDimensions: { width, height },
+            imageData: null,
+            detectedStars: [],
+            manualStars: [],
+          };
+          
+          setAllImageStarData(prev => [...prev, newEntry]);
+          analyzeImageForStars(newEntry);
+          worker.terminate();
+        };
+
+        const arrayBuffer = await file.arrayBuffer();
+        worker.postMessage(arrayBuffer, [arrayBuffer]);
+
+      } else if (file.type.startsWith('image/')) {
+        // Standard image processing logic
+        const newEntry = await (async (): Promise<ImageQueueEntry | null> => {
+          try {
+            const originalPreviewUrl = await fileToDataURL(file);
+            const img = new Image();
+            const originalDimensions = await new Promise<{ width: number; height: number }>((resolve, reject) => {
+              img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
+              img.onerror = () => reject(new Error("Could not load image to get dimensions."));
+              img.src = originalPreviewUrl;
+            });
+    
+            let analysisDimensions = { ...originalDimensions };
+            let analysisPreviewUrl = originalPreviewUrl;
+    
+            const isLarge = (originalDimensions.width * originalDimensions.height) / 1_000_000 > IS_LARGE_IMAGE_THRESHOLD_MP;
+            if (isLarge) {
+              addLog(`[INFO] Image ${file.name} is large (${originalDimensions.width}x${originalDimensions.height}). It will be downscaled for analysis.`);
+              const canvas = document.createElement('canvas');
+              const ctx = canvas.getContext('2d');
+              if (ctx) {
+                  let targetWidth = originalDimensions.width, targetHeight = originalDimensions.height;
+                  if (originalDimensions.width > MAX_DIMENSION_DOWNSCALED || originalDimensions.height > MAX_DIMENSION_DOWNSCALED) {
+                      if (originalDimensions.width > originalDimensions.height) {
+                          targetWidth = MAX_DIMENSION_DOWNSCALED;
+                          targetHeight = Math.round((originalDimensions.height / originalDimensions.width) * MAX_DIMENSION_DOWNSCALED);
+                      } else {
+                          targetHeight = MAX_DIMENSION_DOWNSCALED;
+                          targetWidth = Math.round((originalDimensions.width / originalDimensions.height) * MAX_DIMENSION_DOWNSCALED);
+                      }
+                  }
+                  canvas.width = targetWidth;
+                  canvas.height = targetHeight;
+                  ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
+                  analysisPreviewUrl = canvas.toDataURL('image/png');
+                  analysisDimensions = { width: targetWidth, height: targetHeight };
+                  addLog(`Downscaled ${file.name} to ${targetWidth}x${targetHeight} for analysis.`);
+              }
+            }
+      
+            return {
+              id: `${file.name}-${Date.now()}`,
+              file,
+              originalPreviewUrl,
+              analysisPreviewUrl,
+              isAnalyzing: false,
+              isAnalyzed: false,
+              originalDimensions,
+              analysisDimensions,
+              imageData: null,
+              detectedStars: [],
+              manualStars: [],
+            };
+          } catch (error) {
+            addLog(`[ERROR] Could not process ${file.name}: ${error instanceof Error ? error.message : "Unknown error"}`);
+            return null;
+          }
+        })();
+        
+        if (newEntry) {
+          setAllImageStarData(prev => [...prev, newEntry]);
+          analyzeImageForStars(newEntry);
+        }
       } else {
         addLog(`[UNSUPPORTED] Skipping file with unknown type: ${file.name} (${file.type})`);
       }
     }
-  
-    if (fitsFiles.length > 0) {
-      setIsServerProcessing(true);
-      setStackedImage(null);
-      setShowPostProcessEditor(false);
-      addLog(`[API-STACK] Stacking ${fitsFiles.length} FITS file(s) via API...`);
-      try {
-        const formData = new FormData();
-        fitsFiles.forEach(file => formData.append('images', file, file.name));
-        formData.append('alignmentMethod', alignmentMethod);
-        formData.append('stackingMode', stackingMode);
-
-        const response = await fetch('/api/stack', {
-            method: 'POST',
-            body: formData,
-        });
-
-        const result = await response.json();
-        
-        if (response.ok && result.stackedImageUrl) {
-            addLog(`[API-STACK] Success: ${result.message}`);
-            (result.logs || []).forEach((l: string) => addLog(l));
-            setStackedImage(result.stackedImageUrl);
-            setImageForPostProcessing(result.stackedImageUrl);
-            setEditedPreviewUrl(result.stackedImageUrl);
-            handleResetAdjustments();
-            setIsServerProcessing(false); // Make sure to reset state on success
-        } else {
-            const errorMsg = result.error || 'Unknown API error';
-            addLog(`[API-STACK] Error: ${errorMsg}`);
-            if (result.details) addLog(`[API-STACK] Details: ${result.details}`);
-            (result.logs || []).forEach((l: string) => addLog(l));
-            window.alert(`Server Stacking Failed: ${errorMsg}`);
-        }
-      } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : "An unknown server error occurred.";
-          if (errorMessage.includes('Unexpected end of JSON input')) {
-            addLog(`[API-STACK] Fatal Error: The server returned an invalid response, likely due to an internal error during processing. Check server logs.`);
-          } else {
-            addLog(`[API-STACK] Fatal Error: ${errorMessage}`);
-          }
-          window.alert(`Server Stacking Failed: ${errorMessage}`);
-      } finally {
-        setIsServerProcessing(false);
-      }
-    }
-  
-    if (webImageFiles.length === 0) return;
-  
-    const newEntriesPromises = webImageFiles.map(async (file): Promise<ImageQueueEntry | null> => {
-      try {
-        const originalPreviewUrl = await fileToDataURL(file);
-        const img = new Image();
-        const originalDimensions = await new Promise<{ width: number; height: number }>((resolve, reject) => {
-          img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
-          img.onerror = () => reject(new Error("Could not load image to get dimensions."));
-          img.src = originalPreviewUrl;
-        });
-
-        let analysisDimensions = { ...originalDimensions };
-        let analysisPreviewUrl = originalPreviewUrl;
-
-        const isLarge = (originalDimensions.width * originalDimensions.height) / 1_000_000 > IS_LARGE_IMAGE_THRESHOLD_MP;
-        if (isLarge) {
-          addLog(`[INFO] Image ${file.name} is large (${originalDimensions.width}x${originalDimensions.height}). It will be downscaled for analysis.`);
-          const canvas = document.createElement('canvas');
-          const ctx = canvas.getContext('2d');
-          if (ctx) {
-              let targetWidth = originalDimensions.width, targetHeight = originalDimensions.height;
-              if (originalDimensions.width > MAX_DIMENSION_DOWNSCALED || originalDimensions.height > MAX_DIMENSION_DOWNSCALED) {
-                  if (originalDimensions.width > originalDimensions.height) {
-                      targetWidth = MAX_DIMENSION_DOWNSCALED;
-                      targetHeight = Math.round((originalDimensions.height / originalDimensions.width) * MAX_DIMENSION_DOWNSCALED);
-                  } else {
-                      targetHeight = MAX_DIMENSION_DOWNSCALED;
-                      targetWidth = Math.round((originalDimensions.width / originalDimensions.height) * MAX_DIMENSION_DOWNSCALED);
-                  }
-              }
-              canvas.width = targetWidth;
-              canvas.height = targetHeight;
-              ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
-              analysisPreviewUrl = canvas.toDataURL('image/png');
-              analysisDimensions = { width: targetWidth, height: targetHeight };
-              addLog(`Downscaled ${file.name} to ${targetWidth}x${targetHeight} for analysis.`);
-          }
-        }
-  
-        return {
-          id: `${file.name}-${Date.now()}`,
-          file,
-          originalPreviewUrl,
-          analysisPreviewUrl,
-          isAnalyzing: false,
-          isAnalyzed: false,
-          originalDimensions,
-          analysisDimensions,
-          imageData: null,
-          detectedStars: [],
-          manualStars: [],
-        };
-      } catch (error) {
-        addLog(`[ERROR] Could not process ${file.name}: ${error instanceof Error ? error.message : "Unknown error"}`);
-        return null;
-      }
-    });
-  
-    const newEntriesResults = await Promise.all(newEntriesPromises);
-    const validNewEntries = newEntriesResults.filter((entry): entry is ImageQueueEntry => entry !== null);
-    
-    if (validNewEntries.length > 0) {
-      setAllImageStarData(prev => [...prev, ...validNewEntries]);
-      addLog(`Added ${validNewEntries.length} new files to queue. Starting analysis...`);
-      for (const entry of validNewEntries) {
-        analyzeImageForStars(entry);
-      }
-    }
-  }, [addLog, fileToDataURL, starDetectionMethod, alignmentMethod, stackingMode]);
+  }, [addLog, fileToDataURL, starDetectionMethod]);
 
 
   const handleCalibrationFilesAdded = useCallback(async (
@@ -1694,4 +1691,3 @@ export default function AstroStackerPage() {
     </div>
   );
 }
-

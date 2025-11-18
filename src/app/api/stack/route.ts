@@ -118,26 +118,8 @@ export async function POST(req: NextRequest) {
         );
         imageEntries = await Promise.all(imagePromises);
 
-    } else if (contentType.includes('multipart/form-data')) {
-        addLog('Processing FormData request...');
-        const formData = await req.formData();
-        const imageFiles = formData.getAll('images') as File[];
-        alignmentMethod = (formData.get('alignmentMethod') as AlignmentMethod) || 'consensus';
-        stackingMode = (formData.get('stackingMode') as StackingMode) || 'median';
-
-        if (!imageFiles || imageFiles.length === 0) {
-            return NextResponse.json({ error: 'No image files found in form data.', logs }, { status: 400 });
-        }
-
-        addLog(`Received ${imageFiles.length} files from FormData.`);
-        const imagePromises = imageFiles.map(async (file, index) => {
-            const buffer = Buffer.from(await file.arrayBuffer());
-            return decodeImageBuffer(buffer, file.name || `file_${index}`, addLog);
-        });
-        imageEntries = await Promise.all(imagePromises);
-
     } else {
-      return NextResponse.json({ error: `Unsupported Content-Type: ${contentType}.`, logs }, { status: 415 });
+      return NextResponse.json({ error: `Unsupported Content-Type: ${contentType}. Only application/json is supported.`, logs }, { status: 415 });
     }
 
     const result = await stackImages({
@@ -169,5 +151,3 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Failed to process the request.', details: errorMessage, logs }, { status: 500 });
   }
 }
-
-    
