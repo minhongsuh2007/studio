@@ -25,6 +25,8 @@ export interface CalibrationFrameEntry {
   dimensions: { width: number; height: number };
 }
 
+export type Star = BaseStar;
+
 // Extends the base Star type to include a category ID for classification
 export interface LabeledStar extends BaseStar {
   categoryId: string;
@@ -68,4 +70,4 @@ export type PreviewFitMode = 'contain' | 'cover';
 export type OutputFormat = 'png' | 'jpeg';
 export type AlignmentMethod = 'standard' | 'consensus' | 'planetary' | 'dumb';
 export type StackingQuality = 'standard' | 'high';
-export type StarDetectionMethod = 'general' | 'ai';
+export type StarDetectionMethod = 'general' | 'ai' | 'advanced';

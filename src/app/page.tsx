@@ -39,6 +39,7 @@ import { saveAs } from 'file-saver';
 import { stackImagesWithUrls } from '@/app/actions';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { ImageQueueEntry, CalibrationFrameEntry, StarCategory, LearnedPattern, LabeledStar, TestResultStar, PreviewFitMode, OutputFormat, AlignmentMethod, StackingQuality, StarDetectionMethod, StarCharacteristics } from '@/types';
+import { detectStarsAdvanced } from '@/lib/siril-like-detection';
 
 
 export const dynamic = 'force-static';
@@ -313,7 +314,7 @@ export default function AstroStackerPage() {
     let finalUpdatedEntry: ImageQueueEntry = { ...entryToAnalyze, isAnalyzing: true, isAnalyzed: false };
   
     try {
-      addLog(`[ANALYZE START] For: ${entryToAnalyze.file.name}`);
+      addLog(`[ANALYZE START] For: ${entryToAnalyze.file.name} using '${starDetectionMethod}' method.`);
       const imgEl = new Image();
       imgEl.src = entryToAnalyze.analysisPreviewUrl;
       await new Promise<void>((resolve, reject) => {
@@ -332,22 +333,28 @@ export default function AstroStackerPage() {
       const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
       
       let detectedStars: Star[] = [];
-      let currentThreshold = 200;
-      const minThreshold = 150;
-  
-      addLog(`[ANALYZE] Initial detection at threshold ${currentThreshold}...`);
-      while (detectedStars.length < 10 && currentThreshold >= minThreshold) {
-        detectedStars = detectBrightBlobs(imageData, canvas.width, canvas.height, currentThreshold);
-        if (detectedStars.length < 10 && currentThreshold > minThreshold) {
-          addLog(`[ANALYZE] Found ${detectedStars.length} stars. Lowering threshold to ${currentThreshold - 5}.`);
-          currentThreshold -= 5;
-        } else {
-          break;
+      if (starDetectionMethod === 'advanced') {
+        detectedStars = detectStarsAdvanced(imageData, addLog);
+      } else {
+        // Fallback to general blob detection
+        let currentThreshold = 200;
+        const minThreshold = 150;
+    
+        addLog(`[ANALYZE] Initial detection at threshold ${currentThreshold}...`);
+        while (detectedStars.length < 10 && currentThreshold >= minThreshold) {
+          detectedStars = detectBrightBlobs(imageData, canvas.width, canvas.height, currentThreshold);
+          if (detectedStars.length < 10 && currentThreshold > minThreshold) {
+            addLog(`[ANALYZE] Found ${detectedStars.length} stars. Lowering threshold to ${currentThreshold - 5}.`);
+            currentThreshold -= 5;
+          } else {
+            break;
+          }
         }
       }
 
+
       finalUpdatedEntry = { ...finalUpdatedEntry, imageData, detectedStars, isAnalyzed: true };
-      addLog(`[ANALYZE SUCCESS] Finalized with ${detectedStars.length} potential star candidates in ${entryToAnalyze.file.name} (Threshold: ${currentThreshold}).`);
+      addLog(`[ANALYZE SUCCESS] Finalized with ${detectedStars.length} potential star candidates in ${entryToAnalyze.file.name}.`);
   
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -431,7 +438,7 @@ export default function AstroStackerPage() {
         analyzeImageForStars(entry);
       }
     }
-  }, [addLog, fileToDataURL]);
+  }, [addLog, fileToDataURL, starDetectionMethod]);
 
   const handleCalibrationFilesAdded = useCallback(async (
     files: File[],
@@ -1468,12 +1475,15 @@ export default function AstroStackerPage() {
                   )}
                 </div>
 
-                <div className="space-y-2"><Label className="text-base font-semibold text-foreground">Star Detection Method</Label>
-                  <RadioGroup value={starDetectionMethod} onValueChange={(v) => setStarDetectionMethod(v as StarDetectionMethod)} className="flex space-x-4" disabled={isUiDisabled || (alignmentMethod !== 'consensus' && alignmentMethod !== 'dumb')}>
+                <div className="space-y-2">
+                  <Label className="text-base font-semibold text-foreground">Star Detection Method</Label>
+                  <RadioGroup value={starDetectionMethod} onValueChange={(v) => setStarDetectionMethod(v as StarDetectionMethod)} className="grid grid-cols-2 gap-x-2 gap-y-2" disabled={isUiDisabled}>
                       <div className="flex items-center space-x-2"><RadioGroupItem value="general" id="detect-general" /><Label htmlFor="detect-general" className="flex items-center gap-1"><ShieldOff className="h-4 w-4"/>General</Label></div>
+                      <div className="flex items-center space-x-2"><RadioGroupItem value="advanced" id="detect-advanced" /><Label htmlFor="detect-advanced" className="flex items-center gap-1"><Zap className="h-4 w-4"/>Advanced (Siril-like)</Label></div>
                       <div className="flex items-center space-x-2"><RadioGroupItem value="ai" id="detect-ai" disabled={!trainedModel} /><Label htmlFor="detect-ai" className={`flex items-center gap-1 ${!trainedModel ? 'text-muted-foreground' : ''}`}><BrainCircuit className="h-4 w-4"/>AI {!trainedModel && '(Train model first)'}</Label></div>
                   </RadioGroup>
                 </div>
+
 
                  <div className="space-y-2"><Label className="text-base font-semibold text-foreground">Stacking Quality</Label>
                   <RadioGroup value={stackingQuality} onValueChange={(v) => setStackingQuality(v as StackingQuality)} className="flex space-x-2" disabled={isUiDisabled}>
