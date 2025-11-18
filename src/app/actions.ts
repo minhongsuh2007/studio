@@ -34,15 +34,18 @@ async function decodeImage(
     log(`[DECODE] Processing image: ${id}`);
     
     const base64Data = dataUrl.split(',')[1];
+    if (!base64Data) {
+      throw new Error("Invalid Data URL format.");
+    }
     const buffer = Buffer.from(base64Data, 'base64');
     
     // Use sharp to decode the image buffer
-    const image = sharp(buffer);
+    const image = sharp(buffer, { failOn: 'none' });
     const metadata = await image.metadata();
-    const { width, height } = metadata;
+    const { width, height, channels } = metadata;
 
     if (!width || !height) {
-      throw new Error('Could not get image dimensions.');
+      throw new Error('Could not get image dimensions from sharp.');
     }
 
     // Ensure the image has an alpha channel and get raw pixel data
@@ -86,7 +89,8 @@ async function fetchAndDecodeImage(
       );
     }
     const buffer = await response.arrayBuffer();
-    const dataUrl = `data:${response.headers.get('content-type')};base64,${Buffer.from(buffer).toString('base64')}`;
+    const contentType = response.headers.get('content-type') || 'image/jpeg';
+    const dataUrl = `data:${contentType};base64,${Buffer.from(buffer).toString('base64')}`;
 
     return await decodeImage(dataUrl, id, log);
   } catch (error) {
@@ -230,17 +234,53 @@ export async function stackImagesWithUrls(prevState: any, formData: FormData) {
   
   addLog(`Received ${imageUrls.length} URLs. Alignment: ${alignmentMethod}, Mode: ${stackingMode}.`);
   addLog('Starting image download and decoding process...');
-  const imagePromises = imageUrls.map((url, index) =>
-    fetchAndDecodeImage(url, `image_${index}`, addLog)
-  );
-
-  const resolvedImages = await Promise.all(imagePromises);
   
-  return stackImages({
-    images: resolvedImages,
-    alignmentMethod,
-    stackingMode,
-  });
-}
+  // This server action now proxies the request to the API route
+  // to avoid Server Action body size limits and leverage robust request handling.
+  try {
+    const apiResponse = await fetch(`${process.env.NEXT_PUBLIC_APP_URL}/api/stack`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        imageUrls,
+        alignmentMethod,
+        stackingMode
+      })
+    });
 
-    
+    if (!apiResponse.ok) {
+      let errorBody;
+      try {
+        errorBody = await apiResponse.json();
+      } catch (e) {
+        errorBody = { error: "Failed to parse API error response.", details: await apiResponse.text() };
+      }
+      addLog(`[API_PROXY_ERROR] API responded with status ${apiResponse.status}`);
+      return {
+        success: false,
+        message: errorBody.error || `API Error: ${apiResponse.statusText}`,
+        details: errorBody.details,
+        logs: [...logs, ...(errorBody.logs || [])]
+      };
+    }
+
+    const result = await apiResponse.json();
+    return {
+      success: true,
+      ...result,
+      logs: [...logs, ...result.logs],
+    };
+
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "An unknown proxy error occurred.";
+    addLog(`[PROXY_FATAL_ERROR] ${errorMessage}`);
+    return {
+      success: false,
+      message: "Failed to communicate with the stacking API.",
+      details: errorMessage,
+      logs,
+    };
+  }
+}

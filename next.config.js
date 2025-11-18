@@ -29,11 +29,14 @@ const nextConfig = {
             fs: false
         };
     }
+    // For server-side, we can tell webpack that 'fs' is an external module
+    // This is often needed for libraries that have optional 'fs' dependencies.
+    if (isServer) {
+        config.externals.push('fs');
+    }
 
     return config;
   },
 };
 
 module.exports = nextConfig;
-
-    

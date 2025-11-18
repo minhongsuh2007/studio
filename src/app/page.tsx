@@ -36,7 +36,7 @@ import { applyPostProcessing } from '@/lib/post-process';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { saveAs } from 'file-saver';
-import { stackImagesWithUrls, type ServerImagePayload } from '@/app/actions';
+import { stackImagesWithUrls } from '@/app/actions';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { ImageQueueEntry, CalibrationFrameEntry, StarCategory, LearnedPattern, LabeledStar, TestResultStar, PreviewFitMode, OutputFormat, AlignmentMethod, StackingQuality, StarDetectionMethod, StarCharacteristics } from '@/types';
 import { detectStarsAdvanced } from '@/lib/siril-like-detection';
@@ -72,7 +72,7 @@ export default function AstroStackerPage() {
   const [isProcessingStack, setIsProcessingStack] = useState(false);
   const [isTrainingModel, setIsTrainingModel] = useState(false);
   const [stackingMode, setStackingMode] = useState<StackingMode>('median');
-  const [alignmentMethod, setAlignmentMethod] = useState<AlignmentMethod>('dumb');
+  const [alignmentMethod, setAlignmentMethod] = useState<AlignmentMethod>('consensus');
   const [starDetectionMethod, setStarDetectionMethod] = useState<StarDetectionMethod>('general');
   const [stackingQuality, setStackingQuality] = useState<StackingQuality>('standard');
   const [planetaryStackingQuality, setPlanetaryStackingQuality] = useState<number>(50);
@@ -355,17 +355,34 @@ export default function AstroStackerPage() {
     return finalUpdatedEntry;
   };
 
-  const handleServerStacking = async (files: File[]) => {
+  const handleFilesAdded = useCallback(async (files: File[]) => {
+    addLog(`Attempting to add ${files.length} file(s).`);
+  
+    const webImageFiles: File[] = [];
+    const fitsFiles: File[] = [];
+  
+    for (const file of files) {
+      const fileType = file.type;
+      const fileName = file.name.toLowerCase();
+      if (fileType === 'image/fits' || fileName.endsWith('.fits') || fileName.endsWith('.fit')) {
+        addLog(`[FITS DETECTED] Queueing ${file.name} for server-side processing.`);
+        fitsFiles.push(file);
+      } else if (fileType.startsWith('image/')) {
+        webImageFiles.push(file);
+      } else {
+        addLog(`[UNSUPPORTED] Skipping file with unknown type: ${file.name} (${file.type})`);
+      }
+    }
+  
+    if (fitsFiles.length > 0) {
+      // Logic to handle FITS files via server API
       setIsServerProcessing(true);
       setStackedImage(null);
       setShowPostProcessEditor(false);
-      addLog(`[API-STACK] Stacking ${files.length} file(s) via API...`);
-
+      addLog(`[API-STACK] Stacking ${fitsFiles.length} FITS file(s) via API...`);
       try {
         const formData = new FormData();
-        files.forEach(file => {
-            formData.append('images', file);
-        });
+        fitsFiles.forEach(file => formData.append('images', file));
         formData.append('alignmentMethod', alignmentMethod);
         formData.append('stackingMode', stackingMode);
 
@@ -373,12 +390,11 @@ export default function AstroStackerPage() {
             method: 'POST',
             body: formData,
         });
-
         const result = await response.json();
-
+        
         if (response.ok && result.stackedImageUrl) {
             addLog(`[API-STACK] Success: ${result.message}`);
-            result.logs.forEach((l: string) => addLog(l));
+            (result.logs || []).forEach((l: string) => addLog(l));
             setStackedImage(result.stackedImageUrl);
             setImageForPostProcessing(result.stackedImageUrl);
             setEditedPreviewUrl(result.stackedImageUrl);
@@ -390,33 +406,17 @@ export default function AstroStackerPage() {
             (result.logs || []).forEach((l: string) => addLog(l));
             window.alert(`Server Stacking Failed: ${errorMsg}`);
         }
-
       } catch (error) {
           const errorMessage = error instanceof Error ? error.message : "An unknown server error occurred.";
-          addLog(`[API-STACK] Fatal Error: ${errorMessage}`);
+          if (errorMessage.includes('Unexpected end of JSON input')) {
+            addLog(`[API-STACK] Fatal Error: The server returned an invalid response, likely due to an internal error during processing. Check server logs.`);
+          } else {
+            addLog(`[API-STACK] Fatal Error: ${errorMessage}`);
+          }
           window.alert(`Server Stacking Failed: ${errorMessage}`);
       } finally {
-          setIsServerProcessing(false);
+        setIsServerProcessing(false);
       }
-  };
-
-  const handleFilesAdded = useCallback(async (files: File[]) => {
-    addLog(`Attempting to add ${files.length} file(s).`);
-  
-    const webImageFiles: File[] = [];
-    const fitsFiles: File[] = [];
-  
-    for (const file of files) {
-      if (file.type === 'image/fits' || file.name.toLowerCase().endsWith('.fits') || file.name.toLowerCase().endsWith('.fit')) {
-        addLog(`[FITS DETECTED] Queueing ${file.name} for server-side processing.`);
-        fitsFiles.push(file);
-      } else {
-        webImageFiles.push(file);
-      }
-    }
-  
-    if (fitsFiles.length > 0) {
-      handleServerStacking(fitsFiles);
     }
   
     if (webImageFiles.length === 0) return;
@@ -1313,33 +1313,22 @@ export default function AstroStackerPage() {
                 <CardDescription className="text-sm max-h-32 overflow-y-auto">{t('cardDescription')}</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <Tabs defaultValue="local" className="w-full">
-                  <TabsList className="grid w-full grid-cols-2">
-                    <TabsTrigger value="local"><Upload className="mr-2 h-4 w-4" /> From Device</TabsTrigger>
-                    <TabsTrigger value="url"><Server className="mr-2 h-4 w-4" /> From URLs</TabsTrigger>
-                  </TabsList>
-                  <TabsContent value="local" className="mt-4 space-y-4">
-                     <ImageUploadArea onFilesAdded={handleFilesAdded} isProcessing={isUiDisabled || !isFileApiReady} multiple={true} accept={{ 'image/*': ['.png', '.jpg', '.jpeg', '.webp', '.tiff', '.tif', '.fits', '.fit'] }} />
-                  </TabsContent>
-                  <TabsContent value="url" className="mt-4">
-                     <form ref={formRef} action={formAction} onSubmit={() => setIsServerProcessing(true)} className="space-y-4">
-                        <Label htmlFor="url-input">Image URLs</Label>
-                        <Textarea
-                            id="url-input"
-                            name="imageUrls"
-                            placeholder="https://.../image1.jpg&#10;https://.../image2.fits"
-                            rows={5}
-                            disabled={isUiDisabled}
-                        />
-                        <input type="hidden" name="alignmentMethod" value={alignmentMethod} />
-                        <input type="hidden" name="stackingMode" value={stackingMode} />
-                        <Button type="submit" disabled={isUiDisabled} className="w-full">
-                            {isServerProcessing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Server className="mr-2 h-4 w-4" />}
-                            Stack from URLs
-                        </Button>
-                     </form>
-                  </TabsContent>
-                </Tabs>
+                 <form ref={formRef} action={formAction} onSubmit={() => setIsServerProcessing(true)} className="space-y-4">
+                    <Label htmlFor="url-input">Image URLs (one per line)</Label>
+                    <Textarea
+                        id="url-input"
+                        name="imageUrls"
+                        placeholder="https://.../image1.jpg&#10;https://.../image2.fits"
+                        rows={8}
+                        disabled={isUiDisabled}
+                    />
+                    <input type="hidden" name="alignmentMethod" value={alignmentMethod} />
+                    <input type="hidden" name="stackingMode" value={stackingMode} />
+                    <Button type="submit" disabled={isUiDisabled} className="w-full">
+                        {isServerProcessing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Server className="mr-2 h-4 w-4" />}
+                        Stack from URLs
+                    </Button>
+                 </form>
                 
                 <Accordion type="multiple" className="w-full">
                   <AccordionItem value="darks">
@@ -1693,7 +1682,3 @@ export default function AstroStackerPage() {
     </div>
   );
 }
-
-    
-
-    
