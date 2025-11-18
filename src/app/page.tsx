@@ -36,7 +36,7 @@ import { applyPostProcessing } from '@/lib/post-process';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { saveAs } from 'file-saver';
-import { stackImagesWithUrls } from '@/app/actions';
+import { stackImagesWithUrls, stackImages, type ServerImagePayload } from '@/app/actions';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { ImageQueueEntry, CalibrationFrameEntry, StarCategory, LearnedPattern, LabeledStar, TestResultStar, PreviewFitMode, OutputFormat, AlignmentMethod, StackingQuality, StarDetectionMethod, StarCharacteristics } from '@/types';
 import { detectStarsAdvanced } from '@/lib/siril-like-detection';
@@ -355,10 +355,64 @@ export default function AstroStackerPage() {
     return finalUpdatedEntry;
   };
 
+  const handleServerStacking = async (images: ServerImagePayload[]) => {
+      setIsServerProcessing(true);
+      setStackedImage(null);
+      setShowPostProcessEditor(false);
+      addLog(`[SERVER-STACK] Stacking ${images.length} file(s) on the server...`);
+
+      try {
+          const result = await stackImages({
+              images,
+              alignmentMethod,
+              stackingMode,
+          });
+
+          if (result.success && result.stackedImageUrl) {
+              addLog(`[SERVER-STACK] Success: ${result.message}`);
+              result.logs.forEach(l => addLog(l));
+              setStackedImage(result.stackedImageUrl);
+              setImageForPostProcessing(result.stackedImageUrl);
+              setEditedPreviewUrl(result.stackedImageUrl);
+              handleResetAdjustments();
+          } else {
+              addLog(`[SERVER-STACK] Error: ${result.message}`);
+              if (result.details) addLog(`[SERVER-STACK] Details: ${result.details}`);
+              result.logs.forEach(l => addLog(l));
+              window.alert(`Server Stacking Failed: ${result.message}`);
+          }
+      } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : "An unknown server error occurred.";
+          addLog(`[SERVER-STACK] Fatal Error: ${errorMessage}`);
+          window.alert(`Server Stacking Failed: ${errorMessage}`);
+      } finally {
+          setIsServerProcessing(false);
+      }
+  };
+
   const handleFilesAdded = useCallback(async (files: File[]) => {
     addLog(`Attempting to add ${files.length} file(s).`);
   
-    const newEntriesPromises = files.map(async (file): Promise<ImageQueueEntry | null> => {
+    const webImageFiles: File[] = [];
+    const fitsFiles: ServerImagePayload[] = [];
+  
+    for (const file of files) {
+      if (file.type === 'image/fits' || file.name.toLowerCase().endsWith('.fits') || file.name.toLowerCase().endsWith('.fit')) {
+        addLog(`[FITS DETECTED] Queueing ${file.name} for server-side processing.`);
+        const dataUrl = await fileToDataURL(file);
+        fitsFiles.push({ fileName: file.name, dataUrl });
+      } else {
+        webImageFiles.push(file);
+      }
+    }
+  
+    if (fitsFiles.length > 0) {
+      handleServerStacking(fitsFiles);
+    }
+  
+    if (webImageFiles.length === 0) return;
+  
+    const newEntriesPromises = webImageFiles.map(async (file): Promise<ImageQueueEntry | null> => {
       try {
         const originalPreviewUrl = await fileToDataURL(file);
         const img = new Image();
@@ -425,7 +479,8 @@ export default function AstroStackerPage() {
         analyzeImageForStars(entry);
       }
     }
-  }, [addLog, fileToDataURL, starDetectionMethod]);
+  }, [addLog, fileToDataURL, starDetectionMethod, alignmentMethod, stackingMode]);
+
 
   const handleCalibrationFilesAdded = useCallback(async (
     files: File[],
@@ -1255,7 +1310,7 @@ export default function AstroStackerPage() {
                     <TabsTrigger value="url"><Server className="mr-2 h-4 w-4" /> From URLs</TabsTrigger>
                   </TabsList>
                   <TabsContent value="local" className="mt-4 space-y-4">
-                     <ImageUploadArea onFilesAdded={handleFilesAdded} isProcessing={isUiDisabled || !isFileApiReady} multiple={true} />
+                     <ImageUploadArea onFilesAdded={handleFilesAdded} isProcessing={isUiDisabled || !isFileApiReady} multiple={true} accept={{ 'image/*': ['.png', '.jpg', '.jpeg', '.webp', '.tiff', '.tif', '.fits', '.fit'] }} />
                   </TabsContent>
                   <TabsContent value="url" className="mt-4">
                      <form ref={formRef} action={formAction} onSubmit={() => setIsServerProcessing(true)} className="space-y-4">
@@ -1263,7 +1318,7 @@ export default function AstroStackerPage() {
                         <Textarea
                             id="url-input"
                             name="imageUrls"
-                            placeholder="https://.../image1.jpg&#10;https://.../image2.jpg"
+                            placeholder="https://.../image1.jpg&#10;https://.../image2.fits"
                             rows={5}
                             disabled={isUiDisabled}
                         />
@@ -1629,3 +1684,5 @@ export default function AstroStackerPage() {
     </div>
   );
 }
+
+    
