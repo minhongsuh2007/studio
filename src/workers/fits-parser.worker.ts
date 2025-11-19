@@ -101,51 +101,46 @@ function readFITSImage(arrayBuffer: ArrayBuffer, header: Map<string, any>, dataO
 // --- Normalization Functions ---
 
 function normalizeLog(pixels: Float32Array): Uint8ClampedArray {
+    let sum = 0;
+    for (let i = 0; i < pixels.length; i++) {
+        sum += pixels[i];
+    }
+    const mean = sum / pixels.length;
+
     let min = Infinity;
     let max = -Infinity;
-    
-    // First pass: find min and max of positive values
     for (let i = 0; i < pixels.length; i++) {
-        const v = pixels[i];
-        if (v > 0) {
+        if (pixels[i] > mean) {
+            const v = pixels[i];
             if (v < min) min = v;
             if (v > max) max = v;
         }
     }
 
-    if (!isFinite(min) || !isFinite(max)) {
-      // Handle cases where all pixels are 0 or negative
-      const out = new Uint8ClampedArray(pixels.length);
-       for(let i=0; i<pixels.length; i++) {
-            out[i] = 0;
-       }
-       return out;
+    if (!isFinite(min) || !isFinite(max) || min === max) {
+        // Not enough signal above the mean, return a black image.
+        return new Uint8ClampedArray(pixels.length);
     }
     
     const logMin = Math.log(min);
     const logMax = Math.log(max);
     const range = logMax - logMin;
-    const gamma = 0.4; // less than 1 to brighten midtones
-    
     const out = new Uint8ClampedArray(pixels.length);
-    
+
     if (range <= 0) {
-        // If range is 0, all positive values are the same. Map them to mid-gray.
         for(let i=0; i<pixels.length; i++) {
-            out[i] = pixels[i] > 0 ? 128 : 0;
+            out[i] = pixels[i] > mean ? 128 : 0;
         }
         return out;
     }
 
-    // Second pass: apply normalization
     for (let i = 0; i < pixels.length; i++) {
         const v = pixels[i];
-        if (v <= 0) {
+        if (v <= mean) {
             out[i] = 0;
         } else {
             const lv = (Math.log(v) - logMin) / range;
-            const gammaCorrected = Math.pow(lv, gamma);
-            out[i] = Math.round(Math.max(0, Math.min(1, gammaCorrected)) * 255);
+            out[i] = Math.round(Math.max(0, Math.min(1, lv)) * 255);
         }
     }
     return out;
