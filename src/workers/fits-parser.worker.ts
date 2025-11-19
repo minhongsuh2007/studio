@@ -80,7 +80,6 @@ function readFITSImage(arrayBuffer: ArrayBuffer, header: Map<string, any>, dataO
   const pixels = new Float32Array(count);
   let offset = dataOffset;
 
-  let readLogic: string;
   if (bitpix === 16) {
     for (let i = 0; i < count; i++, offset += 2) pixels[i] = bzero + bscale * dv.getUint16(offset, false);
   } else if (bitpix === 8) {
@@ -111,9 +110,9 @@ function normalizeLinear(pixels: Float32Array): Uint8ClampedArray {
 
     const range = max - min;
     const out = new Uint8ClampedArray(pixels.length);
+    const gamma = 0.2; // Very aggressive gamma to boost brightness
 
     if (range <= 0) {
-        // Handle case where all pixels are the same value
         const val = (min === max) ? 128 : 0;
         for (let i = 0; i < pixels.length; i++) {
             out[i] = val;
@@ -124,7 +123,7 @@ function normalizeLinear(pixels: Float32Array): Uint8ClampedArray {
     for (let i = 0; i < pixels.length; i++) {
         const v = pixels[i];
         const normalized = (v - min) / range;
-        out[i] = Math.round(normalized * 255);
+        out[i] = Math.round(Math.pow(normalized, gamma) * 255);
     }
 
     return out;
