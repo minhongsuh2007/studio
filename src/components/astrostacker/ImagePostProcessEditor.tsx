@@ -116,6 +116,7 @@ export function ImagePostProcessEditor({
                         onCanvasClick={() => {}}
                         analysisWidth={0}
                         analysisHeight={0}
+                        categories={[]}
                         isReadOnly={true}
                     />
                 </div>
