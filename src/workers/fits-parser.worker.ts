@@ -5,7 +5,7 @@ self.onmessage = function (e: MessageEvent<ArrayBuffer>) {
   try {
     const { header, dataOffset } = parseFITSHeader(arrayBuffer);
     const { width, height, pixels } = readFITSImage(arrayBuffer, header, dataOffset);
-    const gray = normalizeLinear(pixels);
+    const gray = arcsinhStretch(pixels); // Use the new arcsinh stretch function
     self.postMessage({ header: Object.fromEntries(header), width, height, gray });
   } catch (err: any) {
     self.postMessage({ error: err.message });
@@ -99,31 +99,61 @@ function readFITSImage(arrayBuffer: ArrayBuffer, header: Map<string, any>, dataO
 
 // --- Normalization Functions ---
 
-function normalizeLinear(pixels: Float32Array): Uint8ClampedArray {
+/**
+ * A robust normalization function for FITS data using arcsinh stretching.
+ * This preserves faint details while preventing bright stars from saturating.
+ */
+function arcsinhStretch(pixels: Float32Array): Uint8ClampedArray {
+    const out = new Uint8ClampedArray(pixels.length);
+    if (pixels.length === 0) return out;
+
+    // --- Step 1: Estimate background and find the median of the data ---
+    // A subsample is used for performance on very large images
+    const sampleSize = 10000;
+    const sample = new Float32Array(sampleSize);
+    if (pixels.length > sampleSize) {
+        for (let i = 0; i < sampleSize; i++) {
+            sample[i] = pixels[Math.floor(Math.random() * pixels.length)];
+        }
+    } else {
+        // If the image is smaller than the sample size, just use a copy
+        for(let i=0; i<pixels.length; i++) sample[i] = pixels[i];
+    }
+    sample.sort();
+    const median = sample[Math.floor(sample.length / 2)];
+
+    // --- Step 2: Determine the stretch intensity (non-linearity factor) ---
+    // This is a common value in astronomical imaging, adjust as needed.
+    const stretch = 200; 
+
+    // --- Step 3: Apply the arcsinh transformation ---
+    const transformedPixels = new Float32Array(pixels.length);
+    for (let i = 0; i < pixels.length; i++) {
+        // Shift data so background is near zero, then apply stretch
+        const shiftedValue = pixels[i] - median;
+        transformedPixels[i] = Math.asinh(shiftedValue / stretch);
+    }
+    
+    // --- Step 4: Find min/max of the *transformed* data for scaling ---
     let min = Infinity;
     let max = -Infinity;
-    for(let i = 0; i < pixels.length; i++) {
-        const v = pixels[i];
+    for (let i = 0; i < transformedPixels.length; i++) {
+        const v = transformedPixels[i];
         if (v < min) min = v;
         if (v > max) max = v;
     }
 
     const range = max - min;
-    const out = new Uint8ClampedArray(pixels.length);
-    const gamma = 0.2; // Very aggressive gamma to boost brightness
-
     if (range <= 0) {
-        const val = (min === max) ? 128 : 0;
-        for (let i = 0; i < pixels.length; i++) {
-            out[i] = val;
-        }
+        // This case happens if the image is flat. Return a mid-gray image.
+        out.fill(128);
         return out;
     }
 
+    // --- Step 5: Scale the transformed data to the 0-255 range ---
     for (let i = 0; i < pixels.length; i++) {
-        const v = pixels[i];
-        const normalized = (v - min) / range;
-        out[i] = Math.round(Math.pow(normalized, gamma) * 255);
+        const v = transformedPixels[i];
+        out[i] = Math.round(((v - min) / range) * 255);
     }
 
     return out;
