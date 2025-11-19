@@ -1,70 +1,65 @@
 "use client";
 
 import type React from 'react';
-import { useRef, useEffect, useState, useCallback } from 'react';
+import { useRef, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import type { Point, Curve, Channel } from '@/types';
 
+// --- Type Definitions ---
 interface CurveEditorProps {
     curves: Curve;
     onCurveChange: (channel: Channel, newPoints: Point[]) => void;
     histogram: { r: number, g: number, b: number }[];
 }
 
+// --- Constants ---
 const CANVAS_SIZE = 256;
 const POINT_RADIUS = 5;
-
-const channelColors = {
+const CHANNEL_COLORS = {
   rgb: 'white',
   r: '#FF6B6B',
   g: '#4ECDC4',
   b: '#45B7D1',
 };
+const BACKGROUND_COLOR_CARD = 'hsl(var(--card))';
+const BACKGROUND_COLOR_BLACK = 'black';
+const GRID_COLOR = 'hsl(var(--border))';
 
-export function CurveEditor({ curves, onCurveChange, histogram }: CurveEditorProps) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [activeChannel, setActiveChannel] = useState<Channel>('rgb');
-  const [draggingPointIndex, setDraggingPointIndex] = useState<number | null>(null);
+// --- Drawing Helper Functions (ensuring no state pollution) ---
 
-  const draw = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    
-    const points = curves[activeChannel];
-
-    // --- 1. Clear canvas with the correct background ---
-    ctx.fillStyle = activeChannel === 'rgb' ? 'black' : 'hsl(var(--card))';
+/** Draws the base background of the canvas. */
+const drawBackground = (ctx: CanvasRenderingContext2D, channel: Channel) => {
+    ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+    ctx.fillStyle = channel === 'rgb' ? BACKGROUND_COLOR_BLACK : BACKGROUND_COLOR_CARD;
     ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+};
 
-    // --- 2. Draw histogram in the background ---
-    if (histogram && histogram.length > 0) {
-        const maxHistValue = Math.max(...histogram.map(h => Math.max(h.r, h.g, h.b)));
-        if (maxHistValue > 0) {
-            const drawHistogramChannel = (channelKey: 'r' | 'g' | 'b', color: string) => {
-                ctx.fillStyle = `${color}44`; // Use transparent fill
-                for (let i = 0; i < 256; i++) {
-                    const h = (histogram[i][channelKey] / maxHistValue) * CANVAS_SIZE;
-                    if (h > 0) {
-                       ctx.fillRect(i, CANVAS_SIZE - h, 1, h);
-                    }
-                }
-            };
-            
-            if (activeChannel === 'rgb') {
-                drawHistogramChannel('r', channelColors.r);
-                drawHistogramChannel('g', channelColors.g);
-                drawHistogramChannel('b', channelColors.b);
-            } else {
-                drawHistogramChannel(activeChannel, channelColors[activeChannel]);
+/** Draws the histogram for the specified channels. */
+const drawHistogram = (
+    ctx: CanvasRenderingContext2D,
+    histogram: { r: number, g: number, b: number }[],
+    channels: ('r' | 'g' | 'b')[]
+) => {
+    if (!histogram || histogram.length === 0) return;
+    const maxHistValue = Math.max(...histogram.map(h => Math.max(h.r, h.g, h.b)));
+    if (maxHistValue <= 0) return;
+
+    for (const channelKey of channels) {
+        const color = CHANNEL_COLORS[channelKey];
+        ctx.fillStyle = `${color}44`; // Apply transparency
+        for (let i = 0; i < 256; i++) {
+            const h = (histogram[i][channelKey] / maxHistValue) * CANVAS_SIZE;
+            if (h > 0) {
+               ctx.fillRect(i, CANVAS_SIZE - h, 1, h);
             }
         }
     }
-    
-    // --- 3. Draw grid OVER the histogram ---
-    ctx.strokeStyle = 'hsl(var(--border))';
+};
+
+/** Draws the grid lines. */
+const drawGrid = (ctx: CanvasRenderingContext2D) => {
+    ctx.strokeStyle = GRID_COLOR;
     ctx.lineWidth = 0.5;
     for (let i = 1; i < 4; i++) {
         const pos = (i * CANVAS_SIZE) / 4;
@@ -77,9 +72,11 @@ export function CurveEditor({ curves, onCurveChange, histogram }: CurveEditorPro
         ctx.lineTo(CANVAS_SIZE, pos);
         ctx.stroke();
     }
-    
-    // --- 4. Draw the curve ---
-    ctx.strokeStyle = channelColors[activeChannel];
+};
+
+/** Draws the curve line itself. */
+const drawCurve = (ctx: CanvasRenderingContext2D, points: Point[], color: string) => {
+    ctx.strokeStyle = color;
     ctx.lineWidth = 2;
     ctx.beginPath();
     let p_idx = 0;
@@ -103,19 +100,56 @@ export function CurveEditor({ curves, onCurveChange, histogram }: CurveEditorPro
       }
     }
     ctx.stroke();
+};
 
-    // --- 5. Draw points ---
-    ctx.fillStyle = channelColors[activeChannel];
+/** Draws the draggable points on the curve. */
+const drawPoints = (ctx: CanvasRenderingContext2D, points: Point[], color: string) => {
+    ctx.fillStyle = color;
     for (const point of points) {
         ctx.beginPath();
         ctx.arc(point.x, CANVAS_SIZE - point.y, POINT_RADIUS, 0, 2 * Math.PI);
         ctx.fill();
     }
-  }, [activeChannel, curves, histogram]);
+};
 
+// --- Main Component ---
+export function CurveEditor({ curves, onCurveChange, histogram }: CurveEditorProps) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [activeChannel, setActiveChannel] = useState<Channel>('rgb');
+  const [draggingPointIndex, setDraggingPointIndex] = useState<number | null>(null);
+
+  // The main drawing effect. Redraws whenever dependencies change.
   useEffect(() => {
-    draw();
-  }, [draw]);
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const points = curves[activeChannel];
+    const color = CHANNEL_COLORS[activeChannel];
+    
+    // Use requestAnimationFrame to sync with the browser's repaint cycle
+    const animationFrameId = requestAnimationFrame(() => {
+        // 1. Draw Background
+        drawBackground(ctx, activeChannel);
+
+        // 2. Draw Histogram
+        const histChannels: ('r' | 'g' | 'b')[] = activeChannel === 'rgb' ? ['r', 'g', 'b'] : [activeChannel];
+        drawHistogram(ctx, histogram, histChannels);
+
+        // 3. Draw Grid
+        drawGrid(ctx);
+
+        // 4. Draw Curve Line
+        drawCurve(ctx, points, color);
+        
+        // 5. Draw Points
+        drawPoints(ctx, points, color);
+    });
+
+    return () => cancelAnimationFrame(animationFrameId);
+
+  }, [activeChannel, curves, histogram]);
 
   const getMousePos = (e: React.MouseEvent): Point => {
     const canvas = canvasRef.current;
@@ -141,13 +175,12 @@ export function CurveEditor({ curves, onCurveChange, histogram }: CurveEditorPro
       }
     }
     
-    // Add new point
     const newPoints = [...points, pos].sort((a,b) => a.x - b.x);
     onCurveChange(activeChannel, newPoints);
     setDraggingPointIndex(newPoints.findIndex(p => p.x === pos.x && p.y === pos.y));
   };
 
-  const handleMouseMove = useCallback((e: React.MouseEvent) => {
+  const handleMouseMove = (e: React.MouseEvent) => {
     if (draggingPointIndex === null) return;
     const pos = getMousePos(e);
     const points = [...curves[activeChannel]];
@@ -158,17 +191,17 @@ export function CurveEditor({ curves, onCurveChange, histogram }: CurveEditorPro
     const prevPoint = points[draggingPointIndex - 1];
     const nextPoint = points[draggingPointIndex + 1];
 
-    if (prevPoint && newX < prevPoint.x) newX = prevPoint.x + 0.1;
-    if (nextPoint && newX > nextPoint.x) newX = nextPoint.x - 0.1;
+    if (prevPoint && newX <= prevPoint.x) newX = prevPoint.x + 0.1;
+    if (nextPoint && newX >= nextPoint.x) newX = nextPoint.x - 0.1;
     
     points[draggingPointIndex] = { x: newX, y: pos.y };
 
     onCurveChange(activeChannel, points);
-  }, [activeChannel, curves, draggingPointIndex, onCurveChange]);
+  };
 
-  const handleMouseUp = useCallback(() => {
+  const handleMouseUp = () => {
     setDraggingPointIndex(null);
-  }, []);
+  };
 
   const handleDoubleClick = (e: React.MouseEvent) => {
     const pos = getMousePos(e);
@@ -189,7 +222,7 @@ export function CurveEditor({ curves, onCurveChange, histogram }: CurveEditorPro
 
   return (
     <div className="space-y-2">
-      <Tabs value={activeChannel} onValueChange={(v) => setActiveChannel(v as Channel)} className="w-full">
+      <Tabs value={activeChannel} onValueChange={(v) => { setActiveChannel(v as Channel); setDraggingPointIndex(null); }} className="w-full">
         <TabsList className="grid w-full grid-cols-4">
           <TabsTrigger value="rgb">RGB</TabsTrigger>
           <TabsTrigger value="r">R</TabsTrigger>
