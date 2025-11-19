@@ -38,7 +38,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { saveAs } from 'file-saver';
 import { stackImagesWithUrls } from '@/app/actions';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import type { ImageQueueEntry, CalibrationFrameEntry, StarCategory, LearnedPattern, LabeledStar, TestResultStar, PreviewFitMode, OutputFormat, AlignmentMethod, StackingQuality, StarDetectionMethod, StarCharacteristics } from '@/types';
+import type { ImageQueueEntry, CalibrationFrameEntry, StarCategory, LearnedPattern, LabeledStar, TestResultStar, PreviewFitMode, OutputFormat, AlignmentMethod, StackingQuality, StarDetectionMethod, StarCharacteristics, PostProcessSettings } from '@/types';
 import { detectStarsAdvanced } from '@/lib/siril-like-detection';
 
 
@@ -62,6 +62,21 @@ const initialServerStackState = {
   message: '',
   stackedImageUrl: null,
   logs: [],
+};
+
+const initialPostProcessSettings: PostProcessSettings = {
+  basic: { brightness: 100, exposure: 0, saturation: 100 },
+  curves: {
+    rgb: [{ x: 0, y: 0 }, { x: 255, y: 255 }],
+    r: [{ x: 0, y: 0 }, { x: 255, y: 255 }],
+    g: [{ x: 0, y: 0 }, { x: 255, y: 255 }],
+    b: [{ x: 0, y: 0 }, { x: 255, y: 255 }],
+  },
+  colorBalance: {
+    shadows: { r: 0, g: 0, b: 0 },
+    midtones: { r: 0, g: 0, b: 0 },
+    highlights: { r: 0, g: 0, b: 0 },
+  },
 };
 
 
@@ -91,12 +106,7 @@ export default function AstroStackerPage() {
   const [editedPreviewUrl, setEditedPreviewUrl] = useState<string | null>(null);
   
   // --- Post-Processing State ---
-  const [brightness, setBrightness] = useState(100);
-  const [exposure, setExposure] = useState(0);
-  const [saturation, setSaturation] = useState(100);
-  const [blackPoint, setBlackPoint] = useState(0);
-  const [midtones, setMidtones] = useState(1);
-  const [whitePoint, setWhitePoint] = useState(255);
+  const [postProcessSettings, setPostProcessSettings] = useState<PostProcessSettings>(initialPostProcessSettings);
   const [isApplyingAdjustments, setIsApplyingAdjustments] = useState(false);
   const [isTutorialOpen, setIsTutorialOpen] = useState(false);
 
@@ -272,8 +282,7 @@ export default function AstroStackerPage() {
       try {
         const adjustedUrl = await applyPostProcessing(
           imageForPostProcessing,
-          { brightness, exposure, saturation },
-          { blackPoint, midtones, whitePoint },
+          postProcessSettings,
           outputFormat,
           jpegQuality / 100
         );
@@ -288,8 +297,7 @@ export default function AstroStackerPage() {
     const debounceTimeout = setTimeout(applyAdjustments, 200);
     return () => clearTimeout(debounceTimeout);
   }, [
-    imageForPostProcessing, brightness, exposure, saturation, 
-    blackPoint, midtones, whitePoint,
+    imageForPostProcessing, postProcessSettings,
     showPostProcessEditor, outputFormat, jpegQuality
   ]);
 
@@ -882,8 +890,7 @@ export default function AstroStackerPage() {
   };
 
   const handleResetAdjustments = () => {
-    setBrightness(100); setExposure(0); setSaturation(100);
-    setBlackPoint(0); setMidtones(1); setWhitePoint(255);
+    setPostProcessSettings(initialPostProcessSettings);
   };
   
   const handleTestFileAdded = useCallback(async (files: File[]) => {
@@ -1674,22 +1681,13 @@ export default function AstroStackerPage() {
           isAdjusting={isApplyingAdjustments}
           outputFormat={outputFormat}
           jpegQuality={jpegQuality}
+          settings={postProcessSettings}
+          onSettingsChange={setPostProcessSettings}
           onResetAdjustments={handleResetAdjustments}
-          basicSettings={{ brightness, exposure, saturation }}
-          onBasicSettingsChange={({ brightness, exposure, saturation }) => {
-            setBrightness(brightness);
-            setExposure(exposure);
-            setSaturation(saturation);
-          }}
-          histogramSettings={{ blackPoint, midtones, whitePoint }}
-          onHistogramSettingsChange={({ blackPoint, midtones, whitePoint }) => {
-            setBlackPoint(blackPoint);
-            setMidtones(midtones);
-            setWhitePoint(whitePoint);
-          }}
         />
       )}
     </div>
   );
 }
- 
+
+    

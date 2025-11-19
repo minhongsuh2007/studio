@@ -64,6 +64,44 @@ export interface LearnedPattern {
   characteristics: StarCharacteristics[];
 }
 
+// --- Post-Processing Types ---
+export interface Point {
+  x: number;
+  y: number;
+}
+
+export type Channel = 'rgb' | 'r' | 'g' | 'b';
+
+export interface Curve {
+  rgb: Point[];
+  r: Point[];
+  g: Point[];
+  b: Point[];
+}
+
+export interface Rgb {
+  r: number;
+  g: number;
+  b: number;
+}
+
+export interface ColorBalance {
+  shadows: Rgb;
+  midtones: Rgb;
+  highlights: Rgb;
+}
+
+export interface PostProcessSettings {
+  basic: {
+    brightness: number;
+    exposure: number;
+    saturation: number;
+  };
+  curves: Curve;
+  colorBalance: ColorBalance;
+}
+
+
 // --- Enums for UI state ---
 
 export type PreviewFitMode = 'contain' | 'cover';
@@ -71,3 +109,5 @@ export type OutputFormat = 'png' | 'jpeg';
 export type AlignmentMethod = 'standard' | 'consensus' | 'planetary' | 'dumb';
 export type StackingQuality = 'standard' | 'high';
 export type StarDetectionMethod = 'general' | 'ai' | 'advanced';
+
+    

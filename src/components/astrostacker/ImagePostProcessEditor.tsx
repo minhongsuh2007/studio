@@ -2,7 +2,7 @@
 "use client";
 
 import type React from 'react';
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
@@ -12,19 +12,25 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recharts';
 import { StarAnnotationCanvas } from './StarAnnotationCanvas';
 import { applyPostProcessing, calculateHistogram } from '@/lib/post-process';
-import type { Star } from '@/lib/astro-align';
 import { ScrollArea } from '../ui/scroll-area';
+import type { PostProcessSettings, Point, ColorBalance, Curve, Channel } from '@/types';
+import { CurveEditor } from './CurveEditor';
+import { ColorBalanceEditor } from './ColorBalanceEditor';
 
-interface BasicSettings {
-  brightness: number;
-  exposure: number;
-  saturation: number;
-}
-interface HistogramSettings {
-  blackPoint: number;
-  midtones: number;
-  whitePoint: number;
-}
+// Default settings
+const initialBasicSettings = { brightness: 100, exposure: 0, saturation: 100 };
+const initialCurve: Curve = {
+  rgb: [{x:0, y:0}, {x:255, y:255}],
+  r: [{x:0, y:0}, {x:255, y:255}],
+  g: [{x:0, y:0}, {x:255, y:255}],
+  b: [{x:0, y:0}, {x:255, y:255}],
+};
+const initialColorBalance: ColorBalance = {
+  shadows: { r: 0, g: 0, b: 0 },
+  midtones: { r: 0, g: 0, b: 0 },
+  highlights: { r: 0, g: 0, b: 0 },
+};
+
 
 interface ImagePostProcessEditorProps {
   isOpen: boolean;
@@ -34,13 +40,10 @@ interface ImagePostProcessEditorProps {
   isAdjusting: boolean;
   outputFormat: 'png' | 'jpeg';
   jpegQuality: number;
+  
+  settings: PostProcessSettings;
+  onSettingsChange: (settings: PostProcessSettings) => void;
   onResetAdjustments: () => void;
-  
-  basicSettings: BasicSettings;
-  onBasicSettingsChange: (settings: BasicSettings) => void;
-  
-  histogramSettings: HistogramSettings;
-  onHistogramSettingsChange: (settings: HistogramSettings) => void;
 }
 
 export function ImagePostProcessEditor({
@@ -51,12 +54,11 @@ export function ImagePostProcessEditor({
   isAdjusting,
   outputFormat,
   jpegQuality,
-  onResetAdjustments,
-  basicSettings,
-  onBasicSettingsChange,
-  histogramSettings,
-  onHistogramSettingsChange,
+  settings,
+  onSettingsChange,
+  onResetAdjustments
 }: ImagePostProcessEditorProps) {
+
   const [histogramData, setHistogramData] = useState<any[]>([]);
   
   useEffect(() => {
@@ -73,8 +75,7 @@ export function ImagePostProcessEditor({
     if (!baseImageUrl) return;
     const finalUrl = await applyPostProcessing(
       baseImageUrl,
-      basicSettings,
-      histogramSettings,
+      settings,
       outputFormat,
       jpegQuality / 100
     );
@@ -86,12 +87,31 @@ export function ImagePostProcessEditor({
     link.click();
     document.body.removeChild(link);
   };
+  
+  const handleBasicSettingsChange = (newBasics: PostProcessSettings['basic']) => {
+    onSettingsChange({ ...settings, basic: newBasics });
+  };
+  
+  const handleCurveChange = (channel: Channel, newPoints: Point[]) => {
+    onSettingsChange({
+      ...settings,
+      curves: {
+        ...settings.curves,
+        [channel]: newPoints,
+      }
+    })
+  };
+
+  const handleColorBalanceChange = (newBalance: ColorBalance) => {
+    onSettingsChange({ ...settings, colorBalance: newBalance });
+  };
+
 
   if (!isOpen) return null;
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-6xl w-[95vw] h-[90vh] flex flex-col p-4 sm:p-6">
+      <DialogContent className="max-w-7xl w-[95vw] h-[90vh] flex flex-col p-4 sm:p-6">
         <DialogHeader>
           <DialogTitle>Edit & Download Final Image</DialogTitle>
           <DialogDescription>
@@ -99,11 +119,9 @@ export function ImagePostProcessEditor({
           </DialogDescription>
         </DialogHeader>
         
-        <div className="flex-grow flex flex-col min-h-0">
-          <ScrollArea className="flex-grow min-h-0 pr-4">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div className="md:col-span-2 flex flex-col min-h-0">
-                <div className="flex-grow min-h-0 relative aspect-video">
+        <div className="flex-grow flex flex-col md:flex-row gap-6 min-h-0">
+            <div className="md:w-2/3 flex flex-col min-h-0">
+                <div className="flex-grow min-h-0 relative aspect-video bg-black rounded-md">
                     {isAdjusting && (
                     <div className="absolute inset-0 bg-background/50 flex items-center justify-center z-20 rounded-md">
                         <Loader2 className="h-12 w-12 animate-spin text-accent" />
@@ -120,75 +138,76 @@ export function ImagePostProcessEditor({
                         isReadOnly={true}
                     />
                 </div>
-              </div>
-              
-              <div className="md:col-span-1 flex flex-col">
-                <Tabs defaultValue="basic" className="w-full flex-grow flex flex-col">
-                  <TabsList className="grid w-full grid-cols-2">
+                 <div className="w-full h-32 mt-4">
+                    <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={histogramData} margin={{ top: 5, right: 5, left: -25, bottom: 5 }}>
+                            <XAxis dataKey="level" fontSize={10} stroke="hsl(var(--muted-foreground))" />
+                            <YAxis fontSize={10} stroke="hsl(var(--muted-foreground))"/>
+                            <Tooltip wrapperClassName="!bg-popover !border-border text-xs" cursor={{ fill: 'hsla(var(--muted), 0.5)' }} />
+                            <Bar dataKey="r" fill="rgba(255, 99, 132, 0.6)" barSize={4}/>
+                            <Bar dataKey="g" fill="rgba(75, 192, 192, 0.6)" barSize={4}/>
+                            <Bar dataKey="b" fill="rgba(54, 162, 235, 0.6)" barSize={4}/>
+                        </BarChart>
+                    </ResponsiveContainer>
+                </div>
+            </div>
+            
+            <div className="md:w-1/3 flex flex-col">
+            <ScrollArea className="h-full pr-3">
+                <Tabs defaultValue="basic" className="w-full">
+                  <TabsList className="grid w-full grid-cols-3">
                     <TabsTrigger value="basic">Basic</TabsTrigger>
-                    <TabsTrigger value="histogram">Histogram</TabsTrigger>
+                    <TabsTrigger value="curves">Curves</TabsTrigger>
+                    <TabsTrigger value="color">Color</TabsTrigger>
                   </TabsList>
                   
-                  <TabsContent value="basic" className="flex-grow p-1 space-y-6 mt-4">
+                  <TabsContent value="basic" className="p-1 space-y-6 mt-4">
                       <div className="space-y-3">
-                        <Label htmlFor="brightnessSlider">Brightness: {basicSettings.brightness.toFixed(0)}%</Label>
-                        <Slider id="brightnessSlider" value={[basicSettings.brightness]} onValueChange={([v]) => onBasicSettingsChange({...basicSettings, brightness: v})} min={0} max={200} step={1} disabled={isAdjusting} />
+                        <Label htmlFor="brightnessSlider">Brightness: {settings.basic.brightness.toFixed(0)}%</Label>
+                        <Slider id="brightnessSlider" value={[settings.basic.brightness]} onValueChange={([v]) => handleBasicSettingsChange({...settings.basic, brightness: v})} min={0} max={200} step={1} disabled={isAdjusting} />
                       </div>
                       <div className="space-y-3">
-                        <Label htmlFor="exposureSlider">Exposure: {basicSettings.exposure.toFixed(0)}</Label>
-                        <Slider id="exposureSlider" value={[basicSettings.exposure]} onValueChange={([v]) => onBasicSettingsChange({...basicSettings, exposure: v})} min={-100} max={100} step={1} disabled={isAdjusting} />
+                        <Label htmlFor="exposureSlider">Exposure: {settings.basic.exposure.toFixed(0)}</Label>
+                        <Slider id="exposureSlider" value={[settings.basic.exposure]} onValueChange={([v]) => handleBasicSettingsChange({...settings.basic, exposure: v})} min={-100} max={100} step={1} disabled={isAdjusting} />
                       </div>
                       <div className="space-y-3">
-                        <Label htmlFor="saturationSlider">Saturation: {basicSettings.saturation.toFixed(0)}%</Label>
-                        <Slider id="saturationSlider" value={[basicSettings.saturation]} onValueChange={([v]) => onBasicSettingsChange({...basicSettings, saturation: v})} min={0} max={200} step={1} disabled={isAdjusting} />
+                        <Label htmlFor="saturationSlider">Saturation: {settings.basic.saturation.toFixed(0)}%</Label>
+                        <Slider id="saturationSlider" value={[settings.basic.saturation]} onValueChange={([v]) => handleBasicSettingsChange({...settings.basic, saturation: v})} min={0} max={200} step={1} disabled={isAdjusting} />
                       </div>
                   </TabsContent>
-                  
-                  <TabsContent value="histogram" className="flex-grow p-1 space-y-4 mt-4">
-                      <div className="w-full h-40">
-                          <ResponsiveContainer width="100%" height="100%">
-                            <BarChart data={histogramData} margin={{ top: 5, right: 20, left: -10, bottom: 5 }}>
-                                <XAxis dataKey="level" fontSize={10} />
-                                <YAxis fontSize={10} />
-                                <Tooltip wrapperClassName="!bg-popover !border-border text-xs" cursor={{ fill: 'hsla(var(--muted), 0.5)' }} />
-                                <Bar dataKey="r" fill="rgba(255, 50, 50, 0.6)" barSize={4}/>
-                                <Bar dataKey="g" fill="rgba(50, 255, 50, 0.6)" barSize={4}/>
-                                <Bar dataKey="b" fill="rgba(50, 50, 255, 0.6)" barSize={4}/>
-                            </BarChart>
-                          </ResponsiveContainer>
-                      </div>
-                      <div className="space-y-3">
-                        <Label>Black Point: {histogramSettings.blackPoint}</Label>
-                        <Slider value={[histogramSettings.blackPoint]} onValueChange={([v]) => onHistogramSettingsChange({...histogramSettings, blackPoint: v})} min={0} max={127} step={1} />
-                      </div>
-                      <div className="space-y-3">
-                         <Label>Midtones: {histogramSettings.midtones.toFixed(2)}</Label>
-                         <Slider value={[histogramSettings.midtones]} onValueChange={([v]) => onHistogramSettingsChange({...histogramSettings, midtones: v})} min={0.1} max={5} step={0.01} />
-                      </div>
-                      <div className="space-y-3">
-                        <Label>White Point: {histogramSettings.whitePoint}</Label>
-                        <Slider value={[histogramSettings.whitePoint]} onValueChange={([v]) => onHistogramSettingsChange({...histogramSettings, whitePoint: v})} min={128} max={255} step={1} />
-                      </div>
+
+                  <TabsContent value="curves" className="p-1 mt-4">
+                      <CurveEditor 
+                        curves={settings.curves}
+                        onCurveChange={handleCurveChange}
+                        histogram={histogramData}
+                      />
+                  </TabsContent>
+
+                  <TabsContent value="color" className="p-1 mt-4">
+                      <ColorBalanceEditor
+                        balance={settings.colorBalance}
+                        onBalanceChange={handleColorBalanceChange}
+                      />
                   </TabsContent>
                 </Tabs>
-                 <div className="mt-auto space-y-3 pt-4">
-                    <Button onClick={onResetAdjustments} variant="outline" className="w-full">
-                      <RotateCcw className="mr-2 h-4 w-4" /> Reset All Adjustments
-                    </Button>
-                     <Button onClick={handleDownloadFinal} className="w-full bg-accent hover:bg-accent/90 text-accent-foreground" disabled={isAdjusting}>
-                       <Download className="mr-2 h-4 w-4" />
-                       Download Final Image
-                     </Button>
-                </div>
-              </div>
+            </ScrollArea>
             </div>
-          </ScrollArea>
         </div>
 
         <DialogFooter className="mt-4 pt-4 border-t flex-shrink-0">
-          <Button variant="outline" onClick={onClose}>Close Editor</Button>
+           <Button onClick={onResetAdjustments} variant="outline">
+                <RotateCcw className="mr-2 h-4 w-4" /> Reset All
+            </Button>
+            <Button onClick={handleDownloadFinal} className="bg-accent hover:bg-accent/90 text-accent-foreground" disabled={isAdjusting}>
+                <Download className="mr-2 h-4 w-4" />
+                Download Final Image
+            </Button>
+            <Button variant="secondary" onClick={onClose}>Close Editor</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
   );
 }
+
+    
