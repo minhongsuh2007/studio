@@ -33,7 +33,7 @@ function parseFITSHeader(arrayBuffer: ArrayBuffer, logs: string[]): { header: Ma
   function parseCard(start: number): { key: string; value: any; } {
     const card = new TextDecoder('ascii').decode(bytes.subarray(start, start + cardSize));
     const key = card.slice(0, 8).trim();
-    if (!card.includes('=')) return { key, value: null };
+    if (key === '' || !card.includes('=')) return { key, value: null };
     const afterEq = card.slice(10).trim();
     let valueStr = afterEq;
     const slashIdx = afterEq.indexOf('/');
@@ -100,21 +100,18 @@ function readFITSImage(arrayBuffer: ArrayBuffer, header: Map<string, any>, dataO
   const pixels = new Float32Array(count);
   let offset = dataOffset;
 
-  const readFunctions: Record<number, (offset: number) => number> = {
-      8: (o) => dv.getUint8(o),
-      16: (o) => dv.getInt16(o, false),
-      32: (o) => dv.getInt32(o, false),
-      [-32]: (o) => dv.getFloat32(o, false),
-      [-64]: (o) => dv.getFloat64(o, false),
-  };
+  let readFunc: (offset: number) => number;
+  const bytesPerPixel = Math.abs(bitpix) / 8;
 
-  const readFunc = readFunctions[bitpix];
-  if (!readFunc) {
-      throw new Error(`Unsupported BITPIX value: ${bitpix}`);
+  switch (bitpix) {
+      case 8: readFunc = (o) => dv.getUint8(o); break;
+      case 16: readFunc = (o) => dv.getInt16(o, false); break;
+      case 32: readFunc = (o) => dv.getInt32(o, false); break;
+      case -32: readFunc = (o) => dv.getFloat32(o, false); break;
+      case -64: readFunc = (o) => dv.getFloat64(o, false); break;
+      default: throw new Error(`Unsupported BITPIX value: ${bitpix}`);
   }
 
-  const bytesPerPixel = Math.abs(bitpix) / 8;
-  
   if (offset + count * bytesPerPixel > arrayBuffer.byteLength) {
       throw new Error(`FITS data is truncated. Header indicates ${count * bytesPerPixel} bytes of data after offset ${offset}, but buffer has only ${arrayBuffer.byteLength} bytes.`);
   }
