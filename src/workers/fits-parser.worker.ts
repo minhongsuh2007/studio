@@ -125,7 +125,7 @@ function normalizeLog(pixels: Float32Array): Uint8ClampedArray {
     const logMin = Math.log(min);
     const logMax = Math.log(max);
     const range = logMax - logMin;
-    const gamma = 0.5; // less than 1 to brighten midtones
+    const gamma = 0.4; // less than 1 to brighten midtones
     
     const out = new Uint8ClampedArray(pixels.length);
     
