@@ -72,6 +72,18 @@ export interface Point {
 
 export type Channel = 'rgb';
 
+export interface Rgb {
+  r: number;
+  g: number;
+  b: number;
+}
+
+export interface ColorBalance {
+  shadows: Rgb;
+  midtones: Rgb;
+  highlights: Rgb;
+}
+
 export interface Curve {
   rgb: Point[];
 }
@@ -83,6 +95,7 @@ export interface PostProcessSettings {
     saturation: number;
   };
   curves: Curve;
+  colorBalance: ColorBalance;
 }
 
 

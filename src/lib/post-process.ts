@@ -100,15 +100,15 @@ export async function applyPostProcessing(
       let b = lutRgb[data[i+2]];
 
       // 2. Apply Basic Adjustments (Brightness/Exposure)
-      r = Math.min(255, Math.max(0, r * eFactor * bFactor));
-      g = Math.min(255, Math.max(0, g * eFactor * bFactor));
-      b = Math.min(255, Math.max(0, b * eFactor * bFactor));
+      r = r * eFactor * bFactor;
+      g = g * eFactor * bFactor;
+      b = b * eFactor * bFactor;
 
       // 3. Apply Color Balance
       const intensity = (r + g + b) / (3 * 255); // 0 to 1
       const shadowWeight = Math.max(0, 1 - intensity * 3);
       const highlightWeight = Math.max(0, (intensity - 0.5) * 2);
-      const midtoneWeight = 1 - shadowWeight - highlightWeight;
+      const midtoneWeight = Math.max(0, 1 - shadowWeight - highlightWeight);
 
       r += (colorBalance.shadows.r * shadowWeight) + (colorBalance.midtones.r * midtoneWeight) + (colorBalance.highlights.r * highlightWeight);
       g += (colorBalance.shadows.g * shadowWeight) + (colorBalance.midtones.g * midtoneWeight) + (colorBalance.highlights.g * highlightWeight);
@@ -118,14 +118,14 @@ export async function applyPostProcessing(
       if (basic.saturation !== 100) {
         const sFactor = basic.saturation / 100;
         const gray = 0.299 * r + 0.587 * g + 0.114 * b;
-        r = Math.min(255, Math.max(0, gray + sFactor * (r - gray)));
-        g = Math.min(255, Math.max(0, gray + sFactor * (g - gray)));
-        b = Math.min(255, Math.max(0, gray + sFactor * (b - gray)));
+        r = gray + sFactor * (r - gray);
+        g = gray + sFactor * (g - gray);
+        b = gray + sFactor * (b - gray);
       }
       
-      data[i] = r;
-      data[i + 1] = g;
-      data[i + 2] = b;
+      data[i] = Math.min(255, Math.max(0, r));
+      data[i + 1] = Math.min(255, Math.max(0, g));
+      data[i + 2] = Math.min(255, Math.max(0, b));
     }
     
     ctx.putImageData(originalImageData, 0, 0);

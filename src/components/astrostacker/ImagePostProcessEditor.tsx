@@ -13,8 +13,9 @@ import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recha
 import { StarAnnotationCanvas } from './StarAnnotationCanvas';
 import { applyPostProcessing, calculateHistogram } from '@/lib/post-process';
 import { ScrollArea } from '../ui/scroll-area';
-import type { PostProcessSettings, Point, Curve, Channel } from '@/types';
+import type { PostProcessSettings, Point, Channel, ColorBalance } from '@/types';
 import { CurveEditor } from './CurveEditor';
+import { ColorBalanceEditor } from './ColorBalanceEditor';
 
 interface ImagePostProcessEditorProps {
   isOpen: boolean;
@@ -86,6 +87,10 @@ export function ImagePostProcessEditor({
     })
   };
 
+  const handleColorBalanceChange = (newBalance: ColorBalance) => {
+    onSettingsChange({ ...settings, colorBalance: newBalance });
+  };
+
 
   if (!isOpen) return null;
 
@@ -135,9 +140,10 @@ export function ImagePostProcessEditor({
             <div className="md:w-1/3 flex flex-col">
             <ScrollArea className="h-full pr-3">
                 <Tabs defaultValue="basic" className="w-full">
-                  <TabsList className="grid w-full grid-cols-2">
+                  <TabsList className="grid w-full grid-cols-3">
                     <TabsTrigger value="basic">Basic</TabsTrigger>
                     <TabsTrigger value="curves">Curves</TabsTrigger>
+                    <TabsTrigger value="color">Color</TabsTrigger>
                   </TabsList>
                   
                   <TabsContent value="basic" className="p-1 space-y-6 mt-4">
@@ -160,6 +166,13 @@ export function ImagePostProcessEditor({
                         curves={settings.curves}
                         onCurveChange={handleCurveChange}
                         histogram={histogramData}
+                      />
+                  </TabsContent>
+
+                  <TabsContent value="color" className="p-1 mt-4">
+                      <ColorBalanceEditor
+                          balance={settings.colorBalance}
+                          onBalanceChange={handleColorBalanceChange}
                       />
                   </TabsContent>
 
