@@ -23,56 +23,61 @@ function parseFITSHeader(arrayBuffer: ArrayBuffer) {
   let pos = 0;
   const header = new Map<string, string | number | boolean | null>();
 
-  function parseCard(start: number) {
+  function parseCard(start: number): { key: string; value: any; isEnd: boolean } {
     const card = new TextDecoder('ascii').decode(bytes.subarray(start, start + cardSize));
     const key = card.slice(0, 8).trim();
-    if (key === '' || !card.includes('=')) return { key, value: null };
+    if (key === 'END') return { key, value: null, isEnd: true };
+    if (!card.includes('=')) return { key, value: null, isEnd: false };
 
-    const afterEq = card.slice(10).trim();
-    let valueStr = afterEq;
-    
-    const slashIdx = afterEq.indexOf('/');
-    if (slashIdx >= 0) {
-      valueStr = afterEq.slice(0, slashIdx).trim();
-    }
+    const valueAndComment = card.slice(10).trim();
+    const slashIndex = valueAndComment.indexOf('/');
+    const valueString = slashIndex >= 0 ? valueAndComment.substring(0, slashIndex).trim() : valueAndComment;
 
-    let value: string | number | boolean | null;
-    if (valueStr.startsWith("'")) {
-      const endQuote = valueStr.lastIndexOf("'");
-      value = valueStr.slice(1, endQuote >= 1 ? endQuote : undefined);
-    } else if (valueStr === 'T' || valueStr === 'F') {
-      value = (valueStr === 'T');
+    let value: any;
+    if (valueString.startsWith("'")) {
+      value = valueString.substring(1, valueString.lastIndexOf("'")).trim();
+    } else if (valueString === 'T') {
+      value = true;
+    } else if (valueString === 'F') {
+      value = false;
     } else {
-      value = Number(valueStr);
-      if (Number.isNaN(value)) value = valueStr;
+      value = parseFloat(valueString);
+      if (isNaN(value)) {
+        value = valueString;
+      }
     }
-    return { key, value };
+    return { key, value, isEnd: false };
   }
 
-  let foundEND = false;
-  while (!foundEND) {
-    if (pos >= bytes.length) {
-      throw new Error("FITS header parsing error: Reached end of file before finding 'END' card.");
-    }
+  let endFound = false;
+  while (pos < bytes.length && !endFound) {
     for (let i = 0; i < blockSize; i += cardSize) {
-      const cardStart = pos + i;
-      // Ensure we don't read past the end of the buffer
-      if (cardStart + cardSize > bytes.length) {
-          foundEND = true;
-          break;
+      if (pos + i + cardSize > bytes.length) {
+        endFound = true; // Avoid reading past the end of the file
+        break;
       }
-      const { key, value } = parseCard(cardStart);
-      if (key === 'END') {
-        foundEND = true;
+      const { key, value, isEnd } = parseCard(pos + i);
+      if (isEnd) {
+        endFound = true;
         break;
       }
       if (key) {
-          header.set(key, value);
+        header.set(key, value);
       }
     }
-    pos += blockSize;
+    if (!endFound) {
+        pos += blockSize;
+    }
   }
-  return { header, dataOffset: pos };
+
+  // The data starts after the last header block that was read
+  const dataOffset = pos + blockSize;
+
+  if (!header.size) {
+      throw new Error("Could not parse FITS header. The file may be corrupt or not a FITS file.");
+  }
+
+  return { header, dataOffset };
 }
 
 function readFITSImage(arrayBuffer: ArrayBuffer, header: Map<string, any>, dataOffset: number) {
@@ -142,7 +147,7 @@ function normalizeToUint8(pixels: Float32Array): Uint8ClampedArray {
         v = 0; // Handle NaN/Infinity from pixels array by mapping to black
     }
     // Correctly scale and round the value before clamping
-    out[i] = Math.round(v * 255);
+    out[i] = v * 255;
   }
   return out;
 }
