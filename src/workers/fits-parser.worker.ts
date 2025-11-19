@@ -1,27 +1,30 @@
-
 /// <reference lib="webworker" />
 
-self.onmessage = function(e: MessageEvent<ArrayBuffer>) {
-  const arrayBuffer = e.data;
+self.onmessage = function(e: MessageEvent<{ arrayBuffer: ArrayBuffer; mode: 'sigma' | 'log' | 'minmax' }>) {
+  const { arrayBuffer, mode } = e.data;
   try {
     const { header, dataOffset } = parseFITSHeader(arrayBuffer);
     if (!header.has('NAXIS1') || !header.has('NAXIS2') || !header.has('BITPIX')) {
         throw new Error('Essential FITS header keywords (NAXIS1, NAXIS2, BITPIX) are missing.');
     }
     const { width, height, pixels } = readFITSImage(arrayBuffer, header, dataOffset);
-    const gray = normalizeToUint8(pixels);
+    
+    let gray;
+    if (mode === 'sigma') gray = normalizeSigma(pixels, 3);
+    else if (mode === 'log') gray = normalizeLog(pixels);
+    else gray = normalizeMinMax(pixels);
+
     self.postMessage({ header: Object.fromEntries(header), width, height, gray });
   } catch (err: any) {
     self.postMessage({ error: err.message });
   }
 };
 
-function parseFITSHeader(arrayBuffer: ArrayBuffer) {
+function parseFITSHeader(arrayBuffer: ArrayBuffer): { header: Map<string, any>, dataOffset: number } {
   const bytes = new Uint8Array(arrayBuffer);
-  const cardSize = 80;
-  const blockSize = 2880;
+  const cardSize = 80, blockSize = 2880;
   let pos = 0;
-  const header = new Map<string, string | number | boolean | null>();
+  const header = new Map<string, any>();
 
   function parseCard(start: number): { key: string; value: any; isEnd: boolean } {
     const card = new TextDecoder('ascii').decode(bytes.subarray(start, start + cardSize));
@@ -53,7 +56,7 @@ function parseFITSHeader(arrayBuffer: ArrayBuffer) {
   while (pos < bytes.length && !endFound) {
     for (let i = 0; i < blockSize; i += cardSize) {
       if (pos + i + cardSize > bytes.length) {
-        endFound = true; // Avoid reading past the end of the file
+        endFound = true; 
         break;
       }
       const { key, value, isEnd } = parseCard(pos + i);
@@ -70,7 +73,6 @@ function parseFITSHeader(arrayBuffer: ArrayBuffer) {
     }
   }
 
-  // The data starts after the last header block that was read
   const dataOffset = pos + blockSize;
 
   if (!header.size) {
@@ -80,14 +82,15 @@ function parseFITSHeader(arrayBuffer: ArrayBuffer) {
   return { header, dataOffset };
 }
 
-function readFITSImage(arrayBuffer: ArrayBuffer, header: Map<string, any>, dataOffset: number) {
+
+function readFITSImage(arrayBuffer: ArrayBuffer, header: Map<string, any>, dataOffset: number): { width: number, height: number, pixels: Float32Array } {
   const dv = new DataView(arrayBuffer);
   const naxis = header.get('NAXIS');
   if (naxis < 1) throw new Error(`Invalid NAXIS value: ${naxis}`);
   if (naxis > 2) console.warn(`This FITS file has ${naxis} dimensions, but only the first 2 will be read.`);
   
   const width = header.get('NAXIS1');
-  const height = header.get('NAXIS2') || 1; // Default to 1 for 1D images
+  const height = header.get('NAXIS2') || 1;
   const bitpix = header.get('BITPIX');
   
   const bscale = header.get('BSCALE') ?? 1.0;
@@ -124,30 +127,48 @@ function readFITSImage(arrayBuffer: ArrayBuffer, header: Map<string, any>, dataO
   return { width, height, pixels };
 }
 
-function normalizeToUint8(pixels: Float32Array): Uint8ClampedArray {
+function normalizeMinMax(pixels: Float32Array): Uint8ClampedArray {
   let min = Infinity, max = -Infinity;
-  for (const v of pixels) { 
-    if (Number.isFinite(v)) {
-      if (v < min) min = v; 
-      if (v > max) max = v; 
-    }
-  }
-  
-  if (min === Infinity) { // All pixels were NaN/Infinity
-    min = 0;
-    max = 0;
-  }
-
+  for (const v of pixels) { if (Number.isFinite(v)) { if(v<min)min=v; if(v>max)max=v; } }
   const range = (max - min) || 1;
   const out = new Uint8ClampedArray(pixels.length);
+  for (let i=0;i<pixels.length;i++) {
+    let v=(pixels[i]-min)/range;
+    if (!Number.isFinite(v)) v=0;
+    out[i]=Math.round(Math.max(0,Math.min(1,v))*255);
+  }
+  return out;
+}
 
-  for (let i = 0; i < pixels.length; i++) {
-    let v = (pixels[i] - min) / range;
-    if (!Number.isFinite(v)) {
-        v = 0; // Handle NaN/Infinity from pixels array by mapping to black
-    }
-    // Correctly scale and round the value before clamping
-    out[i] = v * 255;
+function normalizeSigma(pixels: Float32Array, sigma=3): Uint8ClampedArray {
+  let sum=0,cnt=0;
+  for(const v of pixels){if(Number.isFinite(v)){sum+=v;cnt++;}}
+  const mean=sum/cnt;
+  let varSum=0;
+  for(const v of pixels){if(Number.isFinite(v)){varSum+=(v-mean)**2;}}
+  const std=Math.sqrt(varSum/cnt);
+  const min=mean-sigma*std, max=mean+sigma*std;
+  const range=(max-min)||1;
+  const out=new Uint8ClampedArray(pixels.length);
+  for(let i=0;i<pixels.length;i++){
+    let v=(pixels[i]-min)/range;
+    v=Math.max(0,Math.min(1,v));
+    out[i]=Math.round(v*255);
+  }
+  return out;
+}
+
+function normalizeLog(pixels: Float32Array): Uint8ClampedArray {
+  let min=Infinity,max=-Infinity;
+  for(const v of pixels){if(v>0){if(v<min)min=v;if(v>max)max=v;}}
+  const logMin=Math.log(min), logMax=Math.log(max), range=logMax-logMin;
+  const out=new Uint8ClampedArray(pixels.length);
+  for(let i=0;i<pixels.length;i++){
+    let v=pixels[i];
+    if(v<=0){out[i]=0;continue;}
+    let lv=(Math.log(v)-logMin)/range;
+    lv=Math.max(0,Math.min(1,lv));
+    out[i]=Math.round(lv*255);
   }
   return out;
 }

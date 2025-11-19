@@ -360,7 +360,7 @@ export default function AstroStackerPage() {
   
     for (const file of files) {
       const fileName = file.name.toLowerCase();
-      const isFits = file.type === 'image/fits' || fileName.endsWith('.fits') || fileName.endsWith('.fit');
+      const isFits = fileName.endsWith('.fits') || fileName.endsWith('.fit');
   
       if (isFits) {
         addLog(`[FITS-WORKER] Processing ${file.name} with Web Worker.`);
@@ -417,7 +417,7 @@ export default function AstroStackerPage() {
         };
 
         const arrayBuffer = await file.arrayBuffer();
-        worker.postMessage(arrayBuffer, [arrayBuffer]);
+        worker.postMessage({ arrayBuffer, mode: 'sigma' }, [arrayBuffer]);
 
       } else if (file.type.startsWith('image/')) {
         // Standard image processing logic
@@ -1673,7 +1673,7 @@ export default function AstroStackerPage() {
           isAdjusting={isApplyingAdjustments}
           outputFormat={outputFormat}
           jpegQuality={jpegQuality}
-          onResetAdjustments={handleResetAdjustments}
+          onResetAdjustments={onResetAdjustments}
           basicSettings={{ brightness, exposure, saturation }}
           onBasicSettingsChange={({ brightness, exposure, saturation }) => {
             setBrightness(brightness);
