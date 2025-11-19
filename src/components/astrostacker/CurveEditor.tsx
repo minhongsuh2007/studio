@@ -53,16 +53,25 @@ export function CurveEditor({ curves, onCurveChange, histogram }: CurveEditorPro
     }
     
     // Draw histogram in the background
-    const channelKey = activeChannel === 'rgb' ? 'r' : activeChannel; // Use red for RGB for now
-    const maxHistValue = Math.max(...histogram.map(h => h[channelKey]));
-    if (maxHistValue > 0) {
-        ctx.fillStyle = `${channelColors[activeChannel]}22`; // transparent color
-        for (let i = 0; i < 256; i++) {
-            const h = (histogram[i][channelKey] / maxHistValue) * CANVAS_SIZE;
-            if (h > 0) {
-               ctx.fillRect(i, CANVAS_SIZE - h, 1, h);
+    const drawHistogramChannel = (channelKey: 'r' | 'g' | 'b', color: string) => {
+        const maxHistValue = Math.max(...histogram.map(h => h[channelKey]));
+        if (maxHistValue > 0) {
+            ctx.fillStyle = `${color}22`; // transparent color
+            for (let i = 0; i < 256; i++) {
+                const h = (histogram[i][channelKey] / maxHistValue) * CANVAS_SIZE;
+                if (h > 0) {
+                   ctx.fillRect(i, CANVAS_SIZE - h, 1, h);
+                }
             }
         }
+    };
+    
+    if (activeChannel === 'rgb') {
+        drawHistogramChannel('r', channelColors.r);
+        drawHistogramChannel('g', channelColors.g);
+        drawHistogramChannel('b', channelColors.b);
+    } else {
+        drawHistogramChannel(activeChannel, channelColors[activeChannel]);
     }
 
 
@@ -206,5 +215,3 @@ export function CurveEditor({ curves, onCurveChange, histogram }: CurveEditorPro
     </div>
   );
 }
-
-    
