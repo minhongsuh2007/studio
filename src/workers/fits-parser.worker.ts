@@ -30,43 +30,55 @@ function parseFITSHeader(arrayBuffer: ArrayBuffer, logs: string[]): { header: Ma
   let pos = 0;
   const header = new Map<string, any>();
 
-  function parseCard(start: number): { key: string; value: any; } {
+  function parseCard(start: number): { key: string; value: any; } | null {
     const card = new TextDecoder('ascii').decode(bytes.subarray(start, start + cardSize));
     const key = card.slice(0, 8).trim();
-    if (key === '' || !card.includes('=')) return { key, value: null };
-    const afterEq = card.slice(10).trim();
-    let valueStr = afterEq;
-    const slashIdx = afterEq.indexOf('/');
-    if (slashIdx >= 0) valueStr = afterEq.slice(0, slashIdx).trim();
+    if (key === '') return null; // Skip blank cards
+    if (key === 'END') return { key: 'END', value: null };
+    
+    if (card[8] !== '=' || card[9] !== ' ') {
+      // This is likely a comment card, just store the key (like HISTORY or COMMENT)
+      header.set(key, card.slice(9).trim());
+      return null;
+    }
+
+    const valueAndComment = card.slice(10).trim();
+    const slashIndex = valueAndComment.indexOf('/');
+    const valueStr = (slashIndex > -1 ? valueAndComment.substring(0, slashIndex) : valueAndComment).trim();
+
     let value: any;
-    if (valueStr.startsWith("'")) {
-      const endQuote = valueStr.lastIndexOf("'");
-      value = valueStr.slice(1, endQuote >= 1 ? endQuote : undefined);
-    } else if (valueStr === 'T' || valueStr === 'F') {
-      value = (valueStr === 'T');
-    } else {
-      value = Number(valueStr);
-      if (Number.isNaN(value)) value = valueStr;
+    if (valueStr.startsWith("'")) { // It's a string
+        value = valueStr.substring(1, valueStr.lastIndexOf("'")).trim();
+    } else if (valueStr === 'T') {
+        value = true;
+    } else if (valueStr === 'F') {
+        value = false;
+    } else { // It's a number
+        value = Number(valueStr);
+        if (isNaN(value)) {
+            value = valueStr; // Fallback to string if parsing fails
+        }
     }
     return { key, value };
   }
 
   let foundEND = false;
-  while (!foundEND && pos < bytes.length) {
-    for (let i = 0; i < blockSize; i += cardSize) {
-      if (pos + i + cardSize > bytes.length) {
-        throw new Error("Header parsing error: reached end of file unexpectedly.");
+  while (pos < bytes.length && !foundEND) {
+      for (let i = 0; i < blockSize; i += cardSize) {
+          const cardData = parseCard(pos + i);
+          if (cardData) {
+              if (cardData.key === 'END') {
+                  foundEND = true;
+                  break;
+              }
+              header.set(cardData.key, cardData.value);
+          }
       }
-      const { key, value } = parseCard(pos + i);
-      if (key === 'END') {
-        foundEND = true;
+      if (foundEND) {
+        pos += blockSize; // Move position to the end of the last header block
         break;
       }
-      if (key) {
-        header.set(key, value);
-      }
-    }
-    pos += blockSize;
+      pos += blockSize;
   }
   
   if (!foundEND) {
@@ -87,10 +99,10 @@ function parseFITSHeader(arrayBuffer: ArrayBuffer, logs: string[]): { header: Ma
 function readFITSImage(arrayBuffer: ArrayBuffer, header: Map<string, any>, dataOffset: number, logs: string[]): { width: number, height: number, pixels: Float32Array } {
   const dv = new DataView(arrayBuffer);
   const naxis = header.get('NAXIS') || 0;
-  if (naxis < 1) throw new Error(`Invalid NAXIS value: ${naxis}`);
+  if (naxis < 2) throw new Error(`Invalid NAXIS value: ${naxis}. Only 2D images are supported.`);
   
   const width = header.get('NAXIS1');
-  const height = naxis > 1 ? header.get('NAXIS2') : 1;
+  const height = header.get('NAXIS2');
   const bitpix = header.get('BITPIX');
   
   const bscale = header.get('BSCALE') ?? 1.0;
@@ -100,25 +112,29 @@ function readFITSImage(arrayBuffer: ArrayBuffer, header: Map<string, any>, dataO
   const pixels = new Float32Array(count);
   let offset = dataOffset;
 
-  let readFunc: (offset: number) => number;
   const bytesPerPixel = Math.abs(bitpix) / 8;
-
-  switch (bitpix) {
-      case 8: readFunc = (o) => dv.getUint8(o); break;
-      case 16: readFunc = (o) => dv.getInt16(o, false); break;
-      case 32: readFunc = (o) => dv.getInt32(o, false); break;
-      case -32: readFunc = (o) => dv.getFloat32(o, false); break;
-      case -64: readFunc = (o) => dv.getFloat64(o, false); break;
-      default: throw new Error(`Unsupported BITPIX value: ${bitpix}`);
-  }
 
   if (offset + count * bytesPerPixel > arrayBuffer.byteLength) {
       throw new Error(`FITS data is truncated. Header indicates ${count * bytesPerPixel} bytes of data after offset ${offset}, but buffer has only ${arrayBuffer.byteLength} bytes.`);
   }
 
-  for (let i = 0; i < count; i++) {
-    pixels[i] = readFunc(offset) * bscale + bzero;
-    offset += bytesPerPixel;
+  switch (bitpix) {
+      case 8:
+          for (let i = 0; i < count; i++, offset++) pixels[i] = bzero + bscale * dv.getUint8(offset);
+          break;
+      case 16:
+          for (let i = 0; i < count; i++, offset += 2) pixels[i] = bzero + bscale * dv.getUint16(offset, false);
+          break;
+      case 32:
+          for (let i = 0; i < count; i++, offset += 4) pixels[i] = bzero + bscale * dv.getInt32(offset, false);
+          break;
+      case -32:
+          for (let i = 0; i < count; i++, offset += 4) pixels[i] = bzero + bscale * dv.getFloat32(offset, false);
+          break;
+      case -64:
+          for (let i = 0; i < count; i++, offset += 8) pixels[i] = bzero + bscale * dv.getFloat64(offset, false);
+          break;
+      default: throw new Error(`Unsupported BITPIX value: ${bitpix}`);
   }
   
   let min = Infinity, max = -Infinity, sum = 0, finiteCount = 0;
