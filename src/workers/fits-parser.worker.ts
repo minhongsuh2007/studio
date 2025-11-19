@@ -11,12 +11,8 @@ self.onmessage = function (e: MessageEvent<{ arrayBuffer: ArrayBuffer; mode: 'lo
     const { width, height, pixels } = readFITSImage(arrayBuffer, header, dataOffset, logs);
 
     let gray: Uint8ClampedArray;
-    if (mode === 'log') {
-      gray = normalizeLog(pixels, logs);
-    } else {
-      // Fallback to sigma as it's generally good.
-      gray = normalizeSigma(pixels, logs, 3);
-    }
+    gray = normalizeLog(pixels, logs);
+
 
     self.postMessage({ header: Object.fromEntries(header), width, height, gray, logs });
   } catch (err: any) {
@@ -141,105 +137,52 @@ function readFITSImage(arrayBuffer: ArrayBuffer, header: Map<string, any>, dataO
 
 // --- Normalization Functions ---
 
-function normalizeSigma(pixels: Float32Array, logs: string[], sigma: number = 3): Uint8ClampedArray {
-  const finitePixels = Array.from(pixels).filter(Number.isFinite);
-  if (finitePixels.length === 0) return new Uint8ClampedArray(pixels.length);
-
-  const sum = finitePixels.reduce((a, b) => a + b, 0);
-  const mean = sum / finitePixels.length;
-
-  const variance = finitePixels.reduce((a, b) => a + (b - mean) ** 2, 0) / finitePixels.length;
-  const std = Math.sqrt(variance);
-  logs.push(`[Sigma] Normalizing with Mean=${mean.toFixed(2)}, StdDev=${std.toFixed(2)}`);
-
-  const min = mean - sigma * std;
-  const max = mean + sigma * std;
-  const range = (max - min) || 1;
-  logs.push(`[Sigma] Clipping to range [${min.toFixed(2)}, ${max.toFixed(2)}], Range=${range.toFixed(2)}`);
-
-  const out = new Uint8ClampedArray(pixels.length);
-  for (let i = 0; i < pixels.length; i++) {
-    let v = (pixels[i] - min) / range;
-    v = Math.max(0, Math.min(1, v));
-    out[i] = Math.round(v * 255);
-  }
-  return out;
-}
-
 function normalizeLog(pixels: Float32Array, logs: string[]): Uint8ClampedArray {
-    let min = Infinity;
-    let max = -Infinity;
+    const logPixels = new Float32Array(pixels.length);
+    let logMin = Infinity;
+    let logMax = -Infinity;
     
-    // Find the true min and max of the finite pixel data
-    for (const v of pixels) {
+    // Single pass to calculate log values and find min/max
+    for (let i = 0; i < pixels.length; i++) {
+        const v = pixels[i];
         if (Number.isFinite(v)) {
-            if (v < min) min = v;
-            if (v > max) max = v;
+            // Ensure value is positive before taking log
+            const logV = Math.log(Math.max(1, v)); 
+            logPixels[i] = logV;
+            if (logV < logMin) logMin = logV;
+            if (logV > logMax) logMax = logV;
+        } else {
+            logPixels[i] = -Infinity; // Mark non-finite as smallest
         }
     }
     
-    if (!Number.isFinite(min)) {
-        logs.push(`[LogNormalize] No finite pixels found.`);
+    if (!Number.isFinite(logMin)) {
+        logs.push(`[LogNormalize] No finite pixels found after log transform.`);
         return new Uint8ClampedArray(pixels.length);
     }
     
-    logs.push(`[LogNormalize] Full data range: Min=${min.toFixed(2)}, Max=${max.toFixed(2)}`);
-
-    // To prevent log(0) or log(negative), we shift the entire dataset so the minimum is a small positive number.
-    const shift = -min + 1; 
-    const shiftedMin = 1;
-    const shiftedMax = max + shift;
-
-    const logMin = Math.log(shiftedMin);
-    const logMax = Math.log(shiftedMax);
     const range = logMax - logMin;
-
-    if (range <= 0) {
-        logs.push(`[LogNormalize-WARN] Log range is <= 0. Returning linear scale.`);
-        return normalizeMinMax(pixels, logs);
-    }
-
-    logs.push(`[LogNormalize] Applying log scale to shifted range [${shiftedMin.toFixed(2)}, ${shiftedMax.toFixed(2)}]`);
+    logs.push(`[LogNormalize] Log-scaled range: [${logMin.toFixed(2)}, ${logMax.toFixed(2)}], Range=${range.toFixed(2)}`);
 
     const out = new Uint8ClampedArray(pixels.length);
-    for (let i = 0; i < pixels.length; i++) {
-        const v = pixels[i];
-        if (!Number.isFinite(v)) {
-            out[i] = 0;
-            continue;
+    if (range <= 0) {
+        logs.push(`[LogNormalize-WARN] Log range is <= 0. Returning flat image.`);
+        // If range is 0, all values are the same, return mid-gray
+        const midValue = 128;
+        for (let i = 0; i < pixels.length; i++) {
+             if(Number.isFinite(logPixels[i])) out[i] = midValue;
         }
-        
-        const shiftedValue = v + shift;
-        
-        let lv = (Math.log(shiftedValue) - logMin) / range;
-        
-        // Clamp to ensure value is between 0 and 1, just in case of float precision issues
-        lv = Math.max(0, Math.min(1, lv));
-
-        out[i] = Math.round(lv * 255);
+        return out;
     }
 
+    for (let i = 0; i < logPixels.length; i++) {
+        const lv = logPixels[i];
+        if (Number.isFinite(lv)) {
+            let normalized = (lv - logMin) / range;
+            out[i] = Math.round(Math.max(0, Math.min(1, normalized)) * 255);
+        } else {
+            out[i] = 0;
+        }
+    }
     return out;
-}
-
-
-function normalizeMinMax(pixels: Float32Array, logs: string[]): Uint8ClampedArray {
-  let min = Infinity, max = -Infinity;
-  for (const v of pixels) { if (Number.isFinite(v)) { if (v < min) min = v; if (v > max) max = v; } }
-  
-  if (!Number.isFinite(min)) {
-    logs.push('[MinMax] No finite pixels to determine range.');
-    return new Uint8ClampedArray(pixels.length);
-  }
-
-  const range = (max - min) || 1;
-  logs.push(`[MinMax] Normalizing with Min=${min}, Max=${max}, Range=${range}`);
-  const out = new Uint8ClampedArray(pixels.length);
-
-  for (let i = 0; i < pixels.length; i++) {
-    let v = (pixels[i] - min) / range;
-    if (!Number.isFinite(v)) v = 0;
-    out[i] = Math.round(Math.max(0, Math.min(1, v)) * 255);
-  }
-  return out;
 }
