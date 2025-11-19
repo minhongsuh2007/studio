@@ -1,7 +1,7 @@
 /// <reference lib="webworker" />
 
-self.onmessage = function (e: MessageEvent<{ arrayBuffer: ArrayBuffer; mode: 'log' | 'sigma' | 'minmax' }>) {
-  const { arrayBuffer, mode } = e.data;
+self.onmessage = function (e: MessageEvent<ArrayBuffer>) {
+  const arrayBuffer = e.data;
   try {
     const { header, dataOffset } = parseFITSHeader(arrayBuffer);
     const { width, height, pixels } = readFITSImage(arrayBuffer, header, dataOffset);
@@ -11,6 +11,7 @@ self.onmessage = function (e: MessageEvent<{ arrayBuffer: ArrayBuffer; mode: 'lo
     self.postMessage({ error: err.message });
   }
 };
+
 
 function parseFITSHeader(arrayBuffer: ArrayBuffer) {
   const bytes = new Uint8Array(arrayBuffer);
@@ -81,24 +82,14 @@ function readFITSImage(arrayBuffer: ArrayBuffer, header: Map<string, any>, dataO
 
   let readLogic: string;
   if (bitpix === 16) {
-    if (bzero === 32768 && bscale === 1) {
-      readLogic = `BITPIX 16 (Unsigned Offset) BZERO ${bzero}`;
-       for (let i = 0; i < count; i++, offset += 2) pixels[i] = dv.getUint16(offset, false) - bzero;
-    } else {
-      readLogic = `BITPIX 16 (Signed/Standard) BZERO ${bzero}`;
-      for (let i = 0; i < count; i++, offset += 2) pixels[i] = bzero + bscale * dv.getInt16(offset, false);
-    }
+    for (let i = 0; i < count; i++, offset += 2) pixels[i] = bzero + bscale * dv.getUint16(offset, false);
   } else if (bitpix === 8) {
-    readLogic = "BITPIX 8";
     for (let i = 0; i < count; i++, offset++) pixels[i] = bzero + bscale * dv.getUint8(offset);
   } else if (bitpix === 32) {
-    readLogic = "BITPIX 32 (Int)";
     for (let i = 0; i < count; i++, offset += 4) pixels[i] = bzero + bscale * dv.getInt32(offset, false);
   } else if (bitpix === -32) {
-    readLogic = "BITPIX -32 (Float)";
     for (let i = 0; i < count; i++, offset += 4) pixels[i] = bzero + bscale * dv.getFloat32(offset, false);
   } else if (bitpix === -64) {
-    readLogic = "BITPIX -64 (Double)";
     for (let i = 0; i < count; i++, offset += 8) pixels[i] = bzero + bscale * dv.getFloat64(offset, false);
   } else {
     throw new Error(`Unsupported BITPIX: ${bitpix}`);
@@ -123,8 +114,12 @@ function normalizeLog(pixels: Float32Array): Uint8ClampedArray {
     }
 
     if (!isFinite(min) || !isFinite(max)) {
-      // Handle cases where all pixels are 0 or negative
-      return new Uint8ClampedArray(pixels.length);
+      // Handle cases where all pixels are 0 or negative, or single value
+      const out = new Uint8ClampedArray(pixels.length);
+       for(let i=0; i<pixels.length; i++) {
+            out[i] = pixels[i] > 0 ? 128 : 0;
+       }
+       return out;
     }
 
     const logMin = Math.log(min);
