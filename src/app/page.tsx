@@ -367,9 +367,6 @@ export default function AstroStackerPage() {
         const worker = new Worker(new URL('../workers/fits-parser.worker.ts', import.meta.url));
         
         worker.onmessage = (e) => {
-          if (e.data.logs) {
-            e.data.logs.forEach((log: string) => addLog(`[FITS-WORKER] ${log}`));
-          }
           if (e.data.error) {
             addLog(`[FITS-WORKER-ERROR] for ${file.name}: ${e.data.error}`);
             worker.terminate();
@@ -421,7 +418,7 @@ export default function AstroStackerPage() {
         };
 
         const arrayBuffer = await file.arrayBuffer();
-        worker.postMessage({ arrayBuffer, mode: 'log' }, [arrayBuffer]);
+        worker.postMessage(arrayBuffer, [arrayBuffer]);
 
       } else if (file.type.startsWith('image/')) {
         // Standard image processing logic
