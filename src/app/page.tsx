@@ -420,7 +420,7 @@ export default function AstroStackerPage() {
         };
 
         const arrayBuffer = await file.arrayBuffer();
-        worker.postMessage({ arrayBuffer, mode: 'sigma' }, [arrayBuffer]);
+        worker.postMessage({ arrayBuffer, mode: 'log' }, [arrayBuffer]);
 
       } else if (file.type.startsWith('image/')) {
         // Standard image processing logic

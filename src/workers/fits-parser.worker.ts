@@ -12,8 +12,8 @@ self.onmessage = function(e: MessageEvent<{ arrayBuffer: ArrayBuffer; mode: 'sig
     const { width, height, pixels } = readFITSImage(arrayBuffer, header, dataOffset, logs);
     
     let gray;
-    if (mode === 'sigma') gray = normalizeSigma(pixels, logs, 3);
-    else if (mode === 'log') gray = normalizeLog(pixels, logs);
+    if (mode === 'log') gray = normalizeLog(pixels, logs);
+    else if (mode === 'sigma') gray = normalizeSigma(pixels, logs, 3);
     else gray = normalizeMinMax(pixels, logs);
 
     self.postMessage({ header: Object.fromEntries(header), width, height, gray, logs });
@@ -37,7 +37,8 @@ function parseFITSHeader(arrayBuffer: ArrayBuffer, logs: string[]): { header: Ma
     if (key === 'END') return { key: 'END', value: null };
     
     if (card[8] !== '=' || card[9] !== ' ') {
-      header.set(key, card.slice(9).trim());
+      // Handle cases where there is no value, just a keyword (e.g., HISTORY, COMMENT)
+      // For simplicity, we can ignore these for image parsing.
       return null;
     }
 
@@ -47,15 +48,18 @@ function parseFITSHeader(arrayBuffer: ArrayBuffer, logs: string[]): { header: Ma
 
     let value: any;
     if (valueStr.startsWith("'")) {
+        // String value
         value = valueStr.substring(1, valueStr.lastIndexOf("'")).trim();
     } else if (valueStr === 'T') {
         value = true;
     } else if (valueStr === 'F') {
         value = false;
     } else {
+        // Numeric or other value
         value = Number(valueStr);
         if (isNaN(value)) {
-            value = valueStr;
+            // If it's not a number, treat it as a raw string if it's not empty
+            value = valueStr !== '' ? valueStr : null;
         }
     }
     return { key, value };
@@ -78,7 +82,6 @@ function parseFITSHeader(arrayBuffer: ArrayBuffer, logs: string[]): { header: Ma
           }
       }
       if (foundEND) {
-        // The data unit starts after the header block containing END
         pos += blockSize;
         break;
       }
@@ -130,13 +133,8 @@ function readFITSImage(arrayBuffer: ArrayBuffer, header: Map<string, any>, dataO
           for (let i = 0; i < count; i++, offset++) pixels[i] = bzero + bscale * dv.getUint8(offset);
           break;
       case 16:
-          if (bzero === 32768 && bscale === 1) {
-              logs.push('Using BITPIX 16 logic for unsigned integers (BZERO=32768).');
-              for (let i = 0; i < count; i++, offset += 2) pixels[i] = dv.getUint16(offset, false) - bzero;
-          } else {
-              logs.push('Using BITPIX 16 logic for signed integers.');
-              for (let i = 0; i < count; i++, offset += 2) pixels[i] = bzero + bscale * dv.getInt16(offset, false);
-          }
+          logs.push('Using BITPIX 16 logic (Int16).');
+          for (let i = 0; i < count; i++, offset += 2) pixels[i] = bzero + bscale * dv.getInt16(offset, false);
           break;
       case 32:
           logs.push('Using BITPIX 32 logic (Int32).');
@@ -210,22 +208,44 @@ function normalizeSigma(pixels: Float32Array, logs: string[], sigma = 3): Uint8C
 }
 
 function normalizeLog(pixels: Float32Array, logs: string[]): Uint8ClampedArray {
-  let min=Infinity,max=-Infinity;
-  for(const v of pixels){if(v>0 && Number.isFinite(v)){if(v<min)min=v;if(v>max)max=v;}}
-  if (!Number.isFinite(min)) {
-    logs.push('[Log] No positive finite pixels found for log scale. Returning black image.');
-    return new Uint8ClampedArray(pixels.length);
+  // 1. Subtract mean
+  let sum = 0, count = 0;
+  for (const v of pixels) {
+    sum += v;
+    count++;
   }
-  const logMin=Math.log(min), logMax=Math.log(max), range=logMax-logMin || 1;
-  logs.push(`[Log] Normalizing with positive Min=${min}, Max=${max}. Log Range=[${logMin.toFixed(2)}, ${logMax.toFixed(2)}]`);
+  const mean = sum / count;
+
+  // 2. Find min/max of the adjusted, positive values
+  let min = Infinity, max = -Infinity;
+  for (const v of pixels) {
+    const adj = v - mean;
+    if (adj > 0) {
+      if (adj < min) min = adj;
+      if (adj > max) max = adj;
+    }
+  }
+
+  if (!Number.isFinite(min)) {
+    logs.push(`[Log] No pixel values above the mean (${mean.toFixed(2)}) were found. Falling back to MinMax normalization.`);
+    return normalizeMinMax(pixels, logs);
+  }
+
+  const logMin = Math.log(min);
+  const logMax = Math.log(max);
+  const range = logMax - logMin || 1;
+  logs.push(`[Log] Normalizing with Mean=${mean.toFixed(2)}, Positive Adjusted Min/Max=[${min.toFixed(2)}, ${max.toFixed(2)}], Log Range=${range.toFixed(2)}`);
   
-  const out=new Uint8ClampedArray(pixels.length);
-  for(let i=0;i<pixels.length;i++){
-    let v=pixels[i];
-    if(v<=0 || !Number.isFinite(v)){out[i]=0;continue;}
-    let lv=(Math.log(v)-logMin)/range;
-    lv=Math.max(0,Math.min(1,lv));
-    out[i]=Math.round(lv*255);
+  const out = new Uint8ClampedArray(pixels.length);
+  for (let i = 0; i < pixels.length; i++) {
+    const adj = pixels[i] - mean;
+    if (adj <= 0) {
+      out[i] = 0;
+      continue;
+    }
+    let lv = (Math.log(adj) - logMin) / range;
+    lv = Math.max(0, Math.min(1, lv)); // Clamp to 0-1 range
+    out[i] = Math.round(lv * 255);
   }
   return out;
 }
