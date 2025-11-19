@@ -36,27 +36,16 @@ export function CurveEditor({ curves, onCurveChange, histogram }: CurveEditorPro
     
     const points = curves[activeChannel];
 
-    // Clear canvas and draw background
+    // Clear canvas
     ctx.fillStyle = 'hsl(var(--card))';
     ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
 
-    // Draw grid
-    ctx.strokeStyle = 'hsl(var(--border))';
-    ctx.lineWidth = 0.5;
-    for (let i = 1; i < 4; i++) {
-        ctx.beginPath();
-        ctx.moveTo((i * CANVAS_SIZE) / 4, 0);
-        ctx.lineTo((i * CANVAS_SIZE) / 4, CANVAS_SIZE);
-        ctx.moveTo(0, (i * CANVAS_SIZE) / 4);
-        ctx.lineTo(CANVAS_SIZE, (i * CANVAS_SIZE) / 4);
-        ctx.stroke();
-    }
-    
-    // Draw histogram in the background
+    // Draw histogram in the background FIRST
     const drawHistogramChannel = (channelKey: 'r' | 'g' | 'b', color: string) => {
+        if (!histogram || histogram.length === 0) return;
         const maxHistValue = Math.max(...histogram.map(h => h[channelKey]));
         if (maxHistValue > 0) {
-            ctx.fillStyle = `${color}22`; // transparent color
+            ctx.fillStyle = `${color}44`; // Increased opacity
             for (let i = 0; i < 256; i++) {
                 const h = (histogram[i][channelKey] / maxHistValue) * CANVAS_SIZE;
                 if (h > 0) {
@@ -74,7 +63,18 @@ export function CurveEditor({ curves, onCurveChange, histogram }: CurveEditorPro
         drawHistogramChannel(activeChannel, channelColors[activeChannel]);
     }
 
-
+    // Draw grid OVER the histogram
+    ctx.strokeStyle = 'hsl(var(--border))';
+    ctx.lineWidth = 0.5;
+    for (let i = 1; i < 4; i++) {
+        ctx.beginPath();
+        ctx.moveTo((i * CANVAS_SIZE) / 4, 0);
+        ctx.lineTo((i * CANVAS_SIZE) / 4, CANVAS_SIZE);
+        ctx.moveTo(0, (i * CANVAS_SIZE) / 4);
+        ctx.lineTo(CANVAS_SIZE, (i * CANVAS_SIZE) / 4);
+        ctx.stroke();
+    }
+    
     // Draw the curve
     ctx.strokeStyle = channelColors[activeChannel];
     ctx.lineWidth = 2;
