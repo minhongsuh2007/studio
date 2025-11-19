@@ -5,7 +5,7 @@ self.onmessage = function (e: MessageEvent<ArrayBuffer>) {
   try {
     const { header, dataOffset } = parseFITSHeader(arrayBuffer);
     const { width, height, pixels } = readFITSImage(arrayBuffer, header, dataOffset);
-    const gray = normalizeLog(pixels);
+    const gray = normalizeLinear(pixels);
     self.postMessage({ header: Object.fromEntries(header), width, height, gray });
   } catch (err: any) {
     self.postMessage({ error: err.message });
@@ -100,48 +100,32 @@ function readFITSImage(arrayBuffer: ArrayBuffer, header: Map<string, any>, dataO
 
 // --- Normalization Functions ---
 
-function normalizeLog(pixels: Float32Array): Uint8ClampedArray {
-    let sum = 0;
-    for (let i = 0; i < pixels.length; i++) {
-        sum += pixels[i];
-    }
-    const mean = sum / pixels.length;
-
+function normalizeLinear(pixels: Float32Array): Uint8ClampedArray {
     let min = Infinity;
     let max = -Infinity;
-    for (let i = 0; i < pixels.length; i++) {
-        if (pixels[i] > mean) {
-            const v = pixels[i];
-            if (v < min) min = v;
-            if (v > max) max = v;
-        }
+    for(let i = 0; i < pixels.length; i++) {
+        const v = pixels[i];
+        if (v < min) min = v;
+        if (v > max) max = v;
     }
 
-    if (!isFinite(min) || !isFinite(max) || min === max) {
-        // Not enough signal above the mean, return a black image.
-        return new Uint8ClampedArray(pixels.length);
-    }
-    
-    const logMin = Math.log(min);
-    const logMax = Math.log(max);
-    const range = logMax - logMin;
+    const range = max - min;
     const out = new Uint8ClampedArray(pixels.length);
 
     if (range <= 0) {
-        for(let i=0; i<pixels.length; i++) {
-            out[i] = pixels[i] > mean ? 128 : 0;
+        // Handle case where all pixels are the same value
+        const val = (min === max) ? 128 : 0;
+        for (let i = 0; i < pixels.length; i++) {
+            out[i] = val;
         }
         return out;
     }
 
     for (let i = 0; i < pixels.length; i++) {
         const v = pixels[i];
-        if (v <= mean) {
-            out[i] = 0;
-        } else {
-            const lv = (Math.log(v) - logMin) / range;
-            out[i] = Math.round(Math.max(0, Math.min(1, lv)) * 255);
-        }
+        const normalized = (v - min) / range;
+        out[i] = Math.round(normalized * 255);
     }
+
     return out;
 }
