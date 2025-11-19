@@ -2,26 +2,17 @@
 
 self.onmessage = function (e: MessageEvent<{ arrayBuffer: ArrayBuffer; mode: 'log' | 'sigma' | 'minmax' }>) {
   const { arrayBuffer, mode } = e.data;
-
-  const logs: string[] = [];
-  logs.push(`[FITS-WORKER] Worker received ${arrayBuffer.byteLength} bytes. Mode: ${mode}`);
-
   try {
-    const { header, dataOffset } = parseFITSHeader(arrayBuffer, logs);
-    const { width, height, pixels } = readFITSImage(arrayBuffer, header, dataOffset, logs);
-
-    let gray: Uint8ClampedArray;
-    gray = normalizeLog(pixels, logs);
-
-
-    self.postMessage({ header: Object.fromEntries(header), width, height, gray, logs });
+    const { header, dataOffset } = parseFITSHeader(arrayBuffer);
+    const { width, height, pixels } = readFITSImage(arrayBuffer, header, dataOffset);
+    const gray = normalizeLog(pixels);
+    self.postMessage({ header: Object.fromEntries(header), width, height, gray });
   } catch (err: any) {
-    logs.push(`[FITS-WORKER-ERROR] ${err.message}`);
-    self.postMessage({ error: err.message, logs });
+    self.postMessage({ error: err.message });
   }
 };
 
-function parseFITSHeader(arrayBuffer: ArrayBuffer, logs: string[]) {
+function parseFITSHeader(arrayBuffer: ArrayBuffer) {
   const bytes = new Uint8Array(arrayBuffer);
   const cardSize = 80;
   const blockSize = 2880;
@@ -49,7 +40,7 @@ function parseFITSHeader(arrayBuffer: ArrayBuffer, logs: string[]) {
     } else {
       value = Number(valueStr);
       if (Number.isNaN(value)) {
-        value = valueStr; // Keep as string if not a valid number
+        value = valueStr; 
       }
     }
     return { key, value };
@@ -73,16 +64,11 @@ function parseFITSHeader(arrayBuffer: ArrayBuffer, logs: string[]) {
   
   const dataOffset = Math.ceil(pos / blockSize) * blockSize;
   
-  logs.push(`Header parsed. Found ${header.size} keywords. Data offset: ${dataOffset}`);
-  ['BITPIX', 'NAXIS', 'NAXIS1', 'NAXIS2', 'BSCALE', 'BZERO'].forEach(k => {
-    if(header.has(k)) logs.push(`- ${k}: ${header.get(k)}`);
-  });
-
   return { header, dataOffset };
 }
 
 
-function readFITSImage(arrayBuffer: ArrayBuffer, header: Map<string, any>, dataOffset: number, logs: string[]) {
+function readFITSImage(arrayBuffer: ArrayBuffer, header: Map<string, any>, dataOffset: number) {
   const dv = new DataView(arrayBuffer);
   const width = header.get('NAXIS1');
   const height = header.get('NAXIS2');
@@ -93,13 +79,13 @@ function readFITSImage(arrayBuffer: ArrayBuffer, header: Map<string, any>, dataO
   const pixels = new Float32Array(count);
   let offset = dataOffset;
 
-  let readLogic = "Unknown BITPIX";
+  let readLogic: string;
   if (bitpix === 16) {
-    if (bzero === 32768) {
-      readLogic = `BITPIX 16 (Unsigned), BZERO ${bzero}`;
-      for (let i = 0; i < count; i++, offset += 2) pixels[i] = dv.getUint16(offset, false) - bzero;
+    if (bzero === 32768 && bscale === 1) {
+      readLogic = `BITPIX 16 (Unsigned Offset) BZERO ${bzero}`;
+       for (let i = 0; i < count; i++, offset += 2) pixels[i] = dv.getUint16(offset, false) - bzero;
     } else {
-      readLogic = `BITPIX 16 (Signed), BZERO ${bzero}`;
+      readLogic = `BITPIX 16 (Signed/Standard) BZERO ${bzero}`;
       for (let i = 0; i < count; i++, offset += 2) pixels[i] = bzero + bscale * dv.getInt16(offset, false);
     }
   } else if (bitpix === 8) {
@@ -118,70 +104,52 @@ function readFITSImage(arrayBuffer: ArrayBuffer, header: Map<string, any>, dataO
     throw new Error(`Unsupported BITPIX: ${bitpix}`);
   }
 
-  logs.push(`[FITS-READ] Reading pixels using logic: ${readLogic}`);
-
-  let min = Infinity, max = -Infinity, sum = 0, finiteCount = 0;
-  for (const v of pixels) {
-    if (Number.isFinite(v)) {
-      if (v < min) min = v;
-      if (v > max) max = v;
-      sum += v;
-      finiteCount++;
-    }
-  }
-  logs.push(`Image data read. Total Pixels: ${count}. Finite Pixels: ${finiteCount}.`);
-  logs.push(`Raw Pixel Stats: Min=${min}, Max=${max}, Avg=${finiteCount > 0 ? sum / finiteCount : 'N/A'}`);
-
   return { width, height, pixels };
 }
 
 // --- Normalization Functions ---
 
-function normalizeLog(pixels: Float32Array, logs: string[]): Uint8ClampedArray {
-    const logPixels = new Float32Array(pixels.length);
-    let logMin = Infinity;
-    let logMax = -Infinity;
+function normalizeLog(pixels: Float32Array): Uint8ClampedArray {
+    let min = Infinity;
+    let max = -Infinity;
     
-    // Single pass to calculate log values and find min/max
+    // First pass: find min and max of positive values
     for (let i = 0; i < pixels.length; i++) {
         const v = pixels[i];
-        if (Number.isFinite(v)) {
-            // Ensure value is positive before taking log
-            const logV = Math.log(Math.max(1, v)); 
-            logPixels[i] = logV;
-            if (logV < logMin) logMin = logV;
-            if (logV > logMax) logMax = logV;
-        } else {
-            logPixels[i] = -Infinity; // Mark non-finite as smallest
+        if (v > 0) {
+            if (v < min) min = v;
+            if (v > max) max = v;
         }
     }
-    
-    if (!Number.isFinite(logMin)) {
-        logs.push(`[LogNormalize] No finite pixels found after log transform.`);
-        return new Uint8ClampedArray(pixels.length);
-    }
-    
-    const range = logMax - logMin;
-    logs.push(`[LogNormalize] Log-scaled range: [${logMin.toFixed(2)}, ${logMax.toFixed(2)}], Range=${range.toFixed(2)}`);
 
+    if (!isFinite(min) || !isFinite(max)) {
+      // Handle cases where all pixels are 0 or negative
+      return new Uint8ClampedArray(pixels.length);
+    }
+
+    const logMin = Math.log(min);
+    const logMax = Math.log(max);
+    const range = logMax - logMin;
+    
     const out = new Uint8ClampedArray(pixels.length);
+    
     if (range <= 0) {
-        logs.push(`[LogNormalize-WARN] Log range is <= 0. Returning flat image.`);
-        // If range is 0, all values are the same, return mid-gray
-        const midValue = 128;
-        for (let i = 0; i < pixels.length; i++) {
-             if(Number.isFinite(logPixels[i])) out[i] = midValue;
+        // If range is 0, all positive values are the same.
+        // Map them to a mid-gray value.
+        for(let i=0; i<pixels.length; i++) {
+            out[i] = pixels[i] > 0 ? 128 : 0;
         }
         return out;
     }
 
-    for (let i = 0; i < logPixels.length; i++) {
-        const lv = logPixels[i];
-        if (Number.isFinite(lv)) {
-            let normalized = (lv - logMin) / range;
-            out[i] = Math.round(Math.max(0, Math.min(1, normalized)) * 255);
-        } else {
+    // Second pass: apply normalization
+    for (let i = 0; i < pixels.length; i++) {
+        const v = pixels[i];
+        if (v <= 0) {
             out[i] = 0;
+        } else {
+            const lv = (Math.log(v) - logMin) / range;
+            out[i] = Math.round(Math.max(0, Math.min(1, lv)) * 255);
         }
     }
     return out;
