@@ -17,7 +17,7 @@ const CANVAS_SIZE = 256;
 const POINT_RADIUS = 5;
 
 const channelColors = {
-  rgb: 'black',
+  rgb: 'white',
   r: '#FF6B6B',
   g: '#4ECDC4',
   b: '#45B7D1',
