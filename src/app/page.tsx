@@ -45,7 +45,7 @@ import { detectStarsAdvanced } from '@/lib/siril-like-detection';
 export const dynamic = 'force-static';
 
 const MIN_VALID_DATA_URL_LENGTH = 100;
-const IS_LARGE_IMAGE_THRESHOLD_MP = 12;
+const LARGE_FILE_SIZE_THRESHOLD_BYTES = 10 * 1024 * 1024; // 10MB
 const MAX_DIMENSION_DOWNSCALED = 2048;
 const TF_MODEL_STORAGE_KEY = 'localstorage://astrostacker-model';
 const STAR_CATEGORY_STORAGE_KEY = 'astrostacker-star-categories';
@@ -438,9 +438,9 @@ export default function AstroStackerPage() {
             let analysisDimensions = { ...originalDimensions };
             let analysisPreviewUrl = originalPreviewUrl;
     
-            const isLarge = (originalDimensions.width * originalDimensions.height) / 1_000_000 > IS_LARGE_IMAGE_THRESHOLD_MP;
+            const isLarge = file.size > LARGE_FILE_SIZE_THRESHOLD_BYTES;
             if (isLarge) {
-              addLog(`[INFO] Image ${file.name} is large (${originalDimensions.width}x${originalDimensions.height}). It will be downscaled for analysis.`);
+              addLog(`[INFO] Image ${file.name} is large (${(file.size / 1024 / 1024).toFixed(1)}MB). It will be downscaled for analysis.`);
               const canvas = document.createElement('canvas');
               const ctx = canvas.getContext('2d');
               if (ctx) {
@@ -1695,3 +1695,4 @@ export default function AstroStackerPage() {
     </div>
   );
 }
+ 
