@@ -3,13 +3,12 @@
 import type React from 'react';
 import { useRef, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import type { Point, Curve, Channel } from '@/types';
 
 // --- Type Definitions ---
 interface CurveEditorProps {
     curves: Curve;
-    onCurveChange: (channel: Channel, newPoints: Point[]) => void;
+    onCurveChange: (channel: 'rgb', newPoints: Point[]) => void;
     histogram: { r: number, g: number, b: number }[];
 }
 
@@ -18,20 +17,15 @@ const CANVAS_SIZE = 256;
 const POINT_RADIUS = 5;
 const CHANNEL_COLORS = {
   rgb: 'white',
-  r: '#FF6B6B',
-  g: '#4ECDC4',
-  b: '#45B7D1',
 };
-const BACKGROUND_COLOR_CARD = 'hsl(var(--card))';
 const BACKGROUND_COLOR_BLACK = 'black';
 const GRID_COLOR = 'hsl(var(--border))';
 
 // --- Drawing Helper Functions (ensuring no state pollution) ---
 
 /** Draws the base background of the canvas. */
-const drawBackground = (ctx: CanvasRenderingContext2D, channel: Channel) => {
-    ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
-    ctx.fillStyle = channel === 'rgb' ? BACKGROUND_COLOR_BLACK : BACKGROUND_COLOR_CARD;
+const drawBackground = (ctx: CanvasRenderingContext2D) => {
+    ctx.fillStyle = BACKGROUND_COLOR_BLACK;
     ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
 };
 
@@ -39,14 +33,14 @@ const drawBackground = (ctx: CanvasRenderingContext2D, channel: Channel) => {
 const drawHistogram = (
     ctx: CanvasRenderingContext2D,
     histogram: { r: number, g: number, b: number }[],
-    channels: ('r' | 'g' | 'b')[]
 ) => {
     if (!histogram || histogram.length === 0) return;
     const maxHistValue = Math.max(...histogram.map(h => Math.max(h.r, h.g, h.b)));
     if (maxHistValue <= 0) return;
 
-    for (const channelKey of channels) {
-        const color = CHANNEL_COLORS[channelKey];
+    const histChannels: ('r' | 'g' | 'b')[] = ['r', 'g', 'b'];
+    for (const channelKey of histChannels) {
+        const color = { r: '#FF6B6B', g: '#4ECDC4', b: '#45B7D1' }[channelKey];
         ctx.fillStyle = `${color}44`; // Apply transparency
         for (let i = 0; i < 256; i++) {
             const h = (histogram[i][channelKey] / maxHistValue) * CANVAS_SIZE;
@@ -115,8 +109,9 @@ const drawPoints = (ctx: CanvasRenderingContext2D, points: Point[], color: strin
 // --- Main Component ---
 export function CurveEditor({ curves, onCurveChange, histogram }: CurveEditorProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [activeChannel, setActiveChannel] = useState<Channel>('rgb');
   const [draggingPointIndex, setDraggingPointIndex] = useState<number | null>(null);
+
+  const activeChannel = 'rgb';
 
   // The main drawing effect. Redraws whenever dependencies change.
   useEffect(() => {
@@ -131,11 +126,10 @@ export function CurveEditor({ curves, onCurveChange, histogram }: CurveEditorPro
     // Use requestAnimationFrame to sync with the browser's repaint cycle
     const animationFrameId = requestAnimationFrame(() => {
         // 1. Draw Background
-        drawBackground(ctx, activeChannel);
+        drawBackground(ctx);
 
         // 2. Draw Histogram
-        const histChannels: ('r' | 'g' | 'b')[] = activeChannel === 'rgb' ? ['r', 'g', 'b'] : [activeChannel];
-        drawHistogram(ctx, histogram, histChannels);
+        drawHistogram(ctx, histogram);
 
         // 3. Draw Grid
         drawGrid(ctx);
@@ -149,7 +143,7 @@ export function CurveEditor({ curves, onCurveChange, histogram }: CurveEditorPro
 
     return () => cancelAnimationFrame(animationFrameId);
 
-  }, [activeChannel, curves, histogram]);
+  }, [curves, histogram]);
 
   const getMousePos = (e: React.MouseEvent): Point => {
     const canvas = canvasRef.current;
@@ -222,14 +216,6 @@ export function CurveEditor({ curves, onCurveChange, histogram }: CurveEditorPro
 
   return (
     <div className="space-y-2">
-      <Tabs value={activeChannel} onValueChange={(v) => { setActiveChannel(v as Channel); setDraggingPointIndex(null); }} className="w-full">
-        <TabsList className="grid w-full grid-cols-4">
-          <TabsTrigger value="rgb">RGB</TabsTrigger>
-          <TabsTrigger value="r">R</TabsTrigger>
-          <TabsTrigger value="g">G</TabsTrigger>
-          <TabsTrigger value="b">B</TabsTrigger>
-        </TabsList>
-      </Tabs>
       <canvas
         ref={canvasRef}
         width={CANVAS_SIZE}
@@ -242,7 +228,7 @@ export function CurveEditor({ curves, onCurveChange, histogram }: CurveEditorPro
         onDoubleClick={handleDoubleClick}
       />
       <Button variant="outline" size="sm" onClick={handleResetChannel} className="w-full">
-        Reset {activeChannel.toUpperCase()} Channel
+        Reset Curve
       </Button>
     </div>
   );

@@ -68,9 +68,6 @@ const initialPostProcessSettings: PostProcessSettings = {
   basic: { brightness: 100, exposure: 0, saturation: 100 },
   curves: {
     rgb: [{ x: 0, y: 0 }, { x: 255, y: 255 }],
-    r: [{ x: 0, y: 0 }, { x: 255, y: 255 }],
-    g: [{ x: 0, y: 0 }, { x: 255, y: 255 }],
-    b: [{ x: 0, y: 0 }, { x: 255, y: 255 }],
   },
   colorBalance: {
     shadows: { r: 0, g: 0, b: 0 },
@@ -1689,5 +1686,3 @@ export default function AstroStackerPage() {
     </div>
   );
 }
-
-    

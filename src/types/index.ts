@@ -70,13 +70,10 @@ export interface Point {
   y: number;
 }
 
-export type Channel = 'rgb' | 'r' | 'g' | 'b';
+export type Channel = 'rgb';
 
 export interface Curve {
   rgb: Point[];
-  r: Point[];
-  g: Point[];
-  b: Point[];
 }
 
 export interface Rgb {
@@ -109,5 +106,3 @@ export type OutputFormat = 'png' | 'jpeg';
 export type AlignmentMethod = 'standard' | 'consensus' | 'planetary' | 'dumb';
 export type StackingQuality = 'standard' | 'high';
 export type StarDetectionMethod = 'general' | 'ai' | 'advanced';
-
-    

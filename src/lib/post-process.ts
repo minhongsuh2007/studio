@@ -88,9 +88,6 @@ export async function applyPostProcessing(
 
     // --- Create LUTs from Curves ---
     const lutRgb = createLutFromPoints(curves.rgb);
-    const lutR = createLutFromPoints(curves.r);
-    const lutG = createLutFromPoints(curves.g);
-    const lutB = createLutFromPoints(curves.b);
     
     // --- Apply all adjustments ---
     const bFactor = basic.brightness / 100;
@@ -98,9 +95,9 @@ export async function applyPostProcessing(
 
     for (let i = 0; i < data.length; i += 4) {
       // 1. Apply Tone Curves
-      let r = lutR[lutRgb[data[i]]];
-      let g = lutG[lutRgb[data[i+1]]];
-      let b = lutB[lutRgb[data[i+2]]];
+      let r = lutRgb[data[i]];
+      let g = lutRgb[data[i+1]];
+      let b = lutRgb[data[i+2]];
 
       // 2. Apply Basic Adjustments (Brightness/Exposure)
       r = Math.min(255, Math.max(0, r * eFactor * bFactor));
@@ -135,5 +132,3 @@ export async function applyPostProcessing(
 
     return canvas.toDataURL(outputFormat === 'jpeg' ? 'image/jpeg' : 'image/png', jpegQuality);
 }
-
-    
