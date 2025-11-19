@@ -114,23 +114,23 @@ function normalizeLog(pixels: Float32Array): Uint8ClampedArray {
     }
 
     if (!isFinite(min) || !isFinite(max)) {
-      // Handle cases where all pixels are 0 or negative, or single value
+      // Handle cases where all pixels are 0 or negative
       const out = new Uint8ClampedArray(pixels.length);
        for(let i=0; i<pixels.length; i++) {
-            out[i] = pixels[i] > 0 ? 128 : 0;
+            out[i] = 0;
        }
        return out;
     }
-
+    
     const logMin = Math.log(min);
     const logMax = Math.log(max);
     const range = logMax - logMin;
+    const gamma = 0.5; // less than 1 to brighten midtones
     
     const out = new Uint8ClampedArray(pixels.length);
     
     if (range <= 0) {
-        // If range is 0, all positive values are the same.
-        // Map them to a mid-gray value.
+        // If range is 0, all positive values are the same. Map them to mid-gray.
         for(let i=0; i<pixels.length; i++) {
             out[i] = pixels[i] > 0 ? 128 : 0;
         }
@@ -144,7 +144,8 @@ function normalizeLog(pixels: Float32Array): Uint8ClampedArray {
             out[i] = 0;
         } else {
             const lv = (Math.log(v) - logMin) / range;
-            out[i] = Math.round(Math.max(0, Math.min(1, lv)) * 255);
+            const gammaCorrected = Math.pow(lv, gamma);
+            out[i] = Math.round(Math.max(0, Math.min(1, gammaCorrected)) * 255);
         }
     }
     return out;
