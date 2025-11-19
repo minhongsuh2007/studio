@@ -5,7 +5,7 @@ self.onmessage = function(e: MessageEvent<ArrayBuffer>) {
   try {
     const { header, dataOffset } = parseFITSHeader(arrayBuffer);
     const { width, height, pixels } = readFITSImage(arrayBuffer, header, dataOffset);
-    const gray = normalizeLog(pixels); // 로그 스케일 적용
+    const gray = normalizeLog(pixels);
     self.postMessage({ header: Object.fromEntries(header), width, height, gray });
   } catch (err: any) {
     self.postMessage({ error: err.message });
@@ -63,10 +63,8 @@ function readFITSImage(arrayBuffer: ArrayBuffer, header: Map<string, any>, dataO
   let offset = dataOffset;
 
   if (bitpix === 16) {
-    // unsigned 16-bit로 읽기
     for (let i = 0; i < count; i++, offset += 2) {
-      const raw = dv.getUint16(offset, false);
-      pixels[i] = raw * bscale + bzero;
+      pixels[i] = dv.getUint16(offset, false) * bscale + bzero;
     }
   } else if (bitpix === 8) {
     for (let i = 0; i < count; i++, offset++) pixels[i] = dv.getUint8(offset) * bscale + bzero;
@@ -83,16 +81,33 @@ function readFITSImage(arrayBuffer: ArrayBuffer, header: Map<string, any>, dataO
 }
 
 function normalizeLog(pixels: Float32Array): Uint8ClampedArray {
-  let min=Infinity,max=-Infinity;
-  for(const v of pixels){if(v>0){if(v<min)min=v;if(v>max)max=v;}}
-  const logMin=Math.log(min), logMax=Math.log(max), range=logMax-logMin;
-  const out=new Uint8ClampedArray(pixels.length);
-  for(let i=0;i<pixels.length;i++){
-    let v=pixels[i];
-    if(v<=0){out[i]=0;continue;}
-    let lv=(Math.log(v)-logMin)/range;
-    lv=Math.max(0,Math.min(1,lv));
-    out[i]=Math.round(lv*255);
+  let min = Infinity, max = -Infinity;
+  for (const v of pixels) {
+    if (v > 0 && Number.isFinite(v)) {
+      if (v < min) min = v;
+      if (v > max) max = v;
+    }
+  }
+
+  if (!Number.isFinite(min) || !Number.isFinite(max)) {
+     // If no valid positive pixels found, return a black image.
+    return new Uint8ClampedArray(pixels.length);
+  }
+
+  const logMin = Math.log(min);
+  const logMax = Math.log(max);
+  const range = logMax - logMin;
+  const out = new Uint8ClampedArray(pixels.length);
+
+  for (let i = 0; i < pixels.length; i++) {
+    const v = pixels[i];
+    if (v > 0) {
+      let lv = (Math.log(v) - logMin) / range;
+      lv = Math.max(0, Math.min(1, lv)); // Clamp to [0, 1]
+      out[i] = Math.round(lv * 255);
+    } else {
+      out[i] = 0; // Set non-positive values to black
+    }
   }
   return out;
 }
