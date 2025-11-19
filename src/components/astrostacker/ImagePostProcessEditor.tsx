@@ -73,8 +73,8 @@ export function ImagePostProcessEditor({
     document.body.removeChild(link);
   };
   
-  const handleBasicSettingsChange = (newBasics: PostProcessSettings['basic']) => {
-    onSettingsChange({ ...settings, basic: newBasics });
+  const handleBasicSettingsChange = (newBasics: Partial<PostProcessSettings['basic']>) => {
+    onSettingsChange({ ...settings, basic: { ...settings.basic, ...newBasics } });
   };
   
   const handleCurveChange = (channel: Channel, newPoints: Point[]) => {
@@ -154,15 +154,27 @@ export function ImagePostProcessEditor({
                   <TabsContent value="basic" className="p-1 space-y-6 mt-4">
                       <div className="space-y-3">
                         <Label htmlFor="brightnessSlider">Brightness: {settings.basic.brightness.toFixed(0)}%</Label>
-                        <Slider id="brightnessSlider" value={[settings.basic.brightness]} onValueChange={([v]) => handleBasicSettingsChange({...settings.basic, brightness: v})} min={0} max={200} step={1} disabled={isAdjusting} />
+                        <Slider id="brightnessSlider" value={[settings.basic.brightness]} onValueChange={([v]) => handleBasicSettingsChange({ brightness: v })} min={0} max={200} step={1} disabled={isAdjusting} />
                       </div>
                       <div className="space-y-3">
                         <Label htmlFor="exposureSlider">Exposure: {settings.basic.exposure.toFixed(0)}</Label>
-                        <Slider id="exposureSlider" value={[settings.basic.exposure]} onValueChange={([v]) => handleBasicSettingsChange({...settings.basic, exposure: v})} min={-100} max={100} step={1} disabled={isAdjusting} />
+                        <Slider id="exposureSlider" value={[settings.basic.exposure]} onValueChange={([v]) => handleBasicSettingsChange({ exposure: v })} min={-100} max={100} step={1} disabled={isAdjusting} />
                       </div>
                       <div className="space-y-3">
                         <Label htmlFor="saturationSlider">Saturation: {settings.basic.saturation.toFixed(0)}%</Label>
-                        <Slider id="saturationSlider" value={[settings.basic.saturation]} onValueChange={([v]) => handleBasicSettingsChange({...settings.basic, saturation: v})} min={0} max={200} step={1} disabled={isAdjusting} />
+                        <Slider id="saturationSlider" value={[settings.basic.saturation]} onValueChange={([v]) => handleBasicSettingsChange({ saturation: v })} min={0} max={200} step={1} disabled={isAdjusting} />
+                      </div>
+                      <div className="space-y-3">
+                        <Label htmlFor="contrastSlider">Contrast: {settings.basic.contrast.toFixed(0)}</Label>
+                        <Slider id="contrastSlider" value={[settings.basic.contrast]} onValueChange={([v]) => handleBasicSettingsChange({ contrast: v })} min={-100} max={100} step={1} disabled={isAdjusting} />
+                      </div>
+                      <div className="space-y-3">
+                        <Label htmlFor="highlightsSlider">Highlights: {settings.basic.highlights.toFixed(0)}</Label>
+                        <Slider id="highlightsSlider" value={[settings.basic.highlights]} onValueChange={([v]) => handleBasicSettingsChange({ highlights: v })} min={-100} max={100} step={1} disabled={isAdjusting} />
+                      </div>
+                      <div className="space-y-3">
+                        <Label htmlFor="shadowsSlider">Shadows: {settings.basic.shadows.toFixed(0)}</Label>
+                        <Slider id="shadowsSlider" value={[settings.basic.shadows]} onValueChange={([v]) => handleBasicSettingsChange({ shadows: v })} min={-100} max={100} step={1} disabled={isAdjusting} />
                       </div>
                   </TabsContent>
 

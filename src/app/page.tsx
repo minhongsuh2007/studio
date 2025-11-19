@@ -65,7 +65,14 @@ const initialServerStackState = {
 };
 
 const initialPostProcessSettings: PostProcessSettings = {
-  basic: { brightness: 100, exposure: 0, saturation: 100 },
+  basic: { 
+    brightness: 100, 
+    exposure: 0, 
+    saturation: 100,
+    contrast: 0,
+    highlights: 0,
+    shadows: 0,
+  },
   levels: { inputBlack: 0, inputWhite: 255, gamma: 1.0 },
   curves: {
     r: [{ x: 0, y: 0 }, { x: 255, y: 255 }],
@@ -89,7 +96,7 @@ export default function AstroStackerPage() {
   const [isTrainingModel, setIsTrainingModel] = useState(false);
   const [stackingMode, setStackingMode] = useState<StackingMode>('median');
   const [alignmentMethod, setAlignmentMethod] = useState<AlignmentMethod>('consensus');
-  const [starDetectionMethod, setStarDetectionMethod] = useState<StarDetectionMethod>('general');
+  const [starDetectionMethod, setStarDetectionMethod] = useState<StarDetectionMethod>('advanced');
   const [stackingQuality, setStackingQuality] = useState<StackingQuality>('standard');
   const [planetaryStackingQuality, setPlanetaryStackingQuality] = useState<number>(50);
   const [previewFitMode, setPreviewFitMode] = useState<PreviewFitMode>('contain');

@@ -92,19 +92,27 @@ export async function applyPostProcessing(
     const lutG = createLutFromPoints(curves.g);
     const lutB = createLutFromPoints(curves.b);
     
-    // --- Apply all adjustments ---
+    // --- Pre-calculate factors for basic adjustments ---
     const bFactor = basic.brightness / 100;
     const eFactor = Math.pow(2, basic.exposure / 100);
-
+    const contrastFactor = (basic.contrast + 100) / 100;
+    const shadowsFactor = basic.shadows / 100;
+    const highlightsFactor = basic.highlights / 100;
+    const sFactor = basic.saturation / 100;
+    
     const invGamma = 1 / levels.gamma;
     const inputRange = Math.max(1, levels.inputWhite - levels.inputBlack);
 
 
     for (let i = 0; i < data.length; i += 4) {
+      let r = data[i];
+      let g = data[i+1];
+      let b = data[i+2];
+
       // 1. Apply Levels (Black/White point and Gamma)
-      let r = (Math.max(0, data[i] - levels.inputBlack) / inputRange);
-      let g = (Math.max(0, data[i+1] - levels.inputBlack) / inputRange);
-      let b = (Math.max(0, data[i+2] - levels.inputBlack) / inputRange);
+      r = (Math.max(0, r - levels.inputBlack) / inputRange);
+      g = (Math.max(0, g - levels.inputBlack) / inputRange);
+      b = (Math.max(0, b - levels.inputBlack) / inputRange);
       
       r = Math.pow(r, invGamma) * 255;
       g = Math.pow(g, invGamma) * 255;
@@ -115,11 +123,34 @@ export async function applyPostProcessing(
       g = lutRgb[lutG[Math.round(g)]];
       b = lutRgb[lutB[Math.round(b)]];
 
-      // 3. Apply Basic Adjustments (Brightness/Exposure)
+      // 3. Apply Basic Adjustments
+      // Exposure & Brightness
       r = r * eFactor * bFactor;
       g = g * eFactor * bFactor;
       b = b * eFactor * bFactor;
-
+      
+      // Contrast
+      if (contrastFactor !== 1) {
+        r = (r - 128) * contrastFactor + 128;
+        g = (g - 128) * contrastFactor + 128;
+        b = (b - 128) * contrastFactor + 128;
+      }
+      
+      // Shadows & Highlights
+      const luma = 0.299 * r + 0.587 * g + 0.114 * b;
+      if (shadowsFactor !== 0) {
+        const shadowAdjust = shadowsFactor * (255 - luma) / 255;
+        r += shadowAdjust * (r - luma);
+        g += shadowAdjust * (g - luma);
+        b += shadowAdjust * (b - luma);
+      }
+      if (highlightsFactor !== 0) {
+        const highlightAdjust = highlightsFactor * luma / 255;
+        r += highlightAdjust * (r - luma);
+        g += highlightAdjust * (g - luma);
+        b += highlightAdjust * (b - luma);
+      }
+      
       // 4. Apply Color Balance
       const intensity = (r + g + b) / (3 * 255); // 0 to 1
       const shadowWeight = Math.max(0, 1 - intensity * 3);
@@ -131,8 +162,7 @@ export async function applyPostProcessing(
       b += (colorBalance.shadows.b * shadowWeight) + (colorBalance.midtones.b * midtoneWeight) + (colorBalance.highlights.b * highlightWeight);
 
       // 5. Apply Saturation
-      if (basic.saturation !== 100) {
-        const sFactor = basic.saturation / 100;
+      if (sFactor !== 1) {
         const gray = 0.299 * r + 0.587 * g + 0.114 * b;
         r = gray + sFactor * (r - gray);
         g = gray + sFactor * (g - gray);

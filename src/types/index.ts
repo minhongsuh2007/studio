@@ -96,6 +96,9 @@ export interface PostProcessSettings {
     brightness: number;
     exposure: number;
     saturation: number;
+    contrast: number;
+    highlights: number;
+    shadows: number;
   };
   levels: {
     inputBlack: number;
