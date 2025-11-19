@@ -35,35 +35,35 @@ export function CurveEditor({ curves, onCurveChange, histogram }: CurveEditorPro
     
     const points = curves[activeChannel];
 
-    // 1. Clear canvas with the appropriate background color
+    // --- 1. Clear canvas with the correct background ---
     ctx.fillStyle = activeChannel === 'rgb' ? 'black' : 'hsl(var(--card))';
     ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
 
-    // 2. Draw histogram in the background
-    const drawHistogramChannel = (channelKey: 'r' | 'g' | 'b', color: string) => {
-        if (!histogram || histogram.length === 0) return;
-        const maxHistValue = Math.max(...histogram.map(h => h[channelKey]));
+    // --- 2. Draw histogram in the background ---
+    if (histogram && histogram.length > 0) {
+        const maxHistValue = Math.max(...histogram.map(h => Math.max(h.r, h.g, h.b)));
         if (maxHistValue > 0) {
-            ctx.fillStyle = `${color}44`; // Use transparent fill
-            for (let i = 0; i < 256; i++) {
-                const h = (histogram[i][channelKey] / maxHistValue) * CANVAS_SIZE;
-                if (h > 0) {
-                   ctx.fillRect(i, CANVAS_SIZE - h, 1, h);
+            const drawHistogramChannel = (channelKey: 'r' | 'g' | 'b', color: string) => {
+                ctx.fillStyle = `${color}44`; // Use transparent fill
+                for (let i = 0; i < 256; i++) {
+                    const h = (histogram[i][channelKey] / maxHistValue) * CANVAS_SIZE;
+                    if (h > 0) {
+                       ctx.fillRect(i, CANVAS_SIZE - h, 1, h);
+                    }
                 }
+            };
+            
+            if (activeChannel === 'rgb') {
+                drawHistogramChannel('r', channelColors.r);
+                drawHistogramChannel('g', channelColors.g);
+                drawHistogramChannel('b', channelColors.b);
+            } else {
+                drawHistogramChannel(activeChannel, channelColors[activeChannel]);
             }
         }
-    };
-    
-    if (activeChannel === 'rgb') {
-        drawHistogramChannel('r', channelColors.r);
-        drawHistogramChannel('g', channelColors.g);
-        drawHistogramChannel('b', channelColors.b);
-    } else {
-        drawHistogramChannel(activeChannel, channelColors[activeChannel]);
     }
-
-    // 3. Draw grid OVER the histogram
-    // Explicitly set strokeStyle for the grid to ensure it's not affected by fillStyle
+    
+    // --- 3. Draw grid OVER the histogram ---
     ctx.strokeStyle = 'hsl(var(--border))';
     ctx.lineWidth = 0.5;
     for (let i = 1; i < 4; i++) {
@@ -78,14 +78,10 @@ export function CurveEditor({ curves, onCurveChange, histogram }: CurveEditorPro
         ctx.stroke();
     }
     
-    // 4. Draw the curve
-    // Explicitly set strokeStyle for the curve line
+    // --- 4. Draw the curve ---
     ctx.strokeStyle = channelColors[activeChannel];
     ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.moveTo(points[0].x, CANVAS_SIZE - points[0].y);
-
-    const lut = new Uint8Array(256);
     let p_idx = 0;
     for (let i = 0; i < 256; i++) {
       while (p_idx < points.length - 2 && points[p_idx + 1].x < i) {
@@ -100,12 +96,15 @@ export function CurveEditor({ curves, onCurveChange, histogram }: CurveEditorPro
         const t = (i - p1.x) / (p2.x - p1.x);
         y = p1.y * (1 - t) + p2.y * t;
       }
-      lut[i] = y;
-      ctx.lineTo(i, CANVAS_SIZE - y);
+      if (i === 0) {
+        ctx.moveTo(i, CANVAS_SIZE - y);
+      } else {
+        ctx.lineTo(i, CANVAS_SIZE - y);
+      }
     }
     ctx.stroke();
 
-    // 5. Draw points
+    // --- 5. Draw points ---
     ctx.fillStyle = channelColors[activeChannel];
     for (const point of points) {
         ctx.beginPath();
@@ -124,8 +123,8 @@ export function CurveEditor({ curves, onCurveChange, histogram }: CurveEditorPro
     const rect = canvas.getBoundingClientRect();
     let x = e.clientX - rect.left;
     let y = e.clientY - rect.top;
-    x = Math.max(0, Math.min(CANVAS_SIZE, x));
-    y = Math.max(0, Math.min(CANVAS_SIZE, y));
+    x = Math.round(Math.max(0, Math.min(CANVAS_SIZE, x)));
+    y = Math.round(Math.max(0, Math.min(CANVAS_SIZE, y)));
     return { x, y: CANVAS_SIZE - y };
   };
 
