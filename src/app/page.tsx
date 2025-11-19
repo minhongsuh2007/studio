@@ -1677,7 +1677,7 @@ export default function AstroStackerPage() {
           isAdjusting={isApplyingAdjustments}
           outputFormat={outputFormat}
           jpegQuality={jpegQuality}
-          onResetAdjustments={onResetAdjustments}
+          onResetAdjustments={handleResetAdjustments}
           basicSettings={{ brightness, exposure, saturation }}
           onBasicSettingsChange={({ brightness, exposure, saturation }) => {
             setBrightness(brightness);
