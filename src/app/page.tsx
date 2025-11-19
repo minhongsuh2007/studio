@@ -1536,7 +1536,7 @@ export default function AstroStackerPage() {
                   <Label className="text-base font-semibold text-foreground">Star Detection Method</Label>
                   <RadioGroup value={starDetectionMethod} onValueChange={(v) => setStarDetectionMethod(v as StarDetectionMethod)} className="grid grid-cols-2 gap-x-2 gap-y-2" disabled={isUiDisabled}>
                       <div className="flex items-center space-x-2"><RadioGroupItem value="general" id="detect-general" /><Label htmlFor="detect-general" className="flex items-center gap-1"><ShieldOff className="h-4 w-4"/>General</Label></div>
-                      <div className="flex items-center space-x-2"><RadioGroupItem value="advanced" id="detect-advanced" /><Label htmlFor="detect-advanced" className="flex items-center gap-1"><Zap className="h-4 w-4"/>Advanced (Siril-like)</Label></div>
+                      <div className="flex items-center space-x-2"><RadioGroupItem value="advanced" id="detect-advanced" /><Label htmlFor="detect-advanced" className="flex items-center gap-1"><Zap className="h-4 w-4"/>Advanced</Label></div>
                       <div className="flex items-center space-x-2"><RadioGroupItem value="ai" id="detect-ai" disabled={!trainedModel} /><Label htmlFor="detect-ai" className={`flex items-center gap-1 ${!trainedModel ? 'text-muted-foreground' : ''}`}><BrainCircuit className="h-4 w-4"/>AI {!trainedModel && '(Train model first)'}</Label></div>
                   </RadioGroup>
                 </div>
