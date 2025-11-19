@@ -397,6 +397,7 @@ export default function AstroStackerPage() {
             imgData.data[j+2] = val;
             imgData.data[j+3] = 255;
           }
+          ctx.putImageData(imgData, 0, 0);
           
           const originalPreviewUrl = canvas.toDataURL();
   
