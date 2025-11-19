@@ -13,21 +13,8 @@ import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip } from 'recha
 import { StarAnnotationCanvas } from './StarAnnotationCanvas';
 import { applyPostProcessing, calculateHistogram } from '@/lib/post-process';
 import { ScrollArea } from '../ui/scroll-area';
-import type { PostProcessSettings, Point, ColorBalance, Curve, Channel } from '@/types';
+import type { PostProcessSettings, Point, Curve, Channel } from '@/types';
 import { CurveEditor } from './CurveEditor';
-import { ColorBalanceEditor } from './ColorBalanceEditor';
-
-// Default settings
-const initialBasicSettings = { brightness: 100, exposure: 0, saturation: 100 };
-const initialCurve: Curve = {
-  rgb: [{x:0, y:0}, {x:255, y:255}],
-};
-const initialColorBalance: ColorBalance = {
-  shadows: { r: 0, g: 0, b: 0 },
-  midtones: { r: 0, g: 0, b: 0 },
-  highlights: { r: 0, g: 0, b: 0 },
-};
-
 
 interface ImagePostProcessEditorProps {
   isOpen: boolean;
@@ -99,10 +86,6 @@ export function ImagePostProcessEditor({
     })
   };
 
-  const handleColorBalanceChange = (newBalance: ColorBalance) => {
-    onSettingsChange({ ...settings, colorBalance: newBalance });
-  };
-
 
   if (!isOpen) return null;
 
@@ -152,10 +135,9 @@ export function ImagePostProcessEditor({
             <div className="md:w-1/3 flex flex-col">
             <ScrollArea className="h-full pr-3">
                 <Tabs defaultValue="basic" className="w-full">
-                  <TabsList className="grid w-full grid-cols-3">
+                  <TabsList className="grid w-full grid-cols-2">
                     <TabsTrigger value="basic">Basic</TabsTrigger>
                     <TabsTrigger value="curves">Curves</TabsTrigger>
-                    <TabsTrigger value="color">Color</TabsTrigger>
                   </TabsList>
                   
                   <TabsContent value="basic" className="p-1 space-y-6 mt-4">
@@ -181,12 +163,6 @@ export function ImagePostProcessEditor({
                       />
                   </TabsContent>
 
-                  <TabsContent value="color" className="p-1 mt-4">
-                      <ColorBalanceEditor
-                        balance={settings.colorBalance}
-                        onBalanceChange={handleColorBalanceChange}
-                      />
-                  </TabsContent>
                 </Tabs>
             </ScrollArea>
             </div>
