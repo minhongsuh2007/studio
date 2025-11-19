@@ -33,11 +33,10 @@ function parseFITSHeader(arrayBuffer: ArrayBuffer, logs: string[]): { header: Ma
   function parseCard(start: number): { key: string; value: any; } | null {
     const card = new TextDecoder('ascii').decode(bytes.subarray(start, start + cardSize));
     const key = card.slice(0, 8).trim();
-    if (key === '') return null; // Skip blank cards
+    if (key === '') return null;
     if (key === 'END') return { key: 'END', value: null };
     
     if (card[8] !== '=' || card[9] !== ' ') {
-      // This is likely a comment card, just store the key (like HISTORY or COMMENT)
       header.set(key, card.slice(9).trim());
       return null;
     }
@@ -47,16 +46,16 @@ function parseFITSHeader(arrayBuffer: ArrayBuffer, logs: string[]): { header: Ma
     const valueStr = (slashIndex > -1 ? valueAndComment.substring(0, slashIndex) : valueAndComment).trim();
 
     let value: any;
-    if (valueStr.startsWith("'")) { // It's a string
+    if (valueStr.startsWith("'")) {
         value = valueStr.substring(1, valueStr.lastIndexOf("'")).trim();
     } else if (valueStr === 'T') {
         value = true;
     } else if (valueStr === 'F') {
         value = false;
-    } else { // It's a number
+    } else {
         value = Number(valueStr);
         if (isNaN(value)) {
-            value = valueStr; // Fallback to string if parsing fails
+            value = valueStr;
         }
     }
     return { key, value };
@@ -65,6 +64,10 @@ function parseFITSHeader(arrayBuffer: ArrayBuffer, logs: string[]): { header: Ma
   let foundEND = false;
   while (pos < bytes.length && !foundEND) {
       for (let i = 0; i < blockSize; i += cardSize) {
+          if (pos + i + cardSize > bytes.length) {
+              foundEND = true; // Avoid reading past buffer
+              break;
+          }
           const cardData = parseCard(pos + i);
           if (cardData) {
               if (cardData.key === 'END') {
@@ -75,17 +78,18 @@ function parseFITSHeader(arrayBuffer: ArrayBuffer, logs: string[]): { header: Ma
           }
       }
       if (foundEND) {
-        pos += blockSize; // Move position to the end of the last header block
+        // The data unit starts after the header block containing END
+        pos += blockSize;
         break;
       }
       pos += blockSize;
   }
   
   if (!foundEND) {
-    throw new Error("FITS header 'END' keyword not found.");
+    throw new Error("FITS header 'END' keyword not found or header is truncated.");
   }
   
-  logs.push(`Header parsed. Found ${header.size} keywords. Data offset: ${pos}`);
+  logs.push(`Header parsed. Found ${header.size} keywords. Calculated data offset: ${pos}`);
   header.forEach((value, key) => {
     if (['NAXIS', 'NAXIS1', 'NAXIS2', 'BITPIX', 'BSCALE', 'BZERO'].includes(key)) {
       logs.push(`  - ${key}: ${value}`);
@@ -118,20 +122,32 @@ function readFITSImage(arrayBuffer: ArrayBuffer, header: Map<string, any>, dataO
       throw new Error(`FITS data is truncated. Header indicates ${count * bytesPerPixel} bytes of data after offset ${offset}, but buffer has only ${arrayBuffer.byteLength} bytes.`);
   }
 
+  logs.push(`Reading pixels with BITPIX: ${bitpix}, BZERO: ${bzero}, BSCALE: ${bscale}`);
+
   switch (bitpix) {
       case 8:
+          logs.push('Using BITPIX 8 logic (Uint8).');
           for (let i = 0; i < count; i++, offset++) pixels[i] = bzero + bscale * dv.getUint8(offset);
           break;
       case 16:
-          for (let i = 0; i < count; i++, offset += 2) pixels[i] = bzero + bscale * dv.getUint16(offset, false);
+          if (bzero === 32768 && bscale === 1) {
+              logs.push('Using BITPIX 16 logic for unsigned integers (BZERO=32768).');
+              for (let i = 0; i < count; i++, offset += 2) pixels[i] = dv.getUint16(offset, false) - bzero;
+          } else {
+              logs.push('Using BITPIX 16 logic for signed integers.');
+              for (let i = 0; i < count; i++, offset += 2) pixels[i] = bzero + bscale * dv.getInt16(offset, false);
+          }
           break;
       case 32:
+          logs.push('Using BITPIX 32 logic (Int32).');
           for (let i = 0; i < count; i++, offset += 4) pixels[i] = bzero + bscale * dv.getInt32(offset, false);
           break;
       case -32:
+          logs.push('Using BITPIX -32 logic (Float32).');
           for (let i = 0; i < count; i++, offset += 4) pixels[i] = bzero + bscale * dv.getFloat32(offset, false);
           break;
       case -64:
+          logs.push('Using BITPIX -64 logic (Float64).');
           for (let i = 0; i < count; i++, offset += 8) pixels[i] = bzero + bscale * dv.getFloat64(offset, false);
           break;
       default: throw new Error(`Unsupported BITPIX value: ${bitpix}`);
@@ -146,8 +162,8 @@ function readFITSImage(arrayBuffer: ArrayBuffer, header: Map<string, any>, dataO
       finiteCount++;
     }
   }
-  logs.push(`Image data read. Total Pixels: ${count}. Finite Pixels: ${finiteCount}.`);
-  logs.push(`Raw Pixel Stats: Min=${min}, Max=${max}, Avg=${sum / finiteCount}`);
+  logs.push(`Image data read complete. Total Pixels: ${count}. Finite Pixels: ${finiteCount}.`);
+  logs.push(`Raw Pixel Stats after BZERO/BSCALE: Min=${min}, Max=${max}, Avg=${sum / finiteCount}`);
 
   return { width, height, pixels };
 }
@@ -174,7 +190,7 @@ function normalizeSigma(pixels: Float32Array, logs: string[], sigma = 3): Uint8C
   const mean=sum/finiteCount;
   let varSum=0;
   for(const v of pixels){if(Number.isFinite(v)){varSum+=(v-mean)**2;}}
-  const std=Math.sqrt(varSum/finiteCount);
+  const std=Math.sqrt(varSum/finiteCount) || 1;
   
   const clipMin=mean-sigma*std;
   const clipMax=mean+sigma*std;
@@ -187,6 +203,7 @@ function normalizeSigma(pixels: Float32Array, logs: string[], sigma = 3): Uint8C
   for(let i=0;i<pixels.length;i++){
     let v=(pixels[i]-clipMin)/range;
     v=Math.max(0,Math.min(1,v));
+    if (!Number.isFinite(v)) v = 0;
     out[i]=Math.round(v*255);
   }
   return out;
@@ -196,11 +213,11 @@ function normalizeLog(pixels: Float32Array, logs: string[]): Uint8ClampedArray {
   let min=Infinity,max=-Infinity;
   for(const v of pixels){if(v>0 && Number.isFinite(v)){if(v<min)min=v;if(v>max)max=v;}}
   if (!Number.isFinite(min)) {
-    logs.push('[Log] No positive finite pixels found. Returning black image.');
+    logs.push('[Log] No positive finite pixels found for log scale. Returning black image.');
     return new Uint8ClampedArray(pixels.length);
   }
   const logMin=Math.log(min), logMax=Math.log(max), range=logMax-logMin || 1;
-  logs.push(`[Log] Normalizing with Min=${min}, Max=${max}. Log Range=[${logMin.toFixed(2)}, ${logMax.toFixed(2)}]`);
+  logs.push(`[Log] Normalizing with positive Min=${min}, Max=${max}. Log Range=[${logMin.toFixed(2)}, ${logMax.toFixed(2)}]`);
   
   const out=new Uint8ClampedArray(pixels.length);
   for(let i=0;i<pixels.length;i++){
