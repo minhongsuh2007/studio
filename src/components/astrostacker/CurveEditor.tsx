@@ -63,6 +63,7 @@ export function CurveEditor({ curves, onCurveChange, histogram }: CurveEditorPro
     }
 
     // 3. Draw grid OVER the histogram
+    // Explicitly set strokeStyle for the grid to ensure it's not affected by fillStyle
     ctx.strokeStyle = 'hsl(var(--border))';
     ctx.lineWidth = 0.5;
     for (let i = 1; i < 4; i++) {
@@ -78,6 +79,7 @@ export function CurveEditor({ curves, onCurveChange, histogram }: CurveEditorPro
     }
     
     // 4. Draw the curve
+    // Explicitly set strokeStyle for the curve line
     ctx.strokeStyle = channelColors[activeChannel];
     ctx.lineWidth = 2;
     ctx.beginPath();
