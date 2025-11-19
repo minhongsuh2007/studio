@@ -36,7 +36,7 @@ export function CurveEditor({ curves, onCurveChange, histogram }: CurveEditorPro
     
     const points = curves[activeChannel];
 
-    // Clear canvas
+    // Clear canvas with the card background color
     ctx.fillStyle = 'hsl(var(--card))';
     ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
 
@@ -45,7 +45,7 @@ export function CurveEditor({ curves, onCurveChange, histogram }: CurveEditorPro
         if (!histogram || histogram.length === 0) return;
         const maxHistValue = Math.max(...histogram.map(h => h[channelKey]));
         if (maxHistValue > 0) {
-            ctx.fillStyle = `${color}44`; // Increased opacity
+            ctx.fillStyle = `${color}44`; // Use transparent fill for histogram bars
             for (let i = 0; i < 256; i++) {
                 const h = (histogram[i][channelKey] / maxHistValue) * CANVAS_SIZE;
                 if (h > 0) {
