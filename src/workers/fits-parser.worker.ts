@@ -44,7 +44,7 @@ function parseFITSHeader(arrayBuffer: ArrayBuffer) {
       value = (valueStr === 'T');
     } else {
       value = Number(valueStr);
-      if (Number.isNaN(value)) value = valueStr; // Keep as string if not a valid number
+      if (Number.isNaN(value)) value = valueStr;
     }
     return { key, value };
   }
@@ -55,7 +55,13 @@ function parseFITSHeader(arrayBuffer: ArrayBuffer) {
       throw new Error("FITS header parsing error: Reached end of file before finding 'END' card.");
     }
     for (let i = 0; i < blockSize; i += cardSize) {
-      const { key, value } = parseCard(pos + i);
+      const cardStart = pos + i;
+      // Ensure we don't read past the end of the buffer
+      if (cardStart + cardSize > bytes.length) {
+          foundEND = true;
+          break;
+      }
+      const { key, value } = parseCard(cardStart);
       if (key === 'END') {
         foundEND = true;
         break;
@@ -72,10 +78,11 @@ function parseFITSHeader(arrayBuffer: ArrayBuffer) {
 function readFITSImage(arrayBuffer: ArrayBuffer, header: Map<string, any>, dataOffset: number) {
   const dv = new DataView(arrayBuffer);
   const naxis = header.get('NAXIS');
-  if (naxis !== 2) throw new Error(`Only 2D images (NAXIS=2) are supported. This image has NAXIS=${naxis}.`);
+  if (naxis < 1) throw new Error(`Invalid NAXIS value: ${naxis}`);
+  if (naxis > 2) console.warn(`This FITS file has ${naxis} dimensions, but only the first 2 will be read.`);
   
   const width = header.get('NAXIS1');
-  const height = header.get('NAXIS2');
+  const height = header.get('NAXIS2') || 1; // Default to 1 for 1D images
   const bitpix = header.get('BITPIX');
   
   const bscale = header.get('BSCALE') ?? 1.0;
@@ -100,6 +107,10 @@ function readFITSImage(arrayBuffer: ArrayBuffer, header: Map<string, any>, dataO
 
   const bytesPerPixel = Math.abs(bitpix) / 8;
   
+  if (offset + count * bytesPerPixel > arrayBuffer.byteLength) {
+      throw new Error('FITS data is truncated or header is incorrect.');
+  }
+
   for (let i = 0; i < count; i++) {
     pixels[i] = readFunc(offset) * bscale + bzero;
     offset += bytesPerPixel;
@@ -116,14 +127,22 @@ function normalizeToUint8(pixels: Float32Array): Uint8ClampedArray {
       if (v > max) max = v; 
     }
   }
+  
+  if (min === Infinity) { // All pixels were NaN/Infinity
+    min = 0;
+    max = 0;
+  }
 
   const range = (max - min) || 1;
   const out = new Uint8ClampedArray(pixels.length);
 
   for (let i = 0; i < pixels.length; i++) {
     let v = (pixels[i] - min) / range;
-    if (!Number.isFinite(v)) v = 0; // Handle NaN/Infinity from pixels array
-    out[i] = v * 255;
+    if (!Number.isFinite(v)) {
+        v = 0; // Handle NaN/Infinity from pixels array by mapping to black
+    }
+    // Correctly scale and round the value before clamping
+    out[i] = Math.round(v * 255);
   }
   return out;
 }
