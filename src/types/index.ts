@@ -6,7 +6,7 @@ export interface ImageQueueEntry {
   id: string;
   file: File;
   originalPreviewUrl: string;
-  analysisPreviewUrl: string;
+  analysisPreviewUrl:string;
   isAnalyzing: boolean;
   isAnalyzed: boolean;
   originalDimensions: { width: number; height: number };
@@ -70,7 +70,7 @@ export interface Point {
   y: number;
 }
 
-export type Channel = 'rgb';
+export type Channel = 'r' | 'g' | 'b' | 'rgb';
 
 export interface Rgb {
   r: number;
@@ -85,6 +85,9 @@ export interface ColorBalance {
 }
 
 export interface Curve {
+  r: Point[];
+  g: Point[];
+  b: Point[];
   rgb: Point[];
 }
 
@@ -93,6 +96,11 @@ export interface PostProcessSettings {
     brightness: number;
     exposure: number;
     saturation: number;
+  };
+  levels: {
+    inputBlack: number;
+    inputWhite: number;
+    gamma: number;
   };
   curves: Curve;
   colorBalance: ColorBalance;

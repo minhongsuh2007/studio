@@ -84,27 +84,43 @@ export async function applyPostProcessing(
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error("Could not create canvas to finalize image.");
     
-    const { basic, curves, colorBalance } = settings;
+    const { basic, levels, curves, colorBalance } = settings;
 
     // --- Create LUTs from Curves ---
     const lutRgb = createLutFromPoints(curves.rgb);
+    const lutR = createLutFromPoints(curves.r);
+    const lutG = createLutFromPoints(curves.g);
+    const lutB = createLutFromPoints(curves.b);
     
     // --- Apply all adjustments ---
     const bFactor = basic.brightness / 100;
     const eFactor = Math.pow(2, basic.exposure / 100);
 
-    for (let i = 0; i < data.length; i += 4) {
-      // 1. Apply Tone Curves
-      let r = lutRgb[data[i]];
-      let g = lutRgb[data[i+1]];
-      let b = lutRgb[data[i+2]];
+    const invGamma = 1 / levels.gamma;
+    const inputRange = Math.max(1, levels.inputWhite - levels.inputBlack);
 
-      // 2. Apply Basic Adjustments (Brightness/Exposure)
+
+    for (let i = 0; i < data.length; i += 4) {
+      // 1. Apply Levels (Black/White point and Gamma)
+      let r = (Math.max(0, data[i] - levels.inputBlack) / inputRange);
+      let g = (Math.max(0, data[i+1] - levels.inputBlack) / inputRange);
+      let b = (Math.max(0, data[i+2] - levels.inputBlack) / inputRange);
+      
+      r = Math.pow(r, invGamma) * 255;
+      g = Math.pow(g, invGamma) * 255;
+      b = Math.pow(b, invGamma) * 255;
+
+      // 2. Apply Tone Curves
+      r = lutRgb[lutR[Math.round(r)]];
+      g = lutRgb[lutG[Math.round(g)]];
+      b = lutRgb[lutB[Math.round(b)]];
+
+      // 3. Apply Basic Adjustments (Brightness/Exposure)
       r = r * eFactor * bFactor;
       g = g * eFactor * bFactor;
       b = b * eFactor * bFactor;
 
-      // 3. Apply Color Balance
+      // 4. Apply Color Balance
       const intensity = (r + g + b) / (3 * 255); // 0 to 1
       const shadowWeight = Math.max(0, 1 - intensity * 3);
       const highlightWeight = Math.max(0, (intensity - 0.5) * 2);
@@ -114,7 +130,7 @@ export async function applyPostProcessing(
       g += (colorBalance.shadows.g * shadowWeight) + (colorBalance.midtones.g * midtoneWeight) + (colorBalance.highlights.g * highlightWeight);
       b += (colorBalance.shadows.b * shadowWeight) + (colorBalance.midtones.b * midtoneWeight) + (colorBalance.highlights.b * highlightWeight);
 
-      // 4. Apply Saturation
+      // 5. Apply Saturation
       if (basic.saturation !== 100) {
         const sFactor = basic.saturation / 100;
         const gray = 0.299 * r + 0.587 * g + 0.114 * b;

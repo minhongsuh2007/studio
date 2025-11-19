@@ -87,6 +87,10 @@ export function ImagePostProcessEditor({
     })
   };
 
+  const handleLevelsChange = (newLevels: PostProcessSettings['levels']) => {
+    onSettingsChange({ ...settings, levels: newLevels });
+  }
+
   const handleColorBalanceChange = (newBalance: ColorBalance) => {
     onSettingsChange({ ...settings, colorBalance: newBalance });
   };
@@ -140,10 +144,11 @@ export function ImagePostProcessEditor({
             <div className="md:w-1/3 flex flex-col">
             <ScrollArea className="h-full pr-3">
                 <Tabs defaultValue="basic" className="w-full">
-                  <TabsList className="grid w-full grid-cols-3">
+                  <TabsList className="grid w-full grid-cols-4">
                     <TabsTrigger value="basic">Basic</TabsTrigger>
+                    <TabsTrigger value="levels">Levels</TabsTrigger>
                     <TabsTrigger value="curves">Curves</TabsTrigger>
-                    <TabsTrigger value="color">Color</TabsTrigger>
+                    <TabsTrigger value="color">Color Balance</TabsTrigger>
                   </TabsList>
                   
                   <TabsContent value="basic" className="p-1 space-y-6 mt-4">
@@ -159,6 +164,45 @@ export function ImagePostProcessEditor({
                         <Label htmlFor="saturationSlider">Saturation: {settings.basic.saturation.toFixed(0)}%</Label>
                         <Slider id="saturationSlider" value={[settings.basic.saturation]} onValueChange={([v]) => handleBasicSettingsChange({...settings.basic, saturation: v})} min={0} max={200} step={1} disabled={isAdjusting} />
                       </div>
+                  </TabsContent>
+
+                  <TabsContent value="levels" className="p-1 space-y-6 mt-4">
+                    <div className="space-y-3">
+                      <Label htmlFor="blackPointSlider">Black Point: {settings.levels.inputBlack}</Label>
+                      <Slider
+                        id="blackPointSlider"
+                        value={[settings.levels.inputBlack]}
+                        onValueChange={([v]) => handleLevelsChange({ ...settings.levels, inputBlack: v })}
+                        min={0}
+                        max={254}
+                        step={1}
+                        disabled={isAdjusting}
+                      />
+                    </div>
+                    <div className="space-y-3">
+                      <Label htmlFor="whitePointSlider">White Point: {settings.levels.inputWhite}</Label>
+                      <Slider
+                        id="whitePointSlider"
+                        value={[settings.levels.inputWhite]}
+                        onValueChange={([v]) => handleLevelsChange({ ...settings.levels, inputWhite: v })}
+                        min={1}
+                        max={255}
+                        step={1}
+                        disabled={isAdjusting}
+                      />
+                    </div>
+                     <div className="space-y-3">
+                      <Label htmlFor="gammaSlider">Midtones (Gamma): {settings.levels.gamma.toFixed(2)}</Label>
+                      <Slider
+                        id="gammaSlider"
+                        value={[settings.levels.gamma]}
+                        onValueChange={([v]) => handleLevelsChange({ ...settings.levels, gamma: v })}
+                        min={0.1}
+                        max={5}
+                        step={0.05}
+                        disabled={isAdjusting}
+                      />
+                    </div>
                   </TabsContent>
 
                   <TabsContent value="curves" className="p-1 mt-4">
