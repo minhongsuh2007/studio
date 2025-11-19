@@ -60,12 +60,8 @@ function parseFITSHeader(arrayBuffer: ArrayBuffer, logs: string[]) {
   }
 
   let foundEND = false;
-  while (pos < bytes.length && !foundEND) {
+  while (!foundEND) {
     for (let i = 0; i < blockSize; i += cardSize) {
-      if (pos + i + cardSize > bytes.length) {
-        foundEND = true;
-        break;
-      }
       const { key, value } = parseCard(pos + i);
       if (key === 'END') {
         foundEND = true;
@@ -75,16 +71,13 @@ function parseFITSHeader(arrayBuffer: ArrayBuffer, logs: string[]) {
         header.set(key, value);
       }
     }
-    if (foundEND) {
-      pos += blockSize;
-      break;
-    }
     pos += blockSize;
+    if (pos >= bytes.length) break;
   }
   
   const dataOffset = Math.ceil(pos / blockSize) * blockSize;
   
-  logs.push(`Header parsed. Found ${header.size} keywords. Calculated data offset: ${dataOffset}`);
+  logs.push(`Header parsed. Found ${header.size} keywords. Data offset: ${dataOffset}`);
   ['BITPIX', 'NAXIS', 'NAXIS1', 'NAXIS2', 'BSCALE', 'BZERO'].forEach(k => {
     if(header.has(k)) logs.push(`- ${k}: ${header.get(k)}`);
   });
@@ -106,25 +99,24 @@ function readFITSImage(arrayBuffer: ArrayBuffer, header: Map<string, any>, dataO
 
   let readLogic = "Unknown BITPIX";
   if (bitpix === 16) {
-    readLogic = `BITPIX 16, BZERO ${bzero}`;
     if (bzero === 32768) {
-      // Standard for unsigned 16-bit
+      readLogic = `BITPIX 16 (Unsigned), BZERO ${bzero}`;
       for (let i = 0; i < count; i++, offset += 2) pixels[i] = dv.getUint16(offset, false) - bzero;
     } else {
-      // Standard signed 16-bit
+      readLogic = `BITPIX 16 (Signed), BZERO ${bzero}`;
       for (let i = 0; i < count; i++, offset += 2) pixels[i] = bzero + bscale * dv.getInt16(offset, false);
     }
   } else if (bitpix === 8) {
     readLogic = "BITPIX 8";
     for (let i = 0; i < count; i++, offset++) pixels[i] = bzero + bscale * dv.getUint8(offset);
   } else if (bitpix === 32) {
-    readLogic = "BITPIX 32";
+    readLogic = "BITPIX 32 (Int)";
     for (let i = 0; i < count; i++, offset += 4) pixels[i] = bzero + bscale * dv.getInt32(offset, false);
   } else if (bitpix === -32) {
-    readLogic = "BITPIX -32 (float)";
+    readLogic = "BITPIX -32 (Float)";
     for (let i = 0; i < count; i++, offset += 4) pixels[i] = bzero + bscale * dv.getFloat32(offset, false);
   } else if (bitpix === -64) {
-    readLogic = "BITPIX -64 (double)";
+    readLogic = "BITPIX -64 (Double)";
     for (let i = 0; i < count; i++, offset += 8) pixels[i] = bzero + bscale * dv.getFloat64(offset, false);
   } else {
     throw new Error(`Unsupported BITPIX: ${bitpix}`);
@@ -175,54 +167,56 @@ function normalizeSigma(pixels: Float32Array, logs: string[], sigma: number = 3)
 }
 
 function normalizeLog(pixels: Float32Array, logs: string[]): Uint8ClampedArray {
-    const finitePixels = Array.from(pixels).filter(Number.isFinite);
-    if (finitePixels.length === 0) {
+    let min = Infinity;
+    let max = -Infinity;
+    
+    // Find the true min and max of the finite pixel data
+    for (const v of pixels) {
+        if (Number.isFinite(v)) {
+            if (v < min) min = v;
+            if (v > max) max = v;
+        }
+    }
+    
+    if (!Number.isFinite(min)) {
         logs.push(`[LogNormalize] No finite pixels found.`);
         return new Uint8ClampedArray(pixels.length);
     }
     
-    // 1. Estimate background using median
-    const sorted = [...finitePixels].sort((a, b) => a - b);
-    const median = sorted[Math.floor(sorted.length / 2)];
-    logs.push(`[LogNormalize] Background (Median): ${median.toFixed(2)}`);
+    logs.push(`[LogNormalize] Full data range: Min=${min.toFixed(2)}, Max=${max.toFixed(2)}`);
 
-    // 2. Estimate noise using Median Absolute Deviation (MAD) -> Robust StdDev
-    const deviations = sorted.map(v => Math.abs(v - median));
-    deviations.sort((a, b) => a - b);
-    const mad = deviations[Math.floor(deviations.length / 2)];
-    const stdDev = mad * 1.4826; // Conversion factor for normal distribution
-    logs.push(`[LogNormalize] Noise (MAD->StdDev): ${stdDev.toFixed(2)}`);
-    
-    // 3. Set black and white points
-    const blackPoint = median - 2.0 * stdDev;
-    // For white point, use a high percentile to avoid being skewed by a few saturated pixels
-    const whitePoint = sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.999))];
-    logs.push(`[LogNormalize] Black Point: ${blackPoint.toFixed(2)}, White Point: ${whitePoint.toFixed(2)}`);
+    // To prevent log(0) or log(negative), we shift the entire dataset so the minimum is a small positive number.
+    const shift = -min + 1; 
+    const shiftedMin = 1;
+    const shiftedMax = max + shift;
 
-    // 4. Apply scaling
-    const out = new Uint8ClampedArray(pixels.length);
-    const range = whitePoint - blackPoint;
+    const logMin = Math.log(shiftedMin);
+    const logMax = Math.log(shiftedMax);
+    const range = logMax - logMin;
+
     if (range <= 0) {
-      logs.push(`[LogNormalize-WARN] Range is <= 0. Returning black image.`);
-      return new Uint8ClampedArray(pixels.length);
+        logs.push(`[LogNormalize-WARN] Log range is <= 0. Returning linear scale.`);
+        return normalizeMinMax(pixels, logs);
     }
 
+    logs.push(`[LogNormalize] Applying log scale to shifted range [${shiftedMin.toFixed(2)}, ${shiftedMax.toFixed(2)}]`);
+
+    const out = new Uint8ClampedArray(pixels.length);
     for (let i = 0; i < pixels.length; i++) {
         const v = pixels[i];
         if (!Number.isFinite(v)) {
             out[i] = 0;
             continue;
         }
-
-        // Clip and scale to [0, 1]
-        const scaledValue = (v - blackPoint) / range;
-        const clampedValue = Math.max(0, Math.min(1, scaledValue));
         
-        // Apply a non-linear stretch (e.g., arcsinh or simple power) to bring out faint details
-        // A simple gamma correction (power < 1)
-        const stretchedValue = Math.pow(clampedValue, 0.5);
+        const shiftedValue = v + shift;
+        
+        let lv = (Math.log(shiftedValue) - logMin) / range;
+        
+        // Clamp to ensure value is between 0 and 1, just in case of float precision issues
+        lv = Math.max(0, Math.min(1, lv));
 
-        out[i] = Math.round(stretchedValue * 255);
+        out[i] = Math.round(lv * 255);
     }
 
     return out;
