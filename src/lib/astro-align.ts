@@ -1,6 +1,5 @@
 
 
-
 // --- Types ---
 export type Point = { x: number; y: number };
 export type Star = Point & { brightness: number; size: number };

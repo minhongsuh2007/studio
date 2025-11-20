@@ -75,9 +75,6 @@ const initialPostProcessSettings: PostProcessSettings = {
   },
   levels: { inputBlack: 0, inputWhite: 255, gamma: 1.0 },
   curves: {
-    r: [{ x: 0, y: 0 }, { x: 255, y: 255 }],
-    g: [{ x: 0, y: 0 }, { x: 255, y: 255 }],
-    b: [{ x: 0, y: 0 }, { x: 255, y: 255 }],
     rgb: [{ x: 0, y: 0 }, { x: 255, y: 255 }],
   },
   colorBalance: {
@@ -694,7 +691,7 @@ export default function AstroStackerPage() {
         // Deduplication logic
         setManualSelectedStars(prevStars => {
           const filteredStars = prevStars.filter(existingStar => {
-            return Math.hypot(existingStar.x - newStar.x, existingStar.y - newStar.y) >= STAR_DEDUPLICATION_RADIUS;
+            return Math.hypot(existingStar.x - newStar.x, newStar.y - newStar.y) >= STAR_DEDUPLICATION_RADIUS;
           });
           return [...filteredStars, newStar];
         });
